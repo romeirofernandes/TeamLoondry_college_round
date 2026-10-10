@@ -92,11 +92,30 @@ function semanticText(value: string): string {
 }
 
 function meaningText(value: string): string {
-  return semanticText(value).toLowerCase()
-    .replace(/\s*\((?:required|optional)\)\s*$/i, "")
-    .replace(/[?:*]+$/g, "").trim()
-    .replace(/^(?:please (?:enter|provide|select|choose|describe|specify) |(?:enter|provide|select|choose) |what (?:is|are) (?:your|the) |your )/i, "")
-    .trim();
+  let meaning = semanticText(value).toLowerCase();
+  let previous: string;
+  // Prompts can stack framing words and punctuation ("Please, enter your ...").
+  // Remove only known framing at the edges; preserve unknown content for the
+  // ordinary-meaning allowlist and inspect the original text for sensitivity.
+  do {
+    previous = meaning;
+    meaning = meaning
+      .replace(/^[\s:;,!?*–—]+|[\s:;,!?*–—]+$/g, "")
+      .replace(/\s*\((?:required|optional)\)$/, "").trim()
+      .replace(/^(?:(?:please|kindly|enter|provide|select|choose|describe|specify|your|the|a|an)\b|what (?:is|are)\b)[\s:;,!?–—]*/, "")
+      .trim();
+  } while (meaning !== previous);
+  return meaning;
+}
+
+function comparableMeaning(value: string): string {
+  const meaning = meaningText(value);
+  // Reconcile conventional name aliases without merging distinct name parts
+  // or qualifiers such as legal, preferred, contact, and company names.
+  if (meaning === "full name") return "name";
+  if (meaning === "firstname" || meaning === "given name") return "first name";
+  if (meaning === "lastname" || meaning === "surname" || meaning === "family name") return "last name";
+  return meaning;
 }
 
 function ordinaryMeaning(value: string): boolean {
@@ -297,7 +316,7 @@ function classify(element: HTMLElement, members: readonly HTMLElement[], name: s
     return mentionsLabel && ordinaryMeaning(value);
   });
   if (!name || (!ordinaryMeaning(name) && !qualified) ||
-      explicitNames.some(value => meaningText(value) !== meaningText(name) &&
+      explicitNames.some(value => comparableMeaning(value) !== comparableMeaning(name) &&
         (!ordinaryMeaning(value) || !labelKind || contactKind(value) !== labelKind)) ||
       questionContext.length >= 1000 || context.length >= 2400)
     return { status: "blocked", reason: "uncertain" };
