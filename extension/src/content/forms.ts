@@ -50,11 +50,22 @@ export interface FormInventory {
 const controlSelector = 'input:not([type="hidden"]),textarea,select,[role="combobox"],[role="radio"],[role="checkbox"]';
 const ignoredText = 'input,textarea,select,option,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"],[role="alert"],[aria-live],script,style,noscript,template,[data-private],[data-handsfree-ignore]';
 const privateRegion = `[data-private],[data-handsfree-ignore],#${overlayId}`;
-const sensitivePattern = /\b(?:password|passwd|passcode|one[ -]?time(?:[ -]?(?:code|password))?|otp|verification[ -]?code|security[ -]?code|credit|debit|payment|card(?:[ -]?(?:number|holder|expiry|expiration|details?))?|cvv|cvc|cc-[a-z-]+|expir(?:y|ation)|bank|routing|iban|swift|account[ -]?number|upi[ -]?id|passport|aadh?aar|social[ -]?security|ssn|national[ -]?id|government[ -]?id|driver'?s?[ -]?licen[cs]e|tax[ -]?id|pan[ -]?card|voter[ -]?id|medical|health|diagnos(?:is|es)|medications?|prescription|symptoms?|patients?|disabilit(?:y|ies)|allerg(?:y|ies)|blood[ -]?type|hiv|aids|pregnan(?:cy|t)|mental[ -]?health)\b/i;
-const vagueName = /^(?:other|answer|response|field|input|text|select|choose|option|yes|no|please specify|untitled)(?:\s*\d+)?$/i;
+const sensitivePatterns = [
+  /\b(?:password|passwd|passcode|one[ -]?time(?:[ -]?(?:code|password))?|otp|verification[ -]?code|security[ -]?code)\b/i,
+  /\b(?:credit|debit|payment|card(?:[ -]?(?:number|holder|expiry|expiration|details?))?|cvv|cvc|cc[ -]?(?:number|name|exp|csc|type)|bank|routing|iban|swift|account[ -]?number|upi[ -]?id)\b/i,
+  /\b(?:passport|aadh?aar|social[ -]?security|ssn|national[ -]?(?:id|identifier|identification|insurance[ -]?number|number)|(?:government|govt)[ -]?(?:issued[ -]?)?(?:id|identifier|identification|number)|state[ -]?id|driver'?s?[ -]?licen[cs]e|birth[ -]?certificate|citizenship[ -]?(?:id|number)|tax(?:payer)?[ -]?(?:id|identifier|identification|number|reference|code|registration)|tin|ein|gstin|gst[ -]?(?:number|id|registration)|vat[ -]?(?:number|id|registration)|pan[ -]?(?:card|number)|voter[ -]?(?:id|number))\b/i,
+  /\b(?:medical|health|diagnos(?:is|es|tic)|medications?|prescription|symptoms?|patients?|disabilit(?:y|ies)|allerg(?:y|ies)|blood[ -]?(?:type|group|pressure|sugar|glucose)|hiv|aids|pregnan(?:cy|t)|mental[ -]?health|chronic|illness|disease|treatment|therapy|surgery|vaccin(?:e|ation|ated)|immuni[sz]ation|cholesterol|glucose|bmi)\b/i,
+];
+const vagueName = /^(?:other|answer|response|field|input|text|select|choose|option|yes|no|please specify|untitled|id|identifier|number|code|reference|details?|information|history|status|condition|date|expiry|expiration|secret|confidential|sensitive|identity|personal (?:details|information|data))(?:\s*\d+)?$/i;
+const unqualifiedName = /^(?:id|identifier|number|code|reference|details?|information|history|status|condition|date|expiry|expiration)$/i;
 
 function bounded(value: string, length = 180): string {
   return value.replace(/\s+/g, " ").trim().slice(0, length);
+}
+
+/** Attribute names often carry meaning as camelCase, snake_case, or kebab-case. */
+function semanticText(value: string): string {
+  return value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_./-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function parentOf(element: Element): Element | null {
@@ -202,9 +213,21 @@ function classify(element: HTMLElement, members: readonly HTMLElement[], name: s
     referencedText(item, "aria-labelledby"), referencedText(item, "aria-describedby"),
   ].filter(Boolean).join(" "));
   const questionContext = group ? staticText(group, 1000) : "";
-  const context = [name, questionContext, formName, ...descriptors].join(" ");
-  if (sensitivePattern.test(context)) return { status: "blocked", reason: "sensitive" };
-  if (!name || (vagueName.test(name) && !groupName(group)) || questionContext.length >= 1000 || context.length >= 2400)
+  const ancestorContext = ancestors(element).slice(1).filter(ancestor =>
+    ancestor.matches('section,[role="region"],[data-section-id],fieldset,[role="group"],[data-params],[data-item-id]'))
+    .map(ancestor => [
+      referencedText(ancestor, "aria-labelledby"), ancestor.getAttribute("aria-label"),
+      referencedText(ancestor, "aria-describedby"), ancestor.getAttribute("title"),
+      staticText(ancestor.querySelector('legend,h1,h2,h3,h4,h5,h6,[role="heading"]')),
+    ].filter(Boolean).join(" "));
+  const context = semanticText([name, questionContext, formName, ...descriptors, ...ancestorContext].join(" "));
+  if (sensitivePatterns.some(pattern => pattern.test(context)) || /^(?:pan|nhs|nino)$/i.test(name.trim()))
+    return { status: "blocked", reason: "sensitive" };
+  const clarification = semanticText([groupName(group), ...ancestorContext].join(" "));
+  const qualified = clarification.toLowerCase().includes(name.toLowerCase()) && clarification.length > name.length + 2;
+  const unclearName = unqualifiedName.test(name) ? !qualified :
+    vagueName.test(name) && (!clarification || vagueName.test(clarification) || clarification.toLowerCase() === name.toLowerCase());
+  if (!name || unclearName || questionContext.length >= 1000 || context.length >= 2400)
     return { status: "blocked", reason: "uncertain" };
   return { status: "safe" };
 }
@@ -267,6 +290,39 @@ function availableOption(option: HTMLElement): boolean {
   return true;
 }
 
+function nativeSubmit(element: HTMLElement): boolean {
+  return element instanceof HTMLButtonElement ? element.type === "submit" :
+    element instanceof HTMLInputElement && (element.type === "submit" || element.type === "image");
+}
+
+function submitCandidates(scope: ParentNode = document): HTMLElement[] {
+  return all('button,input[type="submit"],input[type="image"],[role="button"]', scope)
+    .filter(element => nativeSubmit(element) || element.getAttribute("role") === "button")
+    .filter(element => rendered(element));
+}
+
+function fallbackGroup(elements: readonly HTMLElement[]): boolean {
+  if (elements.length === 1) return true;
+  const shared = ancestors(elements[0]).find(ancestor => elements.every(element => ancestors(element).includes(ancestor)));
+  if (!(shared instanceof HTMLElement) || shared.matches('html,body,main,[role="main"]')) return false;
+  if (shared.matches('fieldset,[role="group"],[data-form],[data-form-id]')) return true;
+  const branches = [...new Set(elements.map(element =>
+    ancestors(element).find(ancestor => parentOf(ancestor) === shared)).filter((branch): branch is Element => !!branch))];
+  const separateGroups = branches.filter(branch => branch.matches('section,article,fieldset,[role="group"],[role="region"]') ||
+    !!branch.querySelector('legend,h1,h2,h3,h4,h5,h6,[role="heading"]'));
+  if (separateGroups.length > 1) return false;
+  // A common layout container alone is insufficient: require a single submit action.
+  const submitters = submitCandidates(shared).filter(element =>
+    nativeSubmit(element) || /\b(?:submit|send|finish)\b/i.test(
+      element.getAttribute("aria-label") || staticText(element)));
+  if (submitters.length !== 1) return false;
+  const submitBranch = ancestors(submitters[0]).find(ancestor => parentOf(ancestor) === shared);
+  // A submit nested inside one field group does not establish ownership of siblings.
+  if (submitBranch && elements.some(element => submitBranch.contains(element)) &&
+      !elements.every(element => submitBranch.contains(element))) return false;
+  return true;
+}
+
 const documentId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `doc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export class FormModel {
@@ -304,12 +360,8 @@ export class FormModel {
       if (root) buckets.get(root)?.push(candidate);
       else unrooted.push(candidate);
     }
-    // A fallback requires a single shared semantic container, or one lone control.
-    if (!roots.length && unrooted.length) {
-      const scopes = unrooted.map(element => ancestors(element).find(ancestor => ancestor.matches('main,[role="main"],article,[role="article"],section,[role="region"]')));
-      const common = scopes[0] && scopes.every(scope => scope === scopes[0]);
-      if (unrooted.length === 1 || common) buckets.set(document, unrooted);
-    }
+    // A shared <main> can contain unrelated widgets; it is not form evidence.
+    if (!roots.length && unrooted.length && fallbackGroup(unrooted)) buckets.set(document, unrooted);
 
     const nextControls = new Map<string, FormControl>();
     const forms: FormEntry[] = [];
@@ -374,10 +426,14 @@ export class FormModel {
       const rootShape = root instanceof HTMLFormElement
         ? [root.getAttribute("action") || "", root.getAttribute("method") || "", root.getAttribute("target") || ""]
         : [root instanceof Document ? "document" : root.getAttribute("role") || ""];
-      const submitShape = all('button[type="submit"],input[type="submit"],input[type="image"],[role="button"]')
-        .filter(element => root instanceof Document || root.contains(element) || ("form" in element && (element as HTMLButtonElement).form === root))
-        .filter(element => rendered(element))
-        .flatMap(element => [this.id(element), element.getAttribute("formaction") || "", element.getAttribute("formmethod") || "", element.getAttribute("formtarget") || "", String(isDisabled(element))]);
+      const submitShape = submitCandidates()
+        .filter(element => root instanceof Document ? true : root instanceof HTMLFormElement
+          ? ((element instanceof HTMLButtonElement || element instanceof HTMLInputElement) && element.form === root) ||
+            (element.getAttribute("role") === "button" && root.contains(element))
+          : root.contains(element))
+        .flatMap(element => [this.id(element), element.getAttribute("type") || "", element.getAttribute("aria-label") || staticText(element),
+          element.getAttribute("formaction") || "", element.getAttribute("formmethod") || "", element.getAttribute("formtarget") || "",
+          String(element.hasAttribute("formnovalidate")), String(isDisabled(element))]);
       const signature = digest([formId, name, ...rootShape, ...submitShape, ...controls.flatMap(control => [
         control.id, control.name, control.type, control.section,
         this.id(sectionRoot(control.element, root) || root),
