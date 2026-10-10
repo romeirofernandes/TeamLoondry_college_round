@@ -6,11 +6,17 @@ export class Tracker {
   private timer:ReturnType<typeof setInterval>|null=null;
   private generation=0;
   private video:HTMLVideoElement|null=null;
-  async start(video:HTMLVideoElement,mode:PointerMode,onPoint:(point:RawPoint|null,time:number)=>void,onError:(message:string)=>void){
+  private pending:Promise<void>|null=null;
+  async shutdown(){this.stop();if(this.pending)await this.pending.catch(()=>{});}
+  start(video:HTMLVideoElement,mode:PointerMode,onPoint:(point:RawPoint|null,time:number)=>void,onError:(message:string)=>void){
+    const pending=this.open(video,mode,onPoint,onError);this.pending=pending;return pending.finally(()=>{if(this.pending===pending)this.pending=null;});
+  }
+  private async open(video:HTMLVideoElement,mode:PointerMode,onPoint:(point:RawPoint|null,time:number)=>void,onError:(message:string)=>void){
     this.stop(); const generation=this.generation;this.video=video;
     const stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},frameRate:{ideal:24,max:30}},audio:false});
     if(generation!==this.generation){stream.getTracks().forEach(t=>t.stop());throw new Error("Camera setup cancelled");}
     this.stream=stream;video.srcObject=stream;
+    try{
     await video.play();
     if(generation!==this.generation)throw new Error("Camera setup cancelled");
     const worker=new Worker(new URL("./vision.worker.ts",import.meta.url));this.worker=worker;
@@ -34,6 +40,7 @@ export class Tracker {
       catch(error){busy=false;onError(error instanceof Error?error.message:"Camera frame unavailable");}
     },40);
     stream.getVideoTracks()[0]?.addEventListener("ended",()=>{if(generation===this.generation)onError("Camera disconnected. Stop and reconnect it.");});
+    }catch(error){if(generation===this.generation)this.stop();throw error;}
   }
   stop(){this.generation++;if(this.timer)clearInterval(this.timer);this.timer=null;this.worker?.terminate();this.worker=null;this.stream?.getTracks().forEach(t=>t.stop());this.stream=null;if(this.video)this.video.srcObject=null;}
 }

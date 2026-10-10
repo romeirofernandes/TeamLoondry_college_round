@@ -40,7 +40,7 @@ it("requests only a selected microphone and releases the permission-check stream
   vi.stubGlobal("location", {search:"?kind=devices&camera=false&microphone=true&return=%23setup"});
   const stop = vi.fn(); const getUserMedia = vi.fn(async () => ({getTracks:()=>[{stop}]}));
   vi.stubGlobal("navigator", {mediaDevices:{getUserMedia},permissions:{query:vi.fn(async()=>({state:"prompt",addEventListener:vi.fn()}))}});
-  vi.stubGlobal("chrome",{runtime:{sendMessage:vi.fn(async()=>({pages:false,tabs:false,provider:false}))},permissions:{onAdded:{addListener:vi.fn()},onRemoved:{addListener:vi.fn()}}});
+  vi.stubGlobal("chrome",{runtime:{sendMessage:vi.fn(async(message)=>message.type==="PREPARE_BROWSER_CAPTURE"?{ok:true}:{pages:false,tabs:false,provider:false})},permissions:{onAdded:{addListener:vi.fn()},onRemoved:{addListener:vi.fn()}}});
   await import("../src/permissions");await flush();
   expect(document.querySelector<HTMLElement>('[data-kind="camera"]')!.hidden).toBe(true);
   expect(document.querySelector<HTMLElement>('[data-kind="microphone"]')!.hidden).toBe(false);

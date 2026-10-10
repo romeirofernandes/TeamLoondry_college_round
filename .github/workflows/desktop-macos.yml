@@ -1,20 +1,24 @@
-name: Desktop macOS build and installation
+name: Desktop macOS build, installation and release
 on:
   push:
-    branches: ["feat/macos-desktop"]
-    paths: ["desktop/**", ".github/workflows/desktop-macos.yml"]
+    branches: ["feat/macos-desktop", "main"]
+    paths: ["desktop/**", "shared/**", "extension/**", ".github/workflows/desktop-macos.yml"]
   pull_request:
-    paths: ["desktop/**", ".github/workflows/desktop-macos.yml"]
+    paths: ["desktop/**", "shared/**", "extension/**", ".github/workflows/desktop-macos.yml"]
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: handsfree-macos-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   macos:
     runs-on: macos-26
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
       MACOSX_DEPLOYMENT_TARGET: "26.0"
       CARGO_TERM_COLOR: always
+      HANDSFREE_RELEASE: "1"
     defaults:
       run:
         working-directory: desktop
@@ -24,42 +28,78 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            extension/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
-      - name: Verify native platform
+      - name: Verify native platform and release versions
         run: |
           test "$(uname -m)" = arm64
           sw_vers
-          node --version
-          rustc --version
+          node -e 'const fs=require("fs"); const v=require("./package.json").version; if(v!==require("./package-lock.json").version||v!==require("./src-tauri/tauri.conf.json").version||!fs.readFileSync("src-tauri/Cargo.toml","utf8").includes(`version = "${v}"`))throw Error("Release versions differ")'
       - run: npm ci
       - run: npx playwright install chromium
       - run: npm run check
-      - name: Native Rust policy and geometry checks
+      - name: Native Rust policy, framing and geometry checks
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: Extension type, transaction, lifecycle and browser checks
+        working-directory: extension
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+          CHROMIUM_PATH=$(node --input-type=module -e 'import {chromium} from "@playwright/test"; console.log(chromium.executablePath())') npm run test:e2e
       - name: Build the real ARM64 app and DMG
         run: npm run tauri build -- --target aarch64-apple-darwin --bundles app,dmg
-      - name: Prepare exact candidate
+      - name: Prepare exact candidate and credential-free extension
         run: |
           mkdir -p release
           cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg release/
           cp scripts/install-app.sh scripts/update-app.sh release/
-          cd release
-          shasum -a 256 *.dmg *.sh > SHA256SUMS
-      - name: Install, update, reject corrupt package, and launch installed WKWebView
-        run: python3 scripts/macos-smoke.py release/Handsfree_0.1.0_aarch64.dmg release/macos-validation.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: handsfree-macos-test-evidence
-          path: |
-            desktop/release/*.json
-            desktop/release/*.png
+          cd ../extension/dist
+          zip -qr ../../desktop/release/handsfree-extension.zip .
+          cd ../../desktop/release
+          shasum -a 256 *.dmg *.sh *.zip > SHA256SUMS
+      - name: Install, update, native bridge, capture handoff and installed WKWebView
+        run: python3 scripts/macos-smoke.py release/Handsfree_0.2.0_aarch64.dmg release/macos-validation.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: handsfree-macos-preview
           path: desktop/release/
           if-no-files-found: error
+  publish:
+    needs: macos
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: handsfree-macos-preview
+          path: candidate
+      - name: Validate candidate and publish tested preview
+        run: |
+          cd candidate
+          sha256sum -c SHA256SUMS
+          python3 -c 'import json; r=json.load(open("macos-validation.json")); assert all(c["status"]=="passed" for c in r["checks"]); assert len(r["checks"])>=12'
+          tag="v0.2.0-preview.${{ github.run_number }}"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target '${{ github.sha }}' --prerelease --title "Handsfree $tag · macOS 26 ARM64" --notes-file ../desktop/RELEASE_NOTES.md ./*
+          asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets[] | select(.name == "install-app.sh") | .id')
+          cd ..
+          python3 desktop/scripts/release-readme.py "$tag" "$asset_id"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add README.md desktop/release-info.json
+          git commit -m "docs(release): install and update commands for $tag [skip ci]"
+          git push origin "HEAD:${{ github.ref_name }}"

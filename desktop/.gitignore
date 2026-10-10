@@ -4,3 +4,5 @@
 /test-results/
 /playwright-report/
 /scripts/__pycache__/
+/src-tauri/resources/handsfree-speech
+/release/

@@ -1,5 +1,5 @@
 """Test the actual DMG installer and installed native WKWebView without input injection."""
-import hashlib, json, os, pathlib, subprocess, sys, tempfile, time
+import hashlib, json, os, pathlib, subprocess, sys, tempfile, time, struct, select
 package = pathlib.Path(sys.argv[1]).resolve()
 report_path = pathlib.Path(sys.argv[2]).resolve()
 release = package.parent
@@ -47,7 +47,9 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-") as temporary:
     assert result.returncode != 0 and hashlib.sha256(binary.read_bytes()).hexdigest() == before
     record("checksum failure preserves installed executable")
     ready = temp / "frontend-ready.json"
-    ui_env = dict(env, HANDSFREE_SMOKE_REPORT=str(ready), HANDSFREE_SMOKE_HOLD="1")
+    bridge_home=temp / "Private bridge home"
+    bridge_home.mkdir()
+    ui_env = dict(env, HOME=str(bridge_home), HANDSFREE_SMOKE_REPORT=str(ready), HANDSFREE_SMOKE_HOLD="1")
     process = subprocess.Popen([str(binary)], env=ui_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         deadline = time.monotonic() + 60
@@ -57,6 +59,57 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-") as temporary:
         ui = json.loads(ready.read_text())
         assert ui["frontendReady"] is True
         record("installed native WKWebView renders React and invokes Rust")
+        extension_id="abcdefghijklmnopabcdefghijklmnop"
+        run([str(binary),"--register-extension",extension_id],env=ui_env)
+        manifest=json.loads((bridge_home / "Library/Application Support/Google/Chrome/NativeMessagingHosts/com.handsfree.desktop.json").read_text())
+        assert manifest["allowed_origins"]==[f"chrome-extension://{extension_id}/"]
+        assert (bridge_home/".handsfree").stat().st_mode & 0o777 == 0o700
+        record("native host registration binds only the selected extension origin")
+        wrong=subprocess.run([str(binary),"--native-host","chrome-extension://wrong/"],env=ui_env,capture_output=True,timeout=10)
+        assert wrong.returncode!=0
+        record("native host rejects an unpaired browser origin")
+        hosts=[]
+        def host():
+            child=subprocess.Popen([manifest["path"],f"chrome-extension://{extension_id}/"],env=ui_env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            hosts.append(child);return child
+        serial=0
+        def request(child,kind,**values):
+            nonlocal_unused=None
+            data=json.dumps(dict(id=kind,type=kind,**values)).encode()
+            child.stdin.write(struct.pack("=I",len(data))+data);child.stdin.flush()
+            assert select.select([child.stdout],[],[],12)[0], "native host response timed out"
+            header=child.stdout.read(4);assert len(header)==4,"native host closed unexpectedly"
+            size=struct.unpack("=I",header)[0];assert size<=1024*1024
+            return json.loads(child.stdout.read(size))
+        try:
+            first=host();assert request(first,"hello")["result"]["protocol"]==1
+            assert request(first,"fileChunk",token="missing",index=0)["ok"] is False
+            record("installed native messaging framing and unauthorized file read rejection")
+            assert request(first,"showPanel")["ok"]
+            deadline=time.monotonic()+10
+            while time.monotonic()<deadline and json.loads(ready.read_text()).get("view")!="compact":time.sleep(.1)
+            assert json.loads(ready.read_text())["view"]=="compact"
+            record("installed WKWebView renders the compact camera and start-stop view")
+            run(["screencapture","-x",str(report_path.with_name("handsfree-macos-compact.png"))])
+            assert request(first,"claim")["ok"]
+            assert request(first,"heartbeat")["result"]["owner"]=="browser"
+            second=host();assert request(second,"hello")["ok"]
+            assert request(second,"claim")["ok"] is False
+            record("browser claim waits for renderer capture release and excludes a second owner")
+            assert request(first,"release")["result"]["owner"]=="none"
+            assert request(first,"heartbeat")["ok"] is False
+            record("browser release invalidates ownership without restarting desktop")
+        finally:
+            for child in hosts:
+                child.stdin.close()
+                try: child.wait(timeout=5)
+                except subprocess.TimeoutExpired: child.kill();child.wait()
+        # Closing a browser lease leaves capture stopped; show the compact panel for the screenshot.
+        last=host()
+        try: assert request(last,"showPanel")["ok"]
+        finally:
+            last.stdin.close();last.wait(timeout=5)
+        time.sleep(.5)
         screenshot = report_path.with_name("handsfree-macos-panel.png")
         run(["screencapture", "-x", str(screenshot)])
         image = run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", str(screenshot)]).stdout
@@ -69,6 +122,6 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-") as temporary:
             except subprocess.TimeoutExpired: process.kill(); process.wait()
     assert not list(destination.glob(".Handsfree.*"))
     record("installer leaves no staging or backup directories")
-report = {"schemaVersion":1,"artifact":package.name,"sha256":hashlib.sha256(package.read_bytes()).hexdigest(),"checks":checks,"diagnostics":diagnostics,"physicalM4":"pending","cameraTracking":"pending physical device","accessibilityInput":"pending physical device","developerIdSigned":False,"notarized":False}
+report = {"schemaVersion":2,"artifact":package.name,"sha256":hashlib.sha256(package.read_bytes()).hexdigest(),"checks":checks,"diagnostics":diagnostics,"physicalM4":"pending","cameraTracking":"pending physical device","accessibilityInput":"pending physical device","nativeFileChooser":"pending interactive physical device","nativeVoice":"helper packaged; microphone and permission qualification pending","browserIntegration":"installed native-host transport tested; live Chrome and signed-in sites pending","developerIdSigned":False,"notarized":False}
 report_path.write_text(json.dumps(report,indent=2)+"\n")
 print(json.dumps({"passed":len(checks),"artifact":package.name}))

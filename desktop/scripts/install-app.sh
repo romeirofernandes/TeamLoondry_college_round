@@ -25,23 +25,23 @@ if [[ $# == 2 && "$1" == --local-package ]]; then
   asset=$(basename "$package")
 else
   [[ $# == 0 ]] || { echo 'Usage: install-app.sh [--local-package FILE]' >&2; exit 1; }
+  command -v gh >/dev/null || { echo 'This repository is private. Install GitHub CLI and use your existing collaborator login, or download the DMG and SHA256SUMS from the release page and use --local-package.' >&2; exit 1; }
   tag="${HANDSFREE_VERSION:-}"
   if [[ -z "$tag" ]]; then
-    resolved=$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest")
-    tag=${resolved##*/}
+    tag=$(gh api "repos/$repo/releases?per_page=20" --jq '[.[] | select(.draft == false)][0].tag_name')
   fi
   [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || { echo 'No valid release found.' >&2; exit 1; }
   release_version=${tag#v}
   release_version=${release_version%%-*}
   asset="Handsfree_${release_version}_aarch64.dmg"
-  url="https://github.com/$repo/releases/download/$tag"
-  curl -fsSL --retry 3 "$url/$asset" -o "$work_dir/$asset"
-  curl -fsSL --retry 3 "$url/SHA256SUMS" -o "$work_dir/SHA256SUMS"
+  gh release download "$tag" --repo "$repo" --pattern "$asset" --pattern SHA256SUMS --dir "$work_dir"
+
 fi
 expected=$(awk -v name="$asset" '$2==name {print $1}' "$work_dir/SHA256SUMS")
 [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo 'Exactly one package checksum is required.' >&2; exit 1; }
 actual=$(shasum -a 256 "$work_dir/$asset" | awk '{print $1}')
 [[ "$expected" == "$actual" ]] || { echo 'Package checksum mismatch. Existing installation preserved.' >&2; exit 1; }
+if pgrep -x handsfree-desktop >/dev/null; then echo 'Quit Handsfree before installing or updating. The installed app was not changed.' >&2; exit 1; fi
 mkdir -p "$install_dir"
 [[ ! -L "$destination" ]] || { echo 'Refusing to replace a symlink installation.' >&2; exit 1; }
 mount_dir="$work_dir/mount"
@@ -73,6 +73,10 @@ if ! mv "$app" "$destination"; then
   exit 1
 fi
 if [[ -n "$backup" ]]; then rm -rf "$backup"; fi
+if [[ -f "$HOME/.handsfree/extension-id" ]]; then
+  extension_id=$(cat "$HOME/.handsfree/extension-id")
+  "$destination/Contents/MacOS/$executable" --register-extension "$extension_id" || echo 'Browser registration needs repair in Handsfree settings.' >&2
+fi
 printf 'Installed Handsfree at %s\n' "$destination"
 echo 'First open: if macOS blocks launch, use System Settings > Privacy & Security > Open Anyway for Handsfree.'
 echo 'Camera and macOS input-control access are separate grants. Existing files are preserved.'

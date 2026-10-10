@@ -3,13 +3,30 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable",
+      "WebWorker"
+    ],
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["chrome", "node"],
-    "allowImportingTsExtensions": true
+    "types": [
+      "chrome",
+      "node"
+    ],
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@mediapipe/tasks-vision": [
+        "./node_modules/@mediapipe/tasks-vision"
+      ]
+    }
   },
-  "include": ["src", "tests", "*.ts"]
+  "include": [
+    "src",
+    "tests",
+    "*.ts"
+  ]
 }

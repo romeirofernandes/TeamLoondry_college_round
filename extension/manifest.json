@@ -4,15 +4,37 @@
   "version": "0.1.0",
   "description": "Browse with face movements, broad hand gestures, and deliberate voice commands.",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "activeTab", "scripting", "offscreen", "tts"],
-  "optional_permissions": ["tabs"],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
-  "host_permissions": ["https://api.groq.com/*", "https://openrouter.ai/*", "http://localhost/*", "http://127.0.0.1/*"],
-  "background": { "service_worker": "background.js", "type": "module" },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "offscreen",
+    "tts",
+    "nativeMessaging"
+  ],
+  "optional_permissions": [
+    "tabs"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "host_permissions": [
+    "https://api.groq.com/*",
+    "https://openrouter.ai/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_title": "Handsfree",
-    "default_icon": { "32": "brand/handsfree-icon-32.png" }
+    "default_icon": {
+      "32": "brand/handsfree-icon-32.png"
+    }
   },
   "icons": {
     "32": "brand/handsfree-icon-32.png",
@@ -23,7 +45,9 @@
   },
   "commands": {
     "pause-handsfree": {
-      "suggested_key": { "default": "Alt+Shift+P" },
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
       "description": "Pause or resume Handsfree"
     }
   }

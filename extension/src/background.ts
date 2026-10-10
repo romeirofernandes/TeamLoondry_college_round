@@ -1,3 +1,5 @@
+import {claimDesktop,releaseDesktop,connectDesktop,disconnectDesktop,paired,onDesktopLost} from "./desktop";
+import {uploadFile} from "./file-upload";
 import { parseSite, siteCandidates, unsafeSpeech, isCancellation } from "./sites/language";
 import { siteHomes } from "./sites/catalogue";
 import type { SiteResult, SiteSnapshot } from "./sites/types";
@@ -201,7 +203,7 @@ async function ensureOffscreen() {
   await creatingOffscreen;
 }
 async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>["command"], options: { gesture?: import("./shared").HandGesture; presets?: GesturePreset[] } = {}) {
-  if (command === "start" || command === "ui-start") await ensureOffscreen();
+  if (command === "start" || command === "ui-start") {await claimDesktop();await ensureOffscreen();}
   if (command !== "start" && command !== "ui-start") {
     const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
     if (!contexts.length) return;
@@ -238,6 +240,7 @@ async function stop() {
   await controller("stop");
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
   if (contexts.length) await chrome.offscreen.closeDocument();
+  await releaseDesktop();
   await chrome.storage.local.set({ logs });
 }
 async function pause() {
@@ -567,6 +570,7 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     return;
   }
   if (!state.running || state.paused) return;
+  if(intent.type==="upload-file"){if(state.targetTabId===null)return;const tab=state.targetTabId,revision=pageRevision;try{const result=await uploadFile(tab,()=>current()&&state.running&&!state.paused&&state.targetTabId===tab&&pageRevision===revision);await publish({feedback:result});}catch(e){await publish({feedback:e instanceof Error?e.message:String(e)});}return;}
   record(intent.type === "unknown" ? "command-unknown" : "command-recognized");
   record("command-" + intent.type);
   if (intent.type === "unknown") {
@@ -889,6 +893,10 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       error: "This message is reserved for extension controls.",
     };
   switch (message.type) {
+    case "DESKTOP_CONNECT": return connectDesktop();
+    case "DESKTOP_DISCONNECT": await stop();await disconnectDesktop();return {ok:true};
+    case "DESKTOP_STATUS":return {paired:await paired()};
+    case "PREPARE_BROWSER_CAPTURE":await claimDesktop();return {ok:true};
     case "UI_VOICE": {
       if (!dashboard || sender.tab?.id === undefined) return {ok:false,error:"Open the connected dashboard to use setup voice."};
       if (!message.enabled) {
@@ -1087,6 +1095,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     case "OPEN_DASHBOARD":
       return openController(message.tabId, message.hash);
     case "START":
+      await claimDesktop();
       activeProvider?.abort();
       pageRevision++;
       if (message.tabId !== undefined && !isDashboard((await chrome.tabs.get(message.tabId)).url)) await target(message.tabId);
@@ -1223,10 +1232,10 @@ chrome.runtime.onMessage.addListener((message: Message, sender, respond) => {
     return;
   void handle(message, sender)
     .then(respond)
-    .catch(() =>
+    .catch((error) =>
       respond({
         ok: false,
-        error: "The action failed. Check permissions and retry.",
+        error: error instanceof Error?error.message:"The action failed. Check permissions and retry.",
       }),
     );
   return true;
@@ -1295,3 +1304,5 @@ chrome.permissions.onRemoved?.addListener(() => {
     if (state.running) await pause();
   });
 });
+
+onDesktopLost(()=>{void stop().then(()=>publish({feedback:"Desktop disconnected. Browser capture stopped. Open Handsfree and reconnect."}));});

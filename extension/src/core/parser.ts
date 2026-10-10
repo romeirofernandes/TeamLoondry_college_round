@@ -12,6 +12,7 @@ export function normalizeSpeech(text: string): string {
 }
 
 const fixed: Record<string, Intent> = {
+  "upload file":{type:"upload-file"},"attach file":{type:"upload-file"},"choose file":{type:"upload-file"},
   "show links": { type: "show-links" },
   "scroll up": { type: "scroll", direction: "up" },
   "scroll down": { type: "scroll", direction: "down" },

@@ -1,4 +1,7 @@
 mod native;
+mod bridge;
+mod commands;
+mod speech;
 mod session;
 use serde_json::{json, Value};
 use session::{Sample, Session, Snapshot};
@@ -9,7 +12,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 type Core = Mutex<Session>;
 
 pub fn diagnostics() -> Value {
-    json!({"product":"Handsfree","version":env!("CARGO_PKG_VERSION"),"os":std::env::consts::OS,"arch":std::env::consts::ARCH,"nativeControl":cfg!(target_os="macos"),"inputAccess":native::trusted(),"accessibilityApi":native::accessibility_trusted(),"displays":native::displays().unwrap_or_default(),"state":"stopped","cloudSpeech":false,"voiceImplemented":false})
+    json!({"product":"Handsfree","version":env!("CARGO_PKG_VERSION"),"os":std::env::consts::OS,"arch":std::env::consts::ARCH,"nativeControl":cfg!(target_os="macos"),"inputAccess":native::trusted(),"accessibilityApi":native::accessibility_trusted(),"displays":native::displays().unwrap_or_default(),"state":"stopped","cloudSpeech":false,"voiceImplemented":cfg!(target_os="macos")})
 }
 #[tauri::command]
 fn status(core:State<Core>)->Result<Value,String>{Ok(json!({"session":core.lock().map_err(|_|"Session lock failed")?.snapshot,"capabilities":diagnostics()}))}
@@ -24,13 +27,15 @@ fn open_help(kind:String)->Result<(),String>{
     {let _=url;Err("Open the website dashboard in your browser".into())}
 }
 #[tauri::command]
-fn start(display_id:u32,core:State<Core>)->Result<Snapshot,String>{
+fn start(display_id:u32,core:State<Core>,app:tauri::AppHandle)->Result<Snapshot,String>{
+    bridge::assert_desktop(&app)?;
     if !native::trusted(){return Err("Allow Handsfree to control your Mac in Privacy & Security settings first".into());}
     if !native::displays()?.iter().any(|d|d.id==display_id){return Err("Select an available display".into());}
     Ok(core.lock().map_err(|_|"Session lock failed")?.start(display_id,Instant::now()))
 }
 #[tauri::command]
-fn control(action:String,core:State<Core>)->Result<Snapshot,String>{
+fn control(action:String,core:State<Core>,app:tauri::AppHandle)->Result<Snapshot,String>{
+    speech::stop(&app);
     let mut session=core.lock().map_err(|_|"Session lock failed")?;
     match action.as_str(){"pause"=>Ok(session.pause("Paused")),"stop"=>Ok(session.stop()),_=>Err("Unknown session action".into())}
 }
@@ -56,9 +61,9 @@ fn dwell_click(epoch:u64,app:tauri::AppHandle)->Result<(),String>{
     session.activation(epoch,Instant::now(),true)?;native::click(false)
 }
 #[tauri::command]
-fn frontend_ready(app:tauri::AppHandle)->Result<(),String>{
+fn frontend_ready(app:tauri::AppHandle,view:Option<String>)->Result<(),String>{
     if let Ok(file)=std::env::var("HANDSFREE_SMOKE_REPORT"){
-        let report=json!({"frontendReady":true,"diagnostics":diagnostics()});
+        let report=json!({"frontendReady":true,"view":view,"diagnostics":diagnostics()});
         std::fs::write(file,serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
         if std::env::var("HANDSFREE_SMOKE_HOLD").as_deref()!=Ok("1"){app.exit(0);}
     }
@@ -80,16 +85,22 @@ pub fn run(){
             else{Ok(())};
             if let Err(error)=outcome{let _=app.emit("native-error",error);}
         }).build())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(speech::Speech::default())
+        .manage(bridge::Bridge::default())
         .manage(Mutex::new(Session::default()))
-        .invoke_handler(tauri::generate_handler![status,request_access,open_help,start,control,heartbeat,pointer,dwell_click,frontend_ready])
+        .invoke_handler(tauri::generate_handler![status,request_access,open_help,start,control,heartbeat,pointer,dwell_click,frontend_ready,bridge::pair_extension,bridge::handoff_ready,bridge::capture_allowed,commands::native_command,commands::panel_layout,speech::voice_start,speech::voice_stop])
         .setup(|app|{
+            if let Err(e)=bridge::serve(app.handle().clone()){eprintln!("Native bridge unavailable: {e}");}
             use tauri::menu::{Menu,MenuItem};
             let show=MenuItem::with_id(app,"show","Show Handsfree",true,None::<&str>)?;
+            let settings=MenuItem::with_id(app,"settings","Settings and setup",true,None::<&str>)?;
             let pause=MenuItem::with_id(app,"pause","Pause control",true,None::<&str>)?;
             let quit=MenuItem::with_id(app,"quit","Quit Handsfree",true,None::<&str>)?;
-            let menu=Menu::with_items(app,&[&show,&pause,&quit])?;
+            let menu=Menu::with_items(app,&[&show,&settings,&pause,&quit])?;
             let mut tray=tauri::tray::TrayIconBuilder::new().menu(&menu).tooltip("Handsfree").on_menu_event(|app,event|match event.id.as_ref(){
                 "show"=>{if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.set_focus();}},
+                "settings"=>{let _=app.emit("show-settings",());if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.set_focus();}},
                 "pause"=>{if let Ok(mut s)=app.state::<Core>().lock(){let _=app.emit("session",s.pause("Paused from menu"));}},
                 "quit"=>app.exit(0),_=>{}
             });
@@ -107,3 +118,7 @@ pub fn run(){
         .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{..}=event{if let Ok(mut s)=window.state::<Core>().lock(){s.stop();}}})
         .run(tauri::generate_context!()).expect("Could not start Handsfree");
 }
+
+pub fn native_host()->Result<(),String>{bridge::native_host()}
+
+pub fn register_extension(id:&str)->Result<(),String>{bridge::register(id)}

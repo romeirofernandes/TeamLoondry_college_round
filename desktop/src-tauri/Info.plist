@@ -3,4 +3,4 @@
 <plist version="1.0"><dict>
 <key>NSCameraUsageDescription</key><string>Handsfree uses your camera locally to move the pointer with your head or hand. Video is not saved or uploaded.</string>
 <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
-</dict></plist>
+<key>NSMicrophoneUsageDescription</key><string>Listen for the app commands you enable.</string><key>NSSpeechRecognitionUsageDescription</key><string>Recognize app commands on this Mac without cloud speech.</string></dict></plist>
