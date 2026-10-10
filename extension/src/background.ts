@@ -4,6 +4,7 @@ import type { SiteResult, SiteSnapshot } from "./sites/types";
 import {
   defaults,
   normalizeControlSettings,
+  inputMethods,
   initialState,
   type Message,
   type SessionState,
@@ -497,6 +498,19 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     await resume();
     return;
   }
+  if (intent.type === "switch-pointer") {
+    if (!inputMethods(settings).includes(intent.mode)) {
+      await publish({ feedback: "Select this input in Profile and preferences first." });
+      return;
+    }
+    if (intent.mode === settings.pointerMode) return;
+    activeProvider?.abort(); pageRevision++; linkAuthorizationRevision++;
+    settings = normalizeControlSettings({ ...settings, pointerMode: intent.mode });
+    await chrome.storage.local.set({ settings });
+    await publish({ confidence: 0, calibrationProgress: null, calibrationSnapshots: {}, feedback: `${intent.mode === "face" ? "Head" : "Hand"} pointer selected. Your saved calibration will be used.` });
+    await pageState(); await controller("settings");
+    return;
+  }
   if (!state.running || state.paused) return;
   record(intent.type === "unknown" ? "command-unknown" : "command-recognized");
   record("command-" + intent.type);
@@ -932,7 +946,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return { ok: true };
     }
     case "POINTER":
-      if (state.running && !state.paused) {
+      if (state.running && !state.paused && !settings.voiceOnly && message.sample.source === settings.pointerMode) {
         const sample = message.sample;
         if (sample.confidence === 0 && hadTracking) record("tracking-loss");
         hadTracking = sample.confidence > 0;

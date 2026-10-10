@@ -326,6 +326,14 @@ export class ContentRuntime {
       }
       case "PAGE_STATE": {
         const wasRunning = this.running;
+        if (this.settings.pointerMode !== message.settings.pointerMode || this.settings.voiceOnly !== message.settings.voiceOnly) {
+          this.gate.reset();
+          this.sample = null;
+          this.select(null);
+          this.edge = null;
+          this.scrollMotion.cancel();
+          this.cancelPending();
+        }
         this.running = message.running;
         this.paused = message.paused;
         if (

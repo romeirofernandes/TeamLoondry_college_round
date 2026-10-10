@@ -1,7 +1,7 @@
 import { Tracker } from "./tracking";
 import { SpeechAdapter } from "./speech";
 import { RecordedSpeech } from "./recording";
-import { send, type Message, type Settings, type Calibration, type PointerMode } from "./shared";
+import { send, voiceEnabled, type Message, type Settings, type Calibration, type PointerMode } from "./shared";
 
 let settings: Settings;
 let tracker: Tracker | null = null;
@@ -35,6 +35,7 @@ function stopVoice() {
 }
 async function beginVoice(token: number) {
   stopVoice();
+  if (!settings || !voiceEnabled(settings)) { status({ voice: "Off, voice input not selected" }); return; }
   const voiceToken = voiceGeneration;
   const voiceSettings = { ...settings };
   const current = () => token === generation && voiceToken === voiceGeneration && desired !== "stopped";
@@ -165,7 +166,7 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
       respond({ok:true}); return;
     }
     tracker?.updateSettings(settings);
-    if (desired !== "stopped" && (settings.language !== previous?.language || settings.speechMode !== previous?.speechMode)) void beginVoice(generation);
+    if (desired !== "stopped" && (voiceEnabled(settings) !== (previous ? voiceEnabled(previous) : false) || settings.language !== previous?.language || settings.speechMode !== previous?.speechMode)) void beginVoice(generation);
   }
   respond({ ok: true });
 });

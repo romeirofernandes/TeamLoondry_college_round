@@ -22,6 +22,7 @@ import {
 } from "@phosphor-icons/react";
 import {
   defaults,
+  inputMethods,
   normalizeControlSettings,
   initialState,
   type SessionState,
@@ -237,7 +238,13 @@ export function HandsfreeDashboard() {
     }
   }
   function save(patch: Partial<Settings>) {
-    const next = { ...settingsRef.current, ...patch };
+    const current = settingsRef.current;
+    // Keep the older pointer controls compatible during preference migration.
+    if (patch.enabledInputs === undefined && patch.voiceOnly !== undefined)
+      patch.enabledInputs = patch.voiceOnly ? ["voice"] : ["voice", patch.pointerMode ?? current.pointerMode];
+    if (patch.enabledInputs === undefined && patch.pointerMode && !inputMethods(current).includes(patch.pointerMode))
+      patch.enabledInputs = [...inputMethods(current).filter(method => method === "voice"), patch.pointerMode];
+    const next = normalizeControlSettings({ ...current, ...patch });
     settingsRef.current = next;
     setSettings(next);
     settingsQueue.current = settingsQueue.current
@@ -765,7 +772,7 @@ export function HandsfreeDashboard() {
                       {siteSupport && <><p>Selected page: {siteSupport.site}. {siteSupport.current?.identity && <>Chat ID: {siteSupport.current.identity}. </>}Say "what can I do here?" or "list results".</p><ul>{siteSupport.capabilities.filter(item => item.state !== "not-implemented").slice(0,8).map(item => <li key={item.id}>{item.description} · {item.state.replaceAll("-", " ")}</li>)}</ul></>}
                     </div>
                   </div>
-                  <SettingSwitch id="voice-only" label="Voice-only session" hint="Keep the camera off. Select named items and numbered results by speaking." checked={settings.voiceOnly} disabled={locked} onChange={(checked) => save({ voiceOnly: checked, ...(checked ? { dwellEnabled: false, edgeScroll: false } : {}) })} />
+                  <SettingSwitch id="voice-only" label="Voice-only session" hint="Keep the camera off. Select named items and numbered results by speaking." checked={settings.voiceOnly} disabled={locked} onChange={(checked) => save({ voiceOnly: checked })} />
                   <SettingSwitch id="spoken-feedback" label="Speak feedback" hint="Read choices and results aloud. Listening pauses during each response to prevent the assistant from hearing itself, then resumes." checked={settings.spokenFeedback} disabled={locked} onChange={(checked) => save({ spokenFeedback: checked })} />
                   <Field>
                     <FieldLabel htmlFor="test-message-recipients">Owned test recipients</FieldLabel>

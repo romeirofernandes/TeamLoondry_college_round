@@ -1,6 +1,11 @@
 import type { SiteRequest, SiteSnapshot } from "./sites/types";
 export type PointerMode = "face" | "hand";
+export type InputMethod = "voice" | PointerMode;
 export interface Settings {
+  /** null identifies preferences saved before independent input selection. */
+  enabledInputs: InputMethod[] | null;
+  onboardingStep: number;
+  onboardingCompleted: boolean;
   voiceOnly: boolean;
   spokenFeedback: boolean;
   testWriteTargets: string[];
@@ -26,6 +31,9 @@ export interface Settings {
   jevProvider: "typesafe" | "openrouter";
 }
 export const defaults: Settings = {
+  enabledInputs: null,
+  onboardingStep: 0,
+  onboardingCompleted: false,
   voiceOnly: false,
   spokenFeedback: false,
   testWriteTargets: [],
@@ -50,6 +58,14 @@ export const defaults: Settings = {
   groqModel: "qwen/qwen3.8-27b",
   jevProvider: "openrouter",
 };
+export function inputMethods(settings: Pick<Settings, "enabledInputs" | "voiceOnly" | "pointerMode">): InputMethod[] {
+  if (Array.isArray(settings.enabledInputs) && settings.enabledInputs.length)
+    return settings.enabledInputs;
+  return settings.voiceOnly ? ["voice"] : ["voice", settings.pointerMode];
+}
+export function voiceEnabled(settings: Settings): boolean {
+  return inputMethods(settings).includes("voice");
+}
 /** Apply the same finite bounds to old saved controls and new dashboard settings. */
 export function normalizeControlSettings(value: Partial<Settings>): Settings {
   const next = { ...defaults, ...value };
@@ -61,11 +77,20 @@ export function normalizeControlSettings(value: Partial<Settings>): Settings {
   };
   const pausePhrase = phrase(next.pausePhrase, defaults.pausePhrase);
   const resumePhrase = phrase(next.resumePhrase, defaults.resumePhrase);
+  const selected = Array.isArray(value.enabledInputs)
+    ? [...new Set(value.enabledInputs.filter((method): method is InputMethod => ["voice", "face", "hand"].includes(method))) ]
+    : inputMethods(next);
+  const enabledInputs: InputMethod[] = selected.length ? selected : ["voice"];
+  const pointerMode = enabledInputs.includes(next.pointerMode) ? next.pointerMode
+    : enabledInputs.includes("face") ? "face" : enabledInputs.includes("hand") ? "hand" : next.pointerMode === "hand" ? "hand" : "face";
   return {
     ...next,
+    enabledInputs,
+    onboardingStep: Math.round(bounded(next.onboardingStep, 0, 2, 0)),
+    onboardingCompleted: next.onboardingCompleted === true,
     testWriteTargets: Array.isArray(next.testWriteTargets) ? next.testWriteTargets.filter((value): value is string => typeof value === "string" && /^https:\/\/(?:github\.com\/[^/]+\/[^/?#]+|(?:www\.)?reddit\.com\/r\/[^/?#]+|x\.com\/[^/]+\/status\/\d+)\/?$/.test(value)).slice(0,5) : [],
     testMessageRecipients: Array.isArray(next.testMessageRecipients) ? [...new Set(next.testMessageRecipients.filter((entry): entry is string => typeof entry === "string" && /^(?:gmail:[^\s@]+@[^\s@]+\.[^\s@]+|whatsapp:[^\n]{1,100}|meet:[a-z]{3}-[a-z]{4}-[a-z]{3})$/.test(entry)).map(entry => entry.toLowerCase().trim()))].slice(0,20) : [],
-    voiceOnly: typeof next.voiceOnly === "boolean" ? next.voiceOnly : false,
+    voiceOnly: !enabledInputs.includes("face") && !enabledInputs.includes("hand"),
     spokenFeedback: typeof next.spokenFeedback === "boolean" ? next.spokenFeedback : false,
     sensitivity: bounded(next.sensitivity, 0.2, 6, defaults.sensitivity),
     handSensitivity: bounded(next.handSensitivity, 0.2, 6, defaults.handSensitivity),
@@ -78,7 +103,7 @@ export function normalizeControlSettings(value: Partial<Settings>): Settings {
     confidenceThreshold: bounded(next.confidenceThreshold, 0.5, 0.95, defaults.confidenceThreshold),
     dwellEnabled: typeof next.dwellEnabled === "boolean" ? next.dwellEnabled : defaults.dwellEnabled,
     edgeScroll: typeof next.edgeScroll === "boolean" ? next.edgeScroll : defaults.edgeScroll,
-    pointerMode: next.pointerMode === "hand" ? "hand" : "face",
+    pointerMode,
     speechMode: next.speechMode === "local" ? "local" : "browser",
   };
 }
@@ -142,6 +167,7 @@ export const initialState: SessionState = {
 };
 export type LinkDisposition = "new-tab" | "background";
 export type Intent =
+  | { type: "switch-pointer"; mode: PointerMode }
   | SiteRequest
   | { type: "scroll"; direction: "up" | "down" | "top" | "bottom" }
   | { type: "media-seek"; seconds: number }

@@ -121,6 +121,19 @@ afterEach(() => {
 });
 
 describe("background command and permission boundary", () => {
+  it("switches only to a selected pointer without resuming a paused session", async () => {
+    const { send } = await setup({ settings: { enabledInputs: ["voice", "face", "hand"] } });
+    await send({ type: "PAUSE" });
+    await send({ type: "ACTION", intent: { type: "switch-pointer", mode: "hand" } });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ pointerMode: "hand", enabledInputs: ["voice", "face", "hand"] });
+    expect(await send({ type: "GET_STATE" })).toMatchObject({ paused: true });
+  });
+  it("rejects switching to an unselected input", async () => {
+    const { send } = await setup({ settings: { enabledInputs: ["voice", "face"] } });
+    await send({ type: "HEARD", text: "switch to hands" });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ pointerMode: "face" });
+    expect(await send({ type: "GET_STATE" })).toMatchObject({ feedback: "Select this input in Profile and preferences first." });
+  });
   it("opens a new tab from ordinary phrasing without selecting a page target", async () => {
     const { browser, send } = await setup();
     await send({ type: "HEARD", text: "open a fresh tab please" });

@@ -75,6 +75,17 @@ it("starts speech without opening the camera in voice-only mode", async () => {
  expect(mocks.trackers).toHaveLength(0);expect(mocks.speech).toHaveLength(1);
  expect(mocks.speech[0].start).toHaveBeenCalled();
 });
+it("never opens a microphone for head and hand control without voice", async () => {
+ mocks.fail=false;dispatch("start",{...defaults,enabledInputs:["face","hand"]});await flush();
+ dispatch("pause");dispatch("resume");await flush();
+ expect(mocks.trackers).toHaveLength(1);expect(mocks.speech).toHaveLength(0);expect(mocks.fallback).toHaveLength(0);
+});
+it("releases speech when voice is deselected and starts it when selected again",async()=>{
+ mocks.fail=false;dispatch("start");await flush();const old=mocks.speech[0];
+ dispatch("settings",{...defaults,enabledInputs:["face"]});await flush();expect(old.stop).toHaveBeenCalled();
+ const send=vi.mocked(chrome.runtime.sendMessage);send.mockClear();old.heard("new tab");await flush();expect(send).not.toHaveBeenCalledWith(expect.objectContaining({type:"HEARD"}));
+ dispatch("settings",{...defaults,enabledInputs:["voice","face"]});await flush();expect(mocks.speech).toHaveLength(2);
+});
 it("suspends recognition during feedback and ignores echo before resuming", async () => {
  vi.useFakeTimers();mocks.fail=false;
  let utterance:any;
