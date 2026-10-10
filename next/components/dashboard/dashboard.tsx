@@ -82,6 +82,7 @@ import { CameraPreview } from "./camera-preview";
 import { InputChoices, PrimaryPointer, inputLabels } from "./input-choices";
 import { Onboarding } from "./onboarding";
 import { useScreenGuidance } from "./use-screen-guidance";
+import { GestureConfig } from "./gesture-config";
 
 type ProviderStatus = {
   groqKeyCount: number;
@@ -98,6 +99,7 @@ const views = [
   { id: "help", label: "Help", icon: Question },
   { id: "setup", label: "Setup", icon: UserFocus },
   { id: "pointer", label: "Pointer", icon: UserFocus },
+  { id: "gestures", label: "Gestures", icon: Hand },
   { id: "voice", label: "Voice", icon: Microphone },
   { id: "tabs", label: "Tabs", icon: TabsIcon },
   { id: "providers", label: "Advanced", icon: Key },
@@ -325,6 +327,7 @@ export function HandsfreeDashboard() {
   const profileView = [
     "preferences",
     "pointer",
+    "gestures",
     "voice",
     "access",
     "providers",
@@ -335,6 +338,7 @@ export function HandsfreeDashboard() {
       ? [
           "preferences",
           "pointer",
+          "gestures",
           "voice",
           "access",
           "providers",
@@ -354,6 +358,7 @@ export function HandsfreeDashboard() {
       "open preferences": "preferences",
       "open pointer": "pointer",
       "open voice": "voice",
+      "open gestures": "gestures",
       "open browser access": "access",
       "open help": "help",
       "show tabs": "tabs",
@@ -1144,6 +1149,14 @@ export function HandsfreeDashboard() {
                 </p>
               </section>
             </div>
+          </TabsContent>
+          <TabsContent value="gestures">
+            <GestureConfig
+              running={running}
+              voiceOnly={settings.voiceOnly}
+              tabsPermission={permissions?.tabs ?? false}
+              onNeedTabs={() => void safe(() => permit("tabs"), "Enable tab access to include your open websites.")}
+            />
           </TabsContent>
           <TabsContent value="voice" className="dashboard-voice-settings">
             <div className="dashboard-two-column">

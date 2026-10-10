@@ -331,6 +331,7 @@ try {
   for (const view of [
     "preferences",
     "pointer",
+    "gestures",
     "voice",
     "access",
     "providers",

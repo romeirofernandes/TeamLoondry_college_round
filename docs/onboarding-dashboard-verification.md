@@ -46,3 +46,9 @@ The audit uses WCAG A/AA tags and checks settled controls after saves and theme 
 Test actual recognition and audible narration on the intended Chrome installation, with its installed speech voices and any selected local language pack. Check real head and hand calibration, deliberate switching while moving, permission denial/revocation, and screen-reader interaction with NVDA, VoiceOver, or the user's chosen reader. TalkBack behavior has not been qualified, and the Chrome extension is not an Android extension.
 
 Reload the unpacked extension in `chrome://extensions`, then refresh the dashboard and controlled webpages. The manifest now includes Chrome's `tts` permission for setup narration. No provider credentials, environment files, deployments, or account writes were part of this change.
+
+## Remote gesture integration, 11 October 2026
+
+The push required merging remote commit `e079d52`, which adds gesture shortcuts. The merge retains both setup narration and gesture commands in the extension protocol and offscreen controller, preserves both sets of dashboard styles, and exposes Gestures under Profile with an `open gestures` dashboard voice command.
+
+The combined tree passes both TypeScript checks and production builds, 2,607 unit tests, 62 packaged Chrome scenarios, and both connected dashboard scripts. The onboarding script now includes Gestures in its responsive and 200% text-size checks. Its 24 axe checks report no WCAG-tagged violations across setup/access and all ten dashboard views in light and dark themes. Physical gesture recognition remains a hands-on qualification task.

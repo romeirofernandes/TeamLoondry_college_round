@@ -45,6 +45,12 @@ await build({
 });
 await build({
   ...common,
+  entryPoints: [path.join(root, "src/gesture-worker.ts")],
+  outfile: path.join(dist, "gesture-worker.js"),
+  format: "iife",
+});
+await build({
+  ...common,
   entryPoints: [path.join(root, "src/ui/index.tsx")],
   outfile: path.join(dist, "ui.js"),
   format: "iife",

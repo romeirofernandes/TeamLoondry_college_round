@@ -1,7 +1,9 @@
 import { Tracker } from "./tracking";
+import { GestureRuntime } from "./gesture-runtime";
+import { normalizeGesturePresets } from "./gestures";
 import { SpeechAdapter } from "./speech";
 import { RecordedSpeech } from "./recording";
-import { send, voiceEnabled, type Message, type Settings, type Calibration, type PointerMode } from "./shared";
+import { send, voiceEnabled, type Message, type Settings, type Calibration, type PointerMode, type GesturePreset, type GestureRuntimeStatus } from "./shared";
 
 let settings: Settings;
 let tracker: Tracker | null = null;
@@ -18,6 +20,56 @@ let feedbackGeneration = 0;
 let feedbackSpeaking = false;
 let uiListening = false;
 let uiLease: ReturnType<typeof setTimeout> | undefined;
+let gestureRuntime: GestureRuntime | null = null;
+let gesturePreviewTimer: ReturnType<typeof setInterval> | null = null;
+let gesturePreviewCanvas: HTMLCanvasElement | null = null;
+function gesturePreview(active: boolean) {
+  if (gesturePreviewTimer) clearInterval(gesturePreviewTimer);
+  gesturePreviewTimer = null;
+  if (!active) {
+    void send({ type: "GESTURE_PREVIEW_FRAME", frame: null }).catch(() => {});
+    return;
+  }
+  void send({ type: "GESTURE_PREVIEW_FRAME", frame: null }).catch(() => {});
+  gesturePreviewCanvas = document.createElement("canvas");
+  const context = gesturePreviewCanvas.getContext("2d", { alpha: false });
+  if (!context) return;
+  gesturePreviewTimer = setInterval(() => {
+    if (desired !== "running" || !gestureRuntime || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return;
+    const scale = Math.min(1, 480 / video.videoWidth);
+    gesturePreviewCanvas!.width = Math.round(video.videoWidth * scale);
+    gesturePreviewCanvas!.height = Math.round(video.videoHeight * scale);
+    context.drawImage(video, 0, 0, gesturePreviewCanvas!.width, gesturePreviewCanvas!.height);
+    void send({ type: "GESTURE_PREVIEW_FRAME", frame: gesturePreviewCanvas!.toDataURL("image/jpeg", 0.62) }).catch(() => {});
+  }, 250);
+}
+function createGestureRuntime(presets: GesturePreset[]) {
+  return new GestureRuntime(video, presets, presetId => {
+    void send({ type: "GESTURE_TRIGGER", presetId }).catch(() => {});
+  }, gestureStatus, gesturePreview);
+}
+function gestureStatus(status: GestureRuntimeStatus) { void send({ type: "GESTURE_STATUS", status }).catch(() => {}); }
+function setGesturePresets(presets: GesturePreset[]) {
+  if (settings?.voiceOnly || desired !== "running" || !tracker) {
+    gestureRuntime?.stop(); gestureRuntime = null;
+    gestureStatus({ ready: false, detected: null, confidence: 0 });
+    return;
+  }
+  const enabled = normalizeGesturePresets(presets);
+  if (!enabled.some(preset => preset.enabled) && !gestureRuntime) {
+    gestureStatus({ ready: false, detected: null, confidence: 0 });
+    return;
+  }
+  if (!enabled.some(preset => preset.enabled) && gestureRuntime) {
+    gestureRuntime.stop(); gestureRuntime = null;
+    gestureStatus({ ready: false, detected: null, confidence: 0 });
+    return;
+  }
+  if (gestureRuntime) gestureRuntime.update(enabled);
+  else if (enabled.some(preset => preset.enabled)) {
+    gestureRuntime = createGestureRuntime(enabled);
+  }
+}
 function status(patch: Record<string, unknown>) {
   const telemetry = Object.keys(patch).every(key => ["confidence", "fps", "latencyMs"].includes(key));
   if (telemetry && performance.now() - lastStatus < 500) return;
@@ -100,12 +152,20 @@ async function start(next: Settings) {
   void beginVoice(token);
   try { if (tracker) await tracker.start(next); else status({camera:"Off, voice-only session", trackingBackend:"Voice only", confidence:0, fps:0}); }
   catch (error) { if (token === generation) status({ feedback: error instanceof Error ? error.message : "Camera unavailable. Voice can still be used." }); }
-  finally { if (token === generation) starting = false; }
+  finally {
+    if (token === generation) {
+      starting = false;
+      if (desired === "running" && tracker && !next.voiceOnly) {
+        const stored = await chrome.storage.local.get("gesturePresets");
+        setGesturePresets(normalizeGesturePresets(stored.gesturePresets));
+      }
+    }
+  }
 }
 function pause() {
   ++feedbackGeneration; feedbackSpeaking=false; if(typeof speechSynthesis!=="undefined")speechSynthesis.cancel();
   desired = "paused";
-  tracker?.pause(); stopVoice();
+  tracker?.pause(); gestureRuntime?.setPaused(true); stopVoice();
   status({ calibrationProgress: null, interimTranscript: "" });
   void beginVoice(generation);
 }
@@ -113,6 +173,7 @@ function resume() {
   if (!settings.voiceOnly && !tracker) { void start(settings); return; }
   desired = "running";
   tracker?.resume();
+  gestureRuntime?.setPaused(false);
   void beginVoice(generation);
 }
 function stop() {
@@ -120,6 +181,8 @@ function stop() {
   desired = "stopped"; ++generation; ++feedbackGeneration;
   feedbackSpeaking = false; if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
   tracker?.stop(); tracker = null;
+  gestureRuntime?.stop(); gestureRuntime = null;
+  gestureStatus({ ready: false, detected: null, confidence: 0 });
   stopVoice();
 }
 async function calibrate() {
@@ -176,6 +239,16 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
   if (message.command === "pause") pause();
   if (message.command === "resume") resume();
   if (message.command === "calibrate") void calibrate();
+  if (message.command === "gesture-calibrate" && message.gesture) {
+    if (!tracker || desired !== "running" || starting || settings?.voiceOnly) {
+      gestureStatus({ ready: false, detected: null, confidence: 0, error: "Start a camera session before calibrating gesture shortcuts." });
+    } else {
+      if (!gestureRuntime) gestureRuntime = createGestureRuntime([]);
+      gestureRuntime.calibrate(message.gesture);
+    }
+  }
+  if (message.command === "gesture-cancel-calibration") gestureRuntime?.cancelCalibration();
+  if (message.command === "gesture-presets" && message.presets) setGesturePresets(message.presets);
   if (message.command === "settings" && message.settings) {
     const previous = settings;
     settings = message.settings;

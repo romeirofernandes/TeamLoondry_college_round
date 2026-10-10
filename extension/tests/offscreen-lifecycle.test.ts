@@ -18,7 +18,7 @@ beforeEach(async () => {
   vi.resetModules(); mocks.speech = []; mocks.fallback = []; mocks.trackers = []; mocks.fail = true;
   providerStatus = async () => ({ groqKeyCount: 5 });
   vi.stubGlobal("document", { querySelector: () => ({}) });
-  vi.stubGlobal("chrome", { runtime: {
+  vi.stubGlobal("chrome", { storage: { local: { get: vi.fn(async () => ({})) } }, runtime: {
     onMessage: { addListener: (listener: any) => { command = listener; } },
     sendMessage: vi.fn(async (message: any) => message.type === "GET_PROVIDER_STATUS" ? providerStatus() : { ok: true }),
   } });

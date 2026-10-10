@@ -20,6 +20,8 @@ import { bundledProviders } from "./provider-config";
 import { rankTabs, rankTargets, adjacentTabId } from "./core/ranking";
 import { mapCommand, resolveArbitrary, transcribeAudio, jevKeys } from "./providers";
 import { appendMetric, summarizeMetrics } from "./core/metrics";
+import { normalizeGesturePresets } from "./gestures";
+import type { GesturePreset, GestureRuntimeStatus } from "./shared";
 
 let state: SessionState = { ...initialState };
 let settings: Settings = { ...defaults };
@@ -40,8 +42,17 @@ dashboardMessages.add("GET_SITE_CONTEXT");
 dashboardMessages.add("GET_PERMISSIONS");
 dashboardMessages.add("REVOKE_PERMISSION");
 for (const type of ["UI_VOICE", "UI_SPEAK"]) dashboardMessages.add(type);
+dashboardMessages.add("GET_GESTURE_PRESETS");
+dashboardMessages.add("SAVE_GESTURE_PRESETS");
+dashboardMessages.add("GET_GESTURE_DESTINATIONS");
+dashboardMessages.add("GET_GESTURE_STATUS");
+dashboardMessages.add("CALIBRATE_GESTURE");
+dashboardMessages.add("CANCEL_GESTURE_CALIBRATION");
+dashboardMessages.add("GET_GESTURE_PREVIEW");
 let wakeUntil = 0;
 let mediaPermissions: { camera: "granted" | "denied" | "prompt" | "unknown"; microphone: "granted" | "denied" | "prompt" | "unknown" } = { camera: "unknown", microphone: "unknown" };
+let gestureRuntimeStatus: GestureRuntimeStatus = { ready: false, detected: null, confidence: 0 };
+let gesturePreviewFrame: string | null = null;
 const keyIndexStore = {
   async get(): Promise<number> { const value = (await chrome.storage.local.get("groqKeyIndex")).groqKeyIndex; return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0; },
   async set(next: number) { await chrome.storage.local.set({ groqKeyIndex: next }); },
@@ -189,13 +200,13 @@ async function ensureOffscreen() {
   if (!creatingOffscreen) creatingOffscreen = chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.AUDIO_PLAYBACK], justification: "Keep camera tracking and microphone recognition responsive while browsing other tabs." }).finally(() => { creatingOffscreen = null; });
   await creatingOffscreen;
 }
-async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>["command"]) {
+async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>["command"], options: { gesture?: import("./shared").HandGesture; presets?: GesturePreset[] } = {}) {
   if (command === "start" || command === "ui-start") await ensureOffscreen();
   if (command !== "start" && command !== "ui-start") {
     const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
     if (!contexts.length) return;
   }
-  await chrome.runtime.sendMessage({ type: "OFFSCREEN_COMMAND", command, settings: pageSettings() }).catch(() => {});
+  await chrome.runtime.sendMessage({ type: "OFFSCREEN_COMMAND", command, settings: pageSettings(), ...options }).catch(() => {});
 }
 async function stop() {
   uiVoiceTab = null; uiVoiceUntil = 0; ++narrationToken; chrome.tts?.stop();
@@ -205,6 +216,7 @@ async function stop() {
   pageRevision++;
   pendingClose = null;
   tabChoices = [];
+  gesturePreviewFrame = null;
   record("run-stop");
   await publish({
     running: false,
@@ -235,6 +247,7 @@ async function pause() {
   pageRevision++;
   pendingClose = null;
   tabChoices = [];
+  gesturePreviewFrame = null;
   record("pause");
   await publish({
     paused: true,
@@ -657,6 +670,44 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     await publish({ dictating: result.dictating });
   if (result?.error) await publish({ feedback: result.error });
 }
+async function runGesturePreset(presetId: string) {
+  if (!state.running || state.paused || typeof presetId !== "string") return;
+  const stored = await chrome.storage.local.get("gesturePresets");
+  const preset = normalizeGesturePresets(stored.gesturePresets).find(item => item.id === presetId && item.enabled);
+  if (!preset || !state.running || state.paused) return;
+  if (preset.action.type === "open-site") {
+    let url: URL;
+    try { url = new URL(preset.action.url); } catch { return; }
+    if (!(url.protocol === "https:" || url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname)) || url.username || url.password) return;
+    if (preset.action.inNewTab || state.targetTabId === null) {
+      const tab = await chrome.tabs.create({ url: url.href, active: true });
+      if (tab.id !== undefined) await target(tab.id);
+      return;
+    }
+    const existing = await chrome.tabs.get(state.targetTabId).catch(() => null);
+    if (!existing || isDashboard(existing.url)) {
+      const tab = await chrome.tabs.create({ url: url.href, active: true });
+      if (tab.id !== undefined) await target(tab.id);
+      return;
+    }
+    await chrome.tabs.update(existing.id!, { url: url.href, active: true });
+    await target(existing.id!);
+    return;
+  }
+  const intents: Record<string, Intent> = {
+    "media-toggle": { type: "media-toggle" },
+    "media-play": { type: "media-play" },
+    "media-pause": { type: "media-pause" },
+    back: { type: "back" },
+    forward: { type: "forward" },
+    "next-tab": { type: "next-tab" },
+    "previous-tab": { type: "previous-tab" },
+    "scroll-top": { type: "scroll", direction: "top" },
+    "scroll-bottom": { type: "scroll", direction: "bottom" },
+  };
+  const intent = intents[preset.action.type];
+  if (intent) await action(intent);
+}
 let commandQueue = Promise.resolve();
 let urgentCommand = Promise.resolve();
 let activeProvider: AbortController | null = null;
@@ -881,6 +932,61 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return state;
     case "GET_SETTINGS":
       return pageSettings();
+    case "GET_GESTURE_PRESETS": {
+      const saved = await chrome.storage.local.get("gesturePresets");
+      return normalizeGesturePresets(saved.gesturePresets);
+    }
+    case "SAVE_GESTURE_PRESETS": {
+      if (!Array.isArray(message.presets) || message.presets.length > 5) return { ok: false, error: "Use up to five gesture presets." };
+      const presets = normalizeGesturePresets(message.presets);
+      if (presets.length !== message.presets.length) return { ok: false, error: "One or more presets are invalid. Review the gesture and action choices." };
+      await chrome.storage.local.set({ gesturePresets: presets });
+      if (state.running && !state.paused) await controller("gesture-presets", { presets });
+      return presets;
+    }
+    case "GET_GESTURE_DESTINATIONS": {
+      const labels: Record<string, string> = { wikipedia: "Wikipedia", github: "GitHub", reddit: "Reddit", amazon: "Amazon", spotify: "Spotify", netflix: "Netflix", x: "X", whatsapp: "WhatsApp Web", gmail: "Gmail", meet: "Google Meet", linkedin: "LinkedIn Jobs", irctc: "IRCTC", maps: "Google Maps" };
+      const destinations = Object.entries(siteHomes).map(([id, url]) => ({ id: `site:${id}`, label: labels[id] || id, url, source: "suggested" }));
+      if (await chrome.permissions.contains({ permissions: ["tabs"] })) {
+        const tabs = await chrome.tabs.query({});
+        for (const tab of tabs) {
+          if (tab.id === undefined || dashboardTabs.has(tab.id) || !/^https?:\/\//.test(tab.url || "")) continue;
+          try {
+            const url = new URL(tab.url!);
+            if (url.username || url.password) continue;
+            const id = `tab:${tab.id}`;
+            if (!destinations.some(item => item.url === url.href)) destinations.push({ id, label: tab.title || url.hostname, url: url.href, source: "open-tab" });
+          } catch { /* Ignore non-web tab URLs. */ }
+        }
+      }
+      return destinations;
+    }
+    case "GET_GESTURE_STATUS":
+      return gestureRuntimeStatus;
+    case "GET_GESTURE_PREVIEW":
+      return state.running && !state.paused ? gesturePreviewFrame : null;
+    case "CALIBRATE_GESTURE":
+      if (!state.running || state.paused || settings.voiceOnly) return { ok: false, error: "Start a running camera session before gesture calibration." };
+      gesturePreviewFrame = null;
+      gestureRuntimeStatus = { ready: gestureRuntimeStatus.ready, detected: null, confidence: 0, calibrating: message.gesture, calibrationProgress: 0 };
+      await controller("gesture-calibrate", { gesture: message.gesture });
+      return { ok: true };
+    case "CANCEL_GESTURE_CALIBRATION":
+      gesturePreviewFrame = null;
+      await controller("gesture-cancel-calibration");
+      return { ok: true };
+    case "GESTURE_STATUS":
+      if (internal && message.status && typeof message.status.ready === "boolean") gestureRuntimeStatus = message.status;
+      return { ok: true };
+    case "GESTURE_TRIGGER":
+      if (internal) await runGesturePreset(message.presetId);
+      return { ok: true };
+    case "GESTURE_PREVIEW_FRAME":
+      if (internal) {
+        const frame = message.frame;
+        gesturePreviewFrame = state.running && !state.paused && typeof frame === "string" && frame.length <= 350_000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/.test(frame) ? frame : null;
+      }
+      return { ok: true };
     case "GET_PROVIDER_STATUS":
       return { groqKeyCount: groqOptions().groqKeys.length, jevKeyCount: jevKeys(jevOptions()).length, jevConfigured: jevKeys(jevOptions()).length > 0, activeProvider: jevKeys(jevOptions()).length ? "Jev via " + settings.jevProvider : null, sharedKeys: !providers.groqKeys && bundledProviders.groqKeys.length > 0 };
     case "SAVE_PROVIDERS":

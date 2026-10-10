@@ -92,7 +92,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
       onRemoved: event(),
     },
     windows: {
-      create: vi.fn(async () => ({ tabs: [{ id: 99 }] })),
+      create: vi.fn(async (_options: chrome.windows.CreateData) => ({ tabs: [{ id: 99 }] })),
       get: vi.fn(async () => ({focused:true})),
       update: vi.fn(async () => ({})),
     },
