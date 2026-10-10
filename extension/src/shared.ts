@@ -251,7 +251,7 @@ export type Message =
   | { type: "SAVE_PROVIDERS"; groqKeys?: string[]; jevKey?: string; jevKeys?: string[] }
   | { type: "SET_DASHBOARD_URL"; url: string }
   | { type: "GRANT_PERMISSIONS"; kind: "pages" | "tabs" | "provider" | "devices"; camera?: boolean; microphone?: boolean; returnHash?: string }
-  | { type: "INSTALL_SPEECH_PACK" }
+  | { type: "INSTALL_SPEECH_PACK"; returnHash?: "#setup" | "#preferences" }
   | { type: "TRANSCRIPT"; text: string; final: boolean }
   | { type: "TRANSCRIBE_AUDIO"; audio: number[]; mime: string; language: string }
   | { type: "GET_CALIBRATION"; mode: PointerMode }

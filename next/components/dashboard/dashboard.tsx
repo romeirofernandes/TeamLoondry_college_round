@@ -1969,7 +1969,7 @@ export function HandsfreeDashboard() {
           <TabsContent value="access">
             <section className="dashboard-access">
               <div>
-                <h2>Browser access</h2>
+                <h2 tabIndex={-1}>Browser access</h2>
                 <p>
                   Page access follows you between websites. Camera and
                   microphone permissions are granted in the extension.

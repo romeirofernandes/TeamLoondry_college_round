@@ -922,6 +922,10 @@
   gap: 8px;
   margin-block: 24px;
 }
+.onboarding-spoken-offer {
+  flex-basis: 100%;
+  margin: 0;
+}
 .onboarding-guidance p {
   flex-basis: 100%;
   font-size: 0.875rem;
@@ -1196,11 +1200,15 @@
   max-width: 760px;
 }
 .dashboard-access {
-  flex-wrap: wrap;
-}
-.dashboard-access > div:first-child {
-  flex: 1 1 280px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 .dashboard-access .dashboard-actions {
-  flex: 1 1 300px;
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 800px) {
+  .dashboard-access {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

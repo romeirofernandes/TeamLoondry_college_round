@@ -198,6 +198,16 @@ describe("page interactions", () => {
     await action("confirm");
     expect(submit).not.toHaveBeenCalled();
   });
+  it("cancels a pending submit when Profile changes the enabled inputs", async () => {
+    const submitted = vi.fn((event: Event) => event.preventDefault());
+    document.getElementById("form")!.addEventListener("submit", submitted);
+    await find("submit");
+    vi.mocked(document.elementFromPoint).mockReturnValue(document.getElementById("submit"));
+    await action("click");
+    await runtime.handle({ type: "PAGE_STATE", running: true, paused: false, dictating: false, settings: { ...defaults, enabledInputs: ["face"] } });
+    await action("confirm");
+    expect(submitted).not.toHaveBeenCalled();
+  });
   it("guards synchronous JavaScript submits from custom buttons while manual clicks remain usable", async () => {
     const button = document.getElementById("button")!;
     const form = document.getElementById("form") as HTMLFormElement;

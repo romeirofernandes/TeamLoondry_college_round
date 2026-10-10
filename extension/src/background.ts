@@ -927,7 +927,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     case "GRANT_PERMISSIONS":
       return openPermissions(message);
     case "INSTALL_SPEECH_PACK":
-      return openPermissions(undefined, true);
+      return openPermissions({ type: "GRANT_PERMISSIONS", kind: "devices", returnHash: message.returnHash }, true);
     case "SET_DASHBOARD_URL": {
       const url = new URL(message.url);
       if (!(url.protocol === "https:" || url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) return { ok: false, error: "Use an HTTPS dashboard URL or localhost for development." };
@@ -939,7 +939,16 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return { ok: true };
     }
     case "SAVE_SETTINGS": {
-      const next = message.settings;
+      const previous = settings;
+      let next = message.settings;
+      // Older dashboard tabs still update voiceOnly or pointerMode directly.
+      // Translate those edits only when independent input selection is unchanged.
+      const unchangedInputs = Array.isArray(next.enabledInputs) && next.enabledInputs.length === inputMethods(previous).length && next.enabledInputs.every(input => inputMethods(previous).includes(input));
+      if (unchangedInputs && next.voiceOnly !== previous.voiceOnly) {
+        next = { ...next, enabledInputs: next.voiceOnly ? ["voice"] : ["voice", next.pointerMode] };
+      } else if (unchangedInputs && next.pointerMode !== previous.pointerMode && !inputMethods(next).includes(next.pointerMode) && !next.voiceOnly) {
+        next = { ...next, enabledInputs: inputMethods(next).map(input => input === previous.pointerMode ? next.pointerMode : input) };
+      }
       settings = {
         ...normalizeControlSettings(next),
         llmKey: "",
@@ -949,6 +958,18 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
         dashboardUrl: settings.dashboardUrl,
         llmModel: String(next.llmModel || defaults.llmModel).slice(0, 80),
       };
+      const inputsChanged = settings.pointerMode !== previous.pointerMode || inputMethods(settings).length !== inputMethods(previous).length || inputMethods(settings).some(input => !inputMethods(previous).includes(input));
+      if (inputsChanged) {
+        activeProvider?.abort();
+        pageRevision++;
+        linkAuthorizationRevision++;
+        ++planToken;
+        planDestination = null;
+        wakeUntil = 0;
+        pendingClose = null;
+        tabChoices = [];
+        await publish({ confidence: 0, calibrationProgress: null, calibrationStage: "", calibrationSnapshots: {}, ...(!inputMethods(settings).includes("voice") ? { dictating: false, interimTranscript: "" } : {}) });
+      }
       await chrome.storage.local.set({ settings, speechPreferenceVersion: 2 });
       await publish({voiceOnly:settings.voiceOnly});
       await pageState();

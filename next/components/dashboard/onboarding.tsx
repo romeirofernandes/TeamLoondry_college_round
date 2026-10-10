@@ -66,6 +66,7 @@ export function Onboarding({
   );
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  const [offeredGuidance, setOfferedGuidance] = useState(false);
   const busyRef = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const step = settings.onboardingStep;
@@ -92,7 +93,15 @@ export function Onboarding({
   useEffect(() => {
     if (!connected || step !== 0 || acted.current) return;
     const timer = setTimeout(() => {
-      if (!acted.current) void guidance.read("Would you like spoken guidance?");
+      if (
+        !acted.current &&
+        document.visibilityState === "visible" &&
+        document.hasFocus()
+      ) {
+        acted.current = true;
+        setOfferedGuidance(true);
+        void guidance.read("Would you like spoken guidance?");
+      }
     }, 5000);
     const interacted = () => {
       acted.current = true;
@@ -129,6 +138,7 @@ export function Onboarding({
     inputs: InputMethod[],
     pointerMode?: Settings["pointerMode"],
   ) {
+    if (busyRef.current) return;
     acted.current = true;
     setSelected(inputs);
     setError("");
@@ -302,6 +312,11 @@ export function Onboarding({
         </p>
       </div>
       <div className="onboarding-guidance">
+        {offeredGuidance && step === 0 && (
+          <p className="onboarding-spoken-offer">
+            Would you like spoken guidance? Choose Read setup aloud.
+          </p>
+        )}
         <Button
           variant="outline"
           onClick={() => {
@@ -347,11 +362,11 @@ export function Onboarding({
           <InputChoices
             selected={selected}
             onChange={choose}
-            disabled={working || !connected}
+            disabled={!connected}
           />
           <PrimaryPointer
             settings={draft}
-            disabled={working || !connected}
+            disabled={!connected}
             onChange={(pointerMode) =>
               void perform(() =>
                 persist({ enabledInputs: selected, pointerMode }),
@@ -364,7 +379,7 @@ export function Onboarding({
                 <input
                   type="checkbox"
                   checked={settings.spokenFeedback}
-                  disabled={working || !connected}
+                  disabled={!connected}
                   onChange={(event) =>
                     void perform(() =>
                       persist({ spokenFeedback: event.target.checked }),
@@ -455,7 +470,7 @@ export function Onboarding({
                 <select
                   id="setup-speech"
                   className="onboarding-select"
-                  disabled={!connected || working}
+                  disabled={!connected}
                   value={settings.speechMode}
                   onChange={(event) =>
                     void perform(() =>
@@ -481,7 +496,10 @@ export function Onboarding({
                   disabled={!connected || working}
                   onClick={() =>
                     void perform(async () => {
-                      await request({ type: "INSTALL_SPEECH_PACK" });
+                      await request({
+                        type: "INSTALL_SPEECH_PACK",
+                        returnHash: "#setup",
+                      });
                     })
                   }
                 >

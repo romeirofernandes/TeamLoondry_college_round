@@ -6,9 +6,9 @@ const query = new URLSearchParams(location.search);
 const kind = query.get("kind") || "devices";
 const selectedCamera = query.get("camera") !== "false";
 const selectedMicrophone = query.get("microphone") !== "false";
-root.innerHTML = `<main class="permission-setup">
+root.innerHTML = `<section class="permission-setup" aria-labelledby="access-title">
 <img src="brand/handsfree-symbol.svg" width="36" height="36" alt="Handsfree">
-<p class="permission-eyebrow">A little setup, at your pace</p><h1>Browser access</h1>
+<p class="permission-eyebrow">A little setup, at your pace</p><h1 id="access-title">Browser access</h1>
 <p>Choose the access you need. Your place in setup is saved.</p>
 <div class="permission-row" data-kind="pages"><div><label for="pages">Webpage control</label><p>Use Handsfree on websites you visit.</p></div><input type="checkbox" role="switch" id="pages"><span id="pages-state">Checking</span></div>
 <div class="permission-row" data-kind="tabs"><div><label for="tabs">Tab commands</label><p>Find and switch tabs by speaking.</p></div><input type="checkbox" role="switch" id="tabs"><span id="tabs-state">Checking</span></div>
@@ -19,7 +19,7 @@ root.innerHTML = `<main class="permission-setup">
 <p class="permission-device-help">Chrome stores device permissions. To revoke access, use Chrome's site settings for this extension.</p>
 <p id="status" role="status"></p>
 <div class="permission-actions"><button id="read">Read this step aloud</button><button id="quiet">Stop reading</button><button id="return" class="permission-primary">Return to Handsfree</button></div>
-</main>`;
+</section>`;
 const status = root.querySelector("#status")!;
 const devices: Partial<Record<"camera" | "microphone", PermissionStatus>> = {};
 let updating = false;
