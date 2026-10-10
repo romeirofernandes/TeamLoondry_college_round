@@ -21,8 +21,8 @@ function status(patch: Record<string, unknown>) {
   void send({ type: "SET_STATE", patch }).catch(() => {});
 }
 function heard(text: string) {
-  if (desired !== "running") return;
-  void send({ type: "TRANSCRIPT", text, final: true }).catch(() => {});
+  if (desired === "stopped") return;
+  if (desired === "running") void send({ type: "TRANSCRIPT", text, final: true }).catch(() => {});
   void send({ type: "HEARD", text }).catch(() => {});
 }
 function stopVoice() {
@@ -35,7 +35,7 @@ async function beginVoice(token: number) {
   stopVoice();
   const voiceToken = voiceGeneration;
   const voiceSettings = { ...settings };
-  const current = () => token === generation && voiceToken === voiceGeneration && desired === "running";
+  const current = () => token === generation && voiceToken === voiceGeneration && desired !== "stopped";
   if (!current()) return;
   let fallbackStarting = false;
   const beginFallback = async () => {
@@ -48,7 +48,7 @@ async function beginVoice(token: number) {
       speech = null;
       oldSpeech?.stop();
       if (!current()) return;
-      const recorder = new RecordedSpeech(text => { if (current()) heard(text); }, voice => { if (current()) status({ voice }); });
+      const recorder = new RecordedSpeech(text => { if (current()) heard(text); }, voice => { if (current()) status({ voice: desired === "paused" && /listening/i.test(voice) ? "Listening for resume" : voice }); });
       fallback = recorder;
       try { await recorder.start(voiceSettings.language); }
       catch (error) {
@@ -64,9 +64,9 @@ async function beginVoice(token: number) {
   };
   const adapter = new SpeechAdapter(text => { if (current() && speech === adapter) heard(text); }, voice => {
     if (!current() || speech !== adapter) return;
-    status({ voice });
+    status({ voice: desired === "paused" && /listening/i.test(voice) ? "Listening for resume" : voice });
     if (/connect|unavailable|not supported|repeated interruptions/i.test(voice)) void beginFallback();
-  }, text => { if (current() && speech === adapter) void send({ type: "TRANSCRIPT", text, final: false }).catch(() => {}); });
+  }, text => { if (current() && desired === "running" && speech === adapter) void send({ type: "TRANSCRIPT", text, final: false }).catch(() => {}); });
   speech = adapter;
   try { await adapter.start(voiceSettings); }
   catch { if (current()) await beginFallback(); }
@@ -99,6 +99,7 @@ function pause() {
   desired = "paused";
   tracker?.pause(); stopVoice();
   status({ calibrationProgress: null, interimTranscript: "" });
+  void beginVoice(generation);
 }
 function resume() {
   desired = "running";
@@ -115,7 +116,7 @@ async function calibrate() {
   const token = generation, activeTracker = tracker;
   const current = () => token === generation && desired === "running" && tracker === activeTracker;
   try {
-    await activeTracker.calibrate(progress => { if (current()) status({ calibrationProgress: progress, calibrationStage: progress < 0.3125 ? "Keep your head centered and still" : settings.pointerMode === "hand" ? "Move your palm left, right, up, and down" : "Look left, right, up, and down" }); });
+    await activeTracker.calibrate((progress, instruction) => { if (current()) status({ calibrationProgress: progress, calibrationStage: instruction }); });
     if (!current()) return;
     status({ feedback: "Calibration saved. Return to your webpage and browse.", calibrationProgress: null, calibrationStage: "Ready" });
   } catch (error) { if (current()) status({ feedback: error instanceof Error ? error.message : "Calibration failed. Keep yourself in view and retry.", calibrationProgress: null }); }
@@ -131,7 +132,17 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
     const previous = settings;
     settings = message.settings;
     tracker?.updateSettings(settings);
-    if (desired === "running" && (settings.language !== previous?.language || settings.speechMode !== previous?.speechMode)) void beginVoice(generation);
+    if (desired !== "stopped" && (settings.language !== previous?.language || settings.speechMode !== previous?.speechMode)) void beginVoice(generation);
   }
   respond({ ok: true });
 });
+
+// PermissionStatus changes when Chrome grants or revokes device access.
+if (typeof navigator !== "undefined" && navigator.permissions) {
+  void Promise.all(["camera", "microphone"].map(name => navigator.permissions.query({ name: name as PermissionName }).catch(() => null))).then(([camera, microphone]) => {
+    const report = () => void send({ type: "MEDIA_PERMISSIONS", camera: camera?.state ?? "unknown", microphone: microphone?.state ?? "unknown" }).catch(() => {});
+    camera?.addEventListener("change", report);
+    microphone?.addEventListener("change", report);
+    report();
+  });
+}

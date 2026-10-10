@@ -26,7 +26,9 @@ import {
   type SessionState,
   type Settings,
   type MetricEvent,
+  type PermissionState,
 } from "../../../extension/src/shared";
+import { cursorPaths } from "../../../extension/src/core/cursors";
 import { request, subscribe, subscribeReady } from "@/lib/extension-bridge";
 import BrandLogo from "@/components/brand-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -110,6 +112,9 @@ export function HandsfreeDashboard() {
   const [view, setView] = useState("overview");
   const [command, setCommand] = useState("");
   const [providers, setProviders] = useState<ProviderStatus | null>(null);
+  const [permissions, setPermissions] = useState<PermissionState | null>(null);
+  const [pausePhrase, setPausePhrase] = useState(defaults.pausePhrase);
+  const [resumePhrase, setResumePhrase] = useState(defaults.resumePhrase);
   const [groqKeys, setGroqKeys] = useState([""]);
   const [jevKey, setJevKey] = useState("");
   const [tabs, setTabs] = useState<BrowserTab[]>([]);
@@ -125,16 +130,20 @@ export function HandsfreeDashboard() {
     refreshing.current = true;
     setConnecting(true);
     try {
-      const [session, preferences, status] = await Promise.all([
+      const [session, preferences, status, grants] = await Promise.all([
         request<SessionState>({ type: "GET_STATE" }),
         request<Settings>({ type: "GET_SETTINGS" }),
         request<ProviderStatus>({ type: "GET_PROVIDER_STATUS" }),
+        request<PermissionState>({ type: "GET_PERMISSIONS" }),
       ]);
       if (attempt !== generation.current) return;
       setState(session);
       setSettings(preferences);
       settingsRef.current = preferences;
       setProviders(status);
+      setPermissions(grants);
+      setPausePhrase(preferences.pausePhrase);
+      setResumePhrase(preferences.resumePhrase);
       connectedRef.current = true;
       setConnected(true);
       setError("");
@@ -198,6 +207,13 @@ export function HandsfreeDashboard() {
     };
   }, [refresh]);
   useEffect(() => setNotice(""), [state.feedback]);
+  useEffect(() => {
+    if (!connected) return;
+    const read = () => void request<PermissionState>({ type: "GET_PERMISSIONS" }).then(setPermissions).catch(() => {});
+    const timer = setInterval(read, 2000);
+    addEventListener("focus", read);
+    return () => { clearInterval(timer); removeEventListener("focus", read); };
+  }, [connected]);
 
   async function safe(work: () => Promise<unknown>, success?: string) {
     if (busy) return;
@@ -607,7 +623,7 @@ export function HandsfreeDashboard() {
                   <p className="dashboard-hint" role="note">
                     {settings.pointerMode === "face"
                       ? "Hold a small turn to keep moving. Return to neutral to stop in place."
-                      : "Keep your complete open palm in view. Move your palm to point; hold steady to select. No pinch required."}
+                      : "Keep your complete open palm in view. Small palm movements cover the page; hold steady to select. Increase Hand sensitivity to travel farther. No pinch required."}
                   </p>
                   <Field>
                     <FieldLabel id="cursor-style-label">Cursor style</FieldLabel>
@@ -622,7 +638,7 @@ export function HandsfreeDashboard() {
                     </div>
                     <FieldDescription>Every style keeps the visible dwell ring.</FieldDescription>
                   </Field>
-                  <SettingSlider
+                  {settings.pointerMode === "face" && <SettingSlider
                     id="sensitivity"
                     label="Sensitivity"
                     value={settings.sensitivity}
@@ -632,7 +648,12 @@ export function HandsfreeDashboard() {
                     step={0.1}
                     disabled={locked}
                     onChange={(value) => save({ sensitivity: value })}
-                  />
+                  />}
+                  {settings.pointerMode === "hand" && <SettingSlider
+                    id="hand-sensitivity" label="Hand sensitivity" value={settings.handSensitivity}
+                    display={`${settings.handSensitivity.toFixed(1)}×`} min={0.2} max={6} step={0.1}
+                    disabled={locked} onChange={value => save({ handSensitivity: value })}
+                  />}
                   <SettingSlider
                     id="dwell"
                     label="Dwell time"
@@ -687,7 +708,7 @@ export function HandsfreeDashboard() {
               <section className="dashboard-panel">
                 <SectionTitle
                   title="A quick calibration"
-                  description="Start your session and sit comfortably. Each mode saves its own eight-second calibration."
+                  description="Five guided captures in 15 seconds. Each mode saves its own comfortable movement range."
                 />
                 <CameraPreview running={running} />
                 <Calibration state={state} />
@@ -709,12 +730,13 @@ export function HandsfreeDashboard() {
                 </Button>
                 <ol className="dashboard-calibration-steps">
                   <li>{settings.pointerMode === "face" ? "Look ahead and hold your comfortable neutral position." : "Show your open palm with every finger and your wrist inside the camera frame. Hold still."}</li>
-                  <li>{settings.pointerMode === "face" ? "Turn slightly left and right, staying comfortable." : "Move your palm slightly left and right within the camera frame."}</li>
-                  <li>Move gently up and down. Small movements are enough; avoid stretching to the edges.</li>
+                  <li>Follow the left, right, up and down prompts. Hold each pose while its photo is captured. Choose your comfortable limit in each direction.</li>
+                  <li>{settings.pointerMode === "face" ? "These measurements turn small head offsets into cursor speed. Return to center to stop in place." : "Your small palm movement area maps onto the full webpage. Hand sensitivity makes that area smaller or larger."}</li>
                 </ol>
                 <p className="dashboard-hint">
                   Selections pause during calibration. Low confidence and tracking loss freeze movement and block clicks. Return to view, hold still briefly, then review the highlighted target. Recalibrate after a posture change if needed.
                   Voice scrolling works before camera calibration.
+                  Photos stay in this session on your device and clear when you stop. Only landmark measurements are saved for future sessions.
                 </p>
               </section>
             </div>
@@ -727,6 +749,21 @@ export function HandsfreeDashboard() {
                   description="Choose a language and where speech is processed."
                 />
                 <FieldGroup>
+                  <Field>
+                    <FieldLabel htmlFor="pause-phrase">Pause keyword or phrase</FieldLabel>
+                    <Input id="pause-phrase" value={pausePhrase} maxLength={80} disabled={locked} onChange={event => setPausePhrase(event.target.value)} />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="resume-phrase">Resume keyword or phrase</FieldLabel>
+                    <Input id="resume-phrase" value={resumePhrase} maxLength={80} disabled={locked} onChange={event => setResumePhrase(event.target.value)} />
+                    <FieldDescription>These exact phrases work during dictation too. While paused, the microphone listens only for session controls. Stop releases it.</FieldDescription>
+                  </Field>
+                  <Button disabled={locked} onClick={() => {
+                    const pause = pausePhrase.trim().toLowerCase().replace(/[.!?,;:]+$/g, "").replace(/\s+/g, " ");
+                    const resume = resumePhrase.trim().toLowerCase().replace(/[.!?,;:]+$/g, "").replace(/\s+/g, " ");
+                    if (!pause || !resume || pause === resume) { setError("Choose two different, nonempty session phrases."); return; }
+                    save({ pausePhrase: pause, resumePhrase: resume });
+                  }}>Save session phrases</Button>
                   <Field>
                     <FieldLabel htmlFor="language">
                       Recognition language
@@ -850,9 +887,12 @@ export function HandsfreeDashboard() {
                 />
                 <CommandList
                   items={[
-                    ["Click this", "Activate the highlighted target"],
+                    ["Click", "Click at the cursor, even without a snapped target"],
                     ["Open Careers", "Match a real page label locally and activate"],
                     ["Scroll down", "Read further on the page"],
+                    ["Scroll to the bottom", "Reach the page or container end"],
+                    ["Play video / pause video", "Control the main player, including permitted frames"],
+                    ["Forward ten seconds / rewind five seconds", "Seek within video or music"],
                     ["Go back", "Return to the previous page"],
                     ["Start typing", "Dictate into the selected field"],
                     ["Stop typing", "Return to voice commands"],
@@ -862,13 +902,13 @@ export function HandsfreeDashboard() {
                     ["Hey handsfree, summarize this page", "Read a text answer here and on the webpage"],
                     ["Hey handsfree, what is a browser?", "Ask a general question"],
                     ["Choose two", "Select one of several find matches"],
-                    ["Pause handsfree", "Pause pointer, voice, and dictation"],
+                    [settings.pausePhrase, "Pause pointing, page actions and dictation"],
+                    [settings.resumePhrase, "Resume your paused session"],
                   ]}
                 />
                 <p className="dashboard-hint">
-                  During dictation, command phrases become text. Only "stop
-                  typing" ends dictation. Use the pause button or shortcut for
-                  an immediate stop.
+                  During dictation, ordinary commands become text. Say "stop typing" to finish.
+                  Your configured pause and resume phrases, and "stop handsfree", remain session controls.
                 </p>
               </section>
             </div>
@@ -1070,8 +1110,8 @@ export function HandsfreeDashboard() {
               </section>
               <section className="dashboard-panel">
                 <SectionTitle
-                  title="Optional Jev fallback"
-                  description="Use a personal fallback key if Groq is unavailable."
+                  title="Everyday commands with Jev"
+                  description="Jev interprets ordinary phrasing and chooses a supported action. Hey handsfree uses Groq."
                 />
                 <Badge variant="outline">
                   {providers?.jevConfigured ? "Configured" : "Not configured"}
@@ -1090,7 +1130,7 @@ export function HandsfreeDashboard() {
                       setProviders(
                         await request({ type: "GET_PROVIDER_STATUS" }),
                       );
-                    }, "Jev fallback saved on this device.");
+                    }, "Jev key saved on this device.");
                   }}
                 >
                   <FieldGroup>
@@ -1128,12 +1168,12 @@ export function HandsfreeDashboard() {
                         disabled={locked}
                         autoComplete="off"
                         value={jevKey}
-                        placeholder="Enter your fallback key"
+                        placeholder="Enter your Jev key"
                         onChange={(event) => setJevKey(event.target.value)}
                       />
                     </Field>
                     <Button type="submit" disabled={locked}>
-                      Save fallback key
+                      Save Jev key
                     </Button>
                   </FieldGroup>
                 </form>
@@ -1141,22 +1181,22 @@ export function HandsfreeDashboard() {
                   variant="ghost"
                   disabled={locked || !providers?.jevConfigured}
                   onClick={() => {
-                    if (window.confirm("Remove your local Jev fallback key?"))
+                    if (window.confirm("Remove your local Jev key?"))
                       void safe(async () => {
                         await request({ type: "SAVE_PROVIDERS", jevKey: "" });
                         setProviders(
                           await request({ type: "GET_PROVIDER_STATUS" }),
                         );
-                      }, "Jev fallback removed.");
+                      }, "Jev key removed.");
                   }}
                 >
-                  Remove fallback key
+                  Remove Jev key
                 </Button>
                 <Alert role="note">
                   <Key aria-hidden="true" />
                   <AlertTitle>What your request shares</AlertTitle>
                   <AlertDescription>
-                    Hey handsfree sends your phrase, target labels, page title, URL and up to 12,000 characters of public page text to Groq. Inputs, editable regions, passwords and Handsfree UI are excluded. Camera frames stay local. Find requests highlight; explicit click or open requests activate through the usual safety gates. Answers appear as text here and on the webpage.
+                    Jev receives your command, language, up to 50 tab titles and up to 80 page labels when interpreting a paraphrase. Hey handsfree sends your phrase, target labels, page title, URL and up to 12,000 characters of public page text to Groq. Inputs, editable regions, passwords and Handsfree UI are excluded. Camera frames stay local. Find requests highlight; explicit click or open requests activate through the usual safety gates. Answers appear as text here and on the webpage.
                   </AlertDescription>
                 </Alert>
                 <Button
@@ -1299,6 +1339,23 @@ export function HandsfreeDashboard() {
             </p>
           </div>
           <div className="dashboard-actions">
+            <FieldGroup>
+              {(["pages", "tabs"] as const).map(kind => (
+                <SettingSwitch key={kind} id={`permission-${kind}`}
+                  label={kind === "pages" ? "Webpage control" : "Tab commands"}
+                  hint={permissions ? permissions[kind] ? "Enabled in Chrome" : "Not enabled in Chrome" : "Checking Chrome permissions"}
+                  checked={permissions?.[kind] ?? false} disabled={locked || !permissions}
+                  onChange={checked => void safe(async () => {
+                    if (checked) await permit(kind);
+                    else await request({ type: "REVOKE_PERMISSION", kind });
+                    setPermissions(await request<PermissionState>({ type: "GET_PERMISSIONS" }));
+                  })}
+                />
+              ))}
+              <p className="dashboard-hint">
+                Camera: {permissions?.camera || "unknown"}. Microphone: {permissions?.microphone || "unknown"}. Check or enable devices in permission setup.
+              </p>
+            </FieldGroup>
             <Button
               variant="outline"
               disabled={locked}
@@ -1349,9 +1406,9 @@ function CursorIcon({ style }: { style: Settings["cursorStyle"] }) {
   return (
     <svg viewBox="0 0 38 38" width="24" height="24" aria-hidden="true" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
       {style === "circle" && <circle cx="19" cy="19" r="7" />}
-      {style === "arrow" && <path d="M11 6 L29 23 L20 23 L16 33 Z" />}
-      {style === "crosshair" && <path d="M19 4 V13 M19 25 V34 M4 19 H13 M25 19 H34" fill="none" strokeWidth="3" />}
-      {style === "spark" && <path d="M19 4 L23 15 L34 19 L23 23 L19 34 L15 23 L4 19 L15 15 Z" />}
+      {style === "arrow" && <path d={cursorPaths.arrow} />}
+      {style === "crosshair" && <path d={cursorPaths.crosshair} fill="none" strokeWidth="2" strokeLinecap="round" />}
+      {style === "spark" && <path d={cursorPaths.spark} />}
     </svg>
   );
 }
@@ -1438,25 +1495,26 @@ function SettingSwitch({
   );
 }
 function Calibration({ state }: { state: SessionState }) {
-  if (state.calibrationProgress === null) return null;
+  if (state.calibrationProgress === null && !Object.keys(state.calibrationSnapshots || {}).length) return null;
+  const active = state.calibrationProgress === null ? "" : ["center", "left", "right", "up", "down"][Math.min(4, Math.floor(state.calibrationProgress * 5))];
   return (
-    <div className="dashboard-calibration" role="status">
-      <div className="dashboard-calibration-motion" aria-hidden="true">
-        <UserFocus />
-        <span
-          style={{
-            transform: `translateX(${Math.sin(state.calibrationProgress * Math.PI * 4) * 24}px)`,
-          }}
-        />
+    <div className="dashboard-calibration">
+      <div className="dashboard-calibration-photos">
+        {["center", "left", "right", "up", "down"].map(stage => (
+          <figure key={stage} data-active={active === stage}>
+            {state.calibrationSnapshots?.[stage] ? <img src={state.calibrationSnapshots[stage]} alt={`${stage} calibration capture`} width="160" height="120" /> : <div aria-hidden="true"><UserFocus /></div>}
+            <figcaption>{stage}{state.calibrationSnapshots?.[stage] ? " · captured" : active === stage ? " · hold" : ""}</figcaption>
+          </figure>
+        ))}
       </div>
-      <p>
+      <p role="status">
         {state.calibrationStage ||
           "Hold still, then move through your comfortable range."}
       </p>
-      <Progress
+      {state.calibrationProgress !== null && <Progress
         value={state.calibrationProgress * 100}
         aria-label="Calibration progress"
-      />
+      />}
     </div>
   );
 }

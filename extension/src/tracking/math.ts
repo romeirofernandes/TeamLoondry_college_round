@@ -141,8 +141,8 @@ export class PointerFilter {
     }
     this.lastRaw = raw;
     const c = this.calibration;
-    let dx = (raw.x - c.neutralX) / c.rangeX,
-      dy = (raw.y - c.neutralY) / c.rangeY;
+    let dx = (raw.x - c.neutralX) / (raw.x >= c.neutralX ? c.left ?? c.rangeX : c.right ?? c.rangeX),
+      dy = (raw.y - c.neutralY) / (raw.y >= c.neutralY ? c.down ?? c.rangeY : c.up ?? c.rangeY);
     // Face rate control needs a quiet neutral band: small landmark noise must
     // not accumulate travel indefinitely. Hand pointing keeps its original band.
     const deadZone = settings.pointerMode === "face" ? Math.max(0.12, settings.deadZone) : settings.deadZone;
@@ -176,12 +176,12 @@ export class PointerFilter {
     } else this.current = {
       x: clamp(
         this.horizontal.update(
-          0.5 - dead(dx) * settings.sensitivity * 0.5,
+          0.5 - dead(dx) * settings.handSensitivity * 0.5,
           time,
         ),
       ),
       y: clamp(
-        this.vertical.update(0.5 + dead(dy) * settings.sensitivity * 0.5, time),
+        this.vertical.update(0.5 + dead(dy) * settings.handSensitivity * 0.5, time),
       ),
     };
     let handHold = false;

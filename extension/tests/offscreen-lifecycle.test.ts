@@ -59,3 +59,13 @@ it("does not publish calibration progress or success from a stopped session", as
   progress(0.5); finish(); await flush();
   expect(send).not.toHaveBeenCalled();
 });
+it("keeps final speech available for session controls while pointing is paused", async () => {
+  mocks.fail = false; dispatch("start"); await flush();
+  dispatch("pause"); await flush();
+  const pausedSpeech = mocks.speech.at(-1);
+  const send = vi.mocked(chrome.runtime.sendMessage); send.mockClear();
+  pausedSpeech.heard("resume handsfree"); await flush();
+  expect(send).toHaveBeenCalledWith({ type: "HEARD", text: "resume handsfree" });
+  expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "TRANSCRIPT" }));
+  expect(mocks.trackers[0].pause).toHaveBeenCalled();
+});

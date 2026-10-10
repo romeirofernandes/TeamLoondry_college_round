@@ -7,11 +7,12 @@ import type {
 } from "../shared";
 import { PointerFilter, type RawPoint } from "./math";
 import type { Inference } from "./inference";
+import { calibrationStages, calibrationStageMs, calibrationDurationMs, calibrationFromPoses, type CalibrationStage } from "./calibration";
 
 interface CalibrationRun {
   start: number;
-  neutral: RawPoint[];
-  range: RawPoint[];
+  poses: Record<CalibrationStage, RawPoint[]>;
+  snapshots: Record<string, string>;
   timer: ReturnType<typeof setInterval>;
   resolve: (value: Calibration) => void;
   reject: (error: Error) => void;
@@ -48,17 +49,10 @@ const validCalibration = (value: unknown, mode: PointerMode): value is Calibrati
     [c.neutralX, c.neutralY, c.rangeX, c.rangeY].every(Number.isFinite) &&
     c.neutralX >= 0 && c.neutralX <= 1 &&
     c.neutralY >= 0 && c.neutralY <= 1 &&
-    (mode === "face" ? c.rangeX >= 0.008 : c.rangeX > 0.01) && c.rangeX <= 1 &&
-    (mode === "face" ? c.rangeY >= 0.008 : c.rangeY > 0.01) && c.rangeY <= 1
+    c.rangeX >= 0.008 && c.rangeX <= 1 &&
+    c.rangeY >= 0.008 && c.rangeY <= 1 &&
+    [c.left, c.right, c.up, c.down].every(n => n === undefined || Number.isFinite(n) && n >= 0.008 && n <= 1)
   );
-};
-const median = (numbers: number[]) => {
-  const n = [...numbers].sort((a, b) => a - b);
-  return n[Math.floor(n.length / 2)];
-};
-const quantile = (numbers: number[], q: number) => {
-  const n = [...numbers].sort((a, b) => a - b);
-  return n[Math.floor((n.length - 1) * q)];
 };
 
 export class Tracker {
@@ -378,6 +372,21 @@ export class Tracker {
     let bitmap: ImageBitmap | null = null;
     try {
       bitmap = await createImageBitmap(image);
+      const calibration = this.calibrationRun;
+      if (calibration && typeof document !== "undefined") {
+        const elapsed = timestamp - calibration.start;
+        const stage = calibrationStages[Math.floor(elapsed / calibrationStageMs)];
+        if (stage && elapsed % calibrationStageMs >= 2000 && calibration.poses[stage].length >= 8 && !calibration.snapshots[stage]) {
+          const canvas = document.createElement("canvas");
+          canvas.width = 160; canvas.height = 120;
+          const context = canvas.getContext("2d");
+          if (context) {
+            context.drawImage(bitmap, 0, 0, 160, 120);
+            calibration.snapshots[stage] = canvas.toDataURL("image/jpeg", 0.7);
+            this.onStatus({ calibrationSnapshots: { ...calibration.snapshots } });
+          }
+        }
+      }
       release?.();
       release = undefined;
       if (
@@ -429,8 +438,10 @@ export class Tracker {
     }
     const run = this.calibrationRun;
     if (run && point && point.confidence >= this.settings.confidenceThreshold) {
-      if (time - run.start < 2500) run.neutral.push(point);
-      else run.range.push(point);
+      const elapsed = time - run.start;
+      const stage = calibrationStages[Math.floor(elapsed / calibrationStageMs)];
+      // Give each new pose 1.2 seconds to settle before collecting its frames.
+      if (stage && elapsed % calibrationStageMs >= 1200) run.poses[stage].push(point);
     }
     // Calibration and uncalibrated frames must not integrate hidden travel.
     const position = this.filter.update(run || !this.calibrated ? null : point, time, this.settings);
@@ -471,97 +482,44 @@ export class Tracker {
     this.cancelCalibration("Calibration restarted");
     this.loss();
     const token = this.generation;
-    const neutralInstruction = this.settings.pointerMode === "face"
-      ? "Hold your comfortable neutral position."
-      : "Keep your palm comfortably in frame and hold it still.";
-    const rangeInstruction = this.settings.pointerMode === "face"
-      ? "Make small comfortable turns left, right, up and down. Do not stretch."
-      : "Move your palm left, right, up and down while keeping it in frame.";
+    this.onStatus({ calibrationSnapshots: {} });
     return new Promise((resolve, reject) => {
       const start = performance.now();
+      const instruction = (elapsed: number) => {
+        const index = Math.min(4, Math.floor(elapsed / calibrationStageMs));
+        const stage = calibrationStages[index];
+        const remaining = Math.max(1, Math.ceil((calibrationStageMs - elapsed % calibrationStageMs) / 1000));
+        const pose = stage === "center" ? "Hold your comfortable center position" : this.settings.pointerMode === "face" ? `Turn your head slightly ${stage} and hold` : `Move your palm a little ${stage} and hold`;
+        return `${index + 1}/5 · ${stage} · ${pose}. Capturing in ${remaining}s.`;
+      };
       const run: CalibrationRun = {
-        start,
-        neutral: [],
-        range: [],
-        resolve,
-        reject,
+        start, poses: { center: [], left: [], right: [], up: [], down: [] }, snapshots: {}, resolve, reject,
         timer: setInterval(() => {
           const elapsed = performance.now() - start;
-          onProgress?.(
-            Math.min(1, elapsed / 8000),
-            elapsed < 2500
-              ? neutralInstruction
-              : rangeInstruction,
-          );
-          if (elapsed < 8000) return;
+          onProgress?.(Math.min(1, elapsed / calibrationDurationMs), instruction(elapsed));
+          if (elapsed < calibrationDurationMs) return;
           clearInterval(run.timer);
           if (this.calibrationRun !== run) return;
           this.calibrationRun = null;
-          if (token !== this.generation || this.paused) {
-            reject(new Error("Calibration cancelled"));
-            return;
-          }
-          if (run.neutral.length < 10 || run.range.length < 10) {
-            reject(
-              new Error(
-                "Not enough reliable tracking. Improve lighting, face the camera and try again.",
-              ),
-            );
-            return;
-          }
-          const neutralX = median(run.neutral.map((p) => p.x)),
-            neutralY = median(run.neutral.map((p) => p.y));
-          let rangeX = quantile(
-              run.range.map((p) => Math.abs(p.x - neutralX)),
-              0.95,
-            ),
-            rangeY = quantile(
-              run.range.map((p) => Math.abs(p.y - neutralY)),
-              0.95,
-            );
-          const minimumRange = this.settings.pointerMode === "face" ? 0.008 : 0.025;
-          if (rangeX < minimumRange || rangeY < minimumRange) {
-            reject(
-              new Error(
-                this.settings.pointerMode === "face"
-                  ? "Tracking could not distinguish your small turns. Improve lighting and try comfortable turns again."
-                  : "Move your palm horizontally and vertically in frame, then recalibrate.",
-              ),
-            );
-            return;
-          }
-          if (this.settings.pointerMode === "face") {
-            const noiseX = quantile(run.neutral.map(p => Math.abs(p.x - neutralX)), 0.95);
-            const noiseY = quantile(run.neutral.map(p => Math.abs(p.y - neutralY)), 0.95);
-            if (rangeX <= noiseX * 3 || rangeY <= noiseY * 3) {
-              reject(new Error("Neutral tracking was unsteady. Improve lighting, hold still, and retry comfortable small turns."));
-              return;
-            }
-            // Keep measured neutral noise inside the face quiet band without
-            // asking for larger turns or adding another calibration schema.
-            rangeX = Math.max(rangeX, noiseX * 12);
-            rangeY = Math.max(rangeY, noiseY * 12);
-          }
-          const calibration = { neutralX, neutralY, rangeX, rangeY };
-          this.filter.setCalibration(calibration);
-          this.calibrated = true;
-          this.persistence
-            .saveCalibration(this.settings.pointerMode, calibration)
-            .then(() => {
-              if (token === this.generation) {
-                this.onStatus({ camera: "Calibrated. Camera ready" });
-                resolve(calibration);
-              } else reject(new Error("Calibration cancelled"));
-            })
-            .catch((error) =>
-              reject(new Error(`Could not save calibration: ${String(error)}`)),
-            );
+          if (token !== this.generation || this.paused) { reject(new Error("Calibration cancelled")); return; }
+          let calibration: Calibration;
+          try { calibration = calibrationFromPoses(run.poses, this.settings.pointerMode); }
+          catch (error) { reject(error instanceof Error ? error : new Error("Calibration failed")); return; }
+          const mode = this.settings.pointerMode;
+          this.persistence.saveCalibration(mode, calibration).then(() => {
+            if (token !== this.generation || this.paused) { reject(new Error("Calibration cancelled")); return; }
+            this.filter.setCalibration(calibration);
+            this.calibrated = true;
+            this.onStatus({ camera: "Calibrated. Camera ready" });
+            resolve(calibration);
+          }).catch(error => reject(new Error(`Could not save calibration: ${String(error)}`)));
         }, 100),
       };
       this.calibrationRun = run;
-      onProgress?.(0, neutralInstruction);
+      onProgress?.(0, instruction(0));
     });
   }
+
   private cancelCalibration(message: string) {
     const run = this.calibrationRun;
     if (run) {

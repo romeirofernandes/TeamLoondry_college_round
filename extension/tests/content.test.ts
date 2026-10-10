@@ -88,6 +88,30 @@ async function find(id: string) {
   await runtime.handle({ type: "FIND_RESULT", ids: [target.id] });
 }
 
+it("clicks an unsnapped hit area at the pointer coordinates", async () => {
+  const area = document.createElement("div");
+  document.body.append(area);
+  const clicked = vi.fn();
+  area.addEventListener("click", clicked);
+  vi.mocked(document.elementFromPoint).mockReturnValue(area);
+  await runtime.handle(pointer());
+  await action("click");
+  expect(clicked).toHaveBeenCalledTimes(1);
+  expect(clicked.mock.calls[0][0]).toMatchObject({ clientX: 150, clientY: 120 });
+});
+
+it("pauses and seeks the main video independently of target snapping", async () => {
+  const video = document.createElement("video");
+  document.body.append(video);
+  Object.defineProperty(video, "duration", { value: 120 });
+  video.currentTime = 40;
+  const pause = vi.spyOn(video, "pause").mockImplementation(() => {});
+  await runtime.handle({ type: "PAGE_ACTION", intent: { type: "media-pause" } as any });
+  expect(pause).toHaveBeenCalledOnce();
+  await runtime.handle({ type: "PAGE_ACTION", intent: { type: "media-seek", seconds: -10 } as any });
+  expect(video.currentTime).toBe(30);
+});
+
 describe("page interactions", () => {
   it("dwell activates once, blocks low confidence, and requires renewed dwell after tracking loss", async () => {
     const click = vi.fn();
@@ -446,6 +470,7 @@ describe("page interactions", () => {
     await action("click");
     expect(click).toHaveBeenCalledTimes(1);
     await runtime.handle({ type: "FIND_RESULT", ids: [] });
+    time += 700; // An expired pointer cannot become a coordinate click.
     await action("click");
     expect(click).toHaveBeenCalledTimes(1);
   });

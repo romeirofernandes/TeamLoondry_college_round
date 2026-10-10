@@ -1,5 +1,6 @@
 import { overlayId, targetLabel } from "./dom";
 import type { Settings } from "../shared";
+import { cursorPaths } from "../core/cursors";
 
 export class Overlay {
   readonly host = document.createElement("div");
@@ -21,12 +22,13 @@ export class Overlay {
     shadow.innerHTML = `<style>
       :host{all:initial;pointer-events:none!important}*{box-sizing:border-box;pointer-events:none!important}
       .cursor{position:fixed;left:0;top:0;width:38px;height:38px;transform:translate(-50%,-50%);display:none}
-      .cursor svg{position:absolute;inset:0;width:38px;height:38px;filter:drop-shadow(0 0 2px #20231b)}
+      .cursor svg{position:absolute;inset:0;width:38px;height:38px;filter:drop-shadow(0 1px 2px #0009)}
       .dwell-ring{transform:rotate(-90deg)}
-      .dwell-ring circle{fill:none;stroke:#c1ef53;stroke-width:4;stroke-dasharray:100;stroke-dashoffset:100}
-      .cursor-icon{display:none;fill:#c1ef53;stroke:#20231b;stroke-width:1.5;stroke-linejoin:round}
+      .dwell-ring circle{fill:none;stroke:#c1ef53;stroke-width:2.5;stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:100}
+      .cursor-icon{display:none;fill:#f6f7f2;stroke:#20231b;stroke-width:1.5;stroke-linejoin:round}
+      .cursor [data-icon=circle]{fill:#c1ef53}
       .cursor[data-style=circle] [data-icon=circle],.cursor[data-style=arrow] [data-icon=arrow],.cursor[data-style=crosshair] [data-icon=crosshair],.cursor[data-style=spark] [data-icon=spark]{display:block}
-      .cursor [data-icon=crosshair]{fill:none;stroke:#c1ef53;stroke-width:3;stroke-linecap:round}
+      .cursor [data-icon=crosshair]{fill:none;stroke:#f6f7f2;stroke-width:2;stroke-linecap:round}
       .outline{position:fixed;border:3px solid #c1ef53;border-radius:7px;box-shadow:0 0 0 2px #20231b;display:none}
       .label,.feedback,.choice{position:fixed;background:#20231b;color:#f6f7f2;border:1px solid #c1ef53;border-radius:9px;font:600 14px/1.5 system-ui,sans-serif;padding:8px 12px;max-width:min(430px,calc(100vw - 24px));overflow-wrap:anywhere}
       .label{display:none}.feedback{bottom:18px;left:18px}.feedback:empty{display:none}.feedback{max-height:45vh;overflow:auto;white-space:pre-wrap}
@@ -34,7 +36,7 @@ export class Overlay {
       .transcription{position:fixed;right:20px;bottom:20px;width:min(320px,calc(100vw - 40px));padding:16px 18px;background:#20231b;color:#f6f7f2;border:1px solid #49533a;border-radius:16px;box-shadow:0 8px 32px #0003;font:500 14px/1.5 system-ui,sans-serif;overflow-wrap:anywhere;display:none}
       .spoken-label{color:#c1ef53;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}.spoken-text:empty:after{content:'Say a command, or start typing.';color:#bfc4b6}
       @media(max-width:600px){.feedback{bottom:125px}}
-    </style><div class="outline"></div><div class="label"></div><div class="cursor" data-style="circle"><svg class="cursor-icon" data-icon="circle" viewBox="0 0 38 38" aria-hidden="true"><circle cx="19" cy="19" r="5"/></svg><svg class="cursor-icon" data-icon="arrow" viewBox="0 0 38 38" aria-hidden="true"><path d="M14 10 L26 22 L20 22 L17 28 Z"/></svg><svg class="cursor-icon" data-icon="crosshair" viewBox="0 0 38 38" aria-hidden="true"><path d="M19 10 V15 M19 23 V28 M10 19 H15 M23 19 H28"/></svg><svg class="cursor-icon" data-icon="spark" viewBox="0 0 38 38" aria-hidden="true"><path d="M19 9 L22 16 L29 19 L22 22 L19 29 L16 22 L9 19 L16 16 Z"/></svg><svg class="dwell-ring" viewBox="0 0 38 38" aria-hidden="true"><circle cx="19" cy="19" r="15" pathLength="100"/></svg></div><div class="choices"></div><div class="feedback" role="status" aria-live="polite" aria-atomic="true"></div><div class="transcription" aria-label="Voice transcription"><div class="spoken-label">Listening</div><div class="spoken-text" role="status" aria-live="polite" aria-atomic="true"></div></div>`;
+    </style><div class="outline"></div><div class="label"></div><div class="cursor" data-style="circle"><svg class="cursor-icon" data-icon="circle" viewBox="0 0 38 38" aria-hidden="true"><circle cx="19" cy="19" r="5"/></svg><svg class="cursor-icon" data-icon="arrow" viewBox="0 0 38 38" aria-hidden="true"><path d="${cursorPaths.arrow}"/></svg><svg class="cursor-icon" data-icon="crosshair" viewBox="0 0 38 38" aria-hidden="true"><path d="${cursorPaths.crosshair}"/></svg><svg class="cursor-icon" data-icon="spark" viewBox="0 0 38 38" aria-hidden="true"><path d="${cursorPaths.spark}"/></svg><svg class="dwell-ring" viewBox="0 0 38 38" aria-hidden="true"><circle cx="19" cy="19" r="15" pathLength="100"/></svg></div><div class="choices"></div><div class="feedback" role="status" aria-live="polite" aria-atomic="true"></div><div class="transcription" aria-label="Voice transcription"><div class="spoken-label">Listening</div><div class="spoken-text" role="status" aria-live="polite" aria-atomic="true"></div></div>`;
     this.cursor = shadow.querySelector(".cursor")!;
     this.ring = shadow.querySelector(".dwell-ring circle")!;
     this.outline = shadow.querySelector(".outline")!;

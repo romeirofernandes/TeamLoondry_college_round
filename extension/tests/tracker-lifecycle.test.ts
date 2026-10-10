@@ -160,7 +160,7 @@ describe("tracker lifecycle", () => {
     expect(persistence.getCalibration).toHaveBeenCalledWith("face");
     tracker.stop();
   });
-  it("keeps tiny saved hand ranges invalid while accepting comfortable saved face ranges", async () => {
+  it("accepts small comfortable saved ranges for both pointer modes", async () => {
     const persistence = {
       getCalibration: vi.fn(async (_mode: string) => ({ neutralX: 0.5, neutralY: 0.5, rangeX: 0.009, rangeY: 0.009 })),
       saveCalibration: vi.fn(async () => {}),
@@ -170,7 +170,7 @@ describe("tracker lifecycle", () => {
       await tracker.start({ ...defaults, pointerMode });
       const worker = WorkerMock.instances.at(-1)!;
       worker.emit({ type: "sample", point: { x: 0.5, y: 0.5, confidence: 1 }, timestamp: performance.now(), epoch: 0, latencyMs: 2 });
-      expect(sample).toHaveBeenLastCalledWith(expect.objectContaining({ confidence: pointerMode === "hand" ? 0 : 1 }));
+      expect(sample).toHaveBeenLastCalledWith(expect.objectContaining({ confidence: 1 }));
       tracker.stop();
     }
     expect(persistence.getCalibration.mock.calls.map(call => call[0])).toEqual(["hand", "face"]);
@@ -294,11 +294,11 @@ describe("tracker lifecycle", () => {
     await tracker.start(defaults);
     const result = tracker.calibrate().catch(error => error);
     const worker = WorkerMock.instances[0];
-    for (let index = 0; index < 238; index++) {
+    for (let index = 0; index < 445; index++) {
       preview.currentTime += 0.034;
       await vi.advanceTimersByTimeAsync(34);
       const frame = worker.frames.at(-1);
-      const noise = performance.now() < 2500 ? 0.006 : 0.012;
+      const noise = performance.now() < 3000 ? 0.006 : 0.012;
       const offset = (index % 2 ? 1 : -1) * noise;
       worker.emit({ type: "sample", point: { x: 0.5 + offset, y: 0.5 + offset, confidence: 1 }, timestamp: frame.timestamp, epoch: frame.epoch, latencyMs: 2 });
     }
@@ -306,7 +306,7 @@ describe("tracker lifecycle", () => {
     expect(chrome.storage.local.set).not.toHaveBeenCalled();
     tracker.stop();
   });
-  it("calibrates neutral and comfortable range in eight seconds while blocking selection", async () => {
+  it("captures five separate comfortable poses while blocking selection", async () => {
     const preview = video(),
       sample = vi.fn(),
       progress = vi.fn(),
@@ -315,20 +315,21 @@ describe("tracker lifecycle", () => {
     const calibration = tracker.calibrate(progress);
     const worker = WorkerMock.instances[0];
     sample.mockClear();
-    for (let index = 0; index < 238; index++) {
+    for (let index = 0; index < 445; index++) {
       preview.currentTime += 0.034;
       await vi.advanceTimersByTimeAsync(34);
       const frame = worker.frames.at(-1);
-      const moving = performance.now() > 2500;
-      const offset = moving ? (index % 2 === 0 ? 0.012 : -0.012) : 0;
+      const stage = Math.floor(performance.now() / 3000);
+      const offsetX = stage === 1 ? 0.012 : stage === 2 ? -0.012 : 0;
+      const offsetY = stage === 3 ? -0.012 : stage === 4 ? 0.012 : 0;
       worker.emit({
         type: "sample",
-        point: { x: 0.5 + offset, y: 0.5 + offset, confidence: 1 },
+        point: { x: 0.5 + offsetX, y: 0.5 + offsetY, confidence: 1 },
         timestamp: frame.timestamp,
         latencyMs: 2,
         epoch: frame.epoch,
       });
-      if (performance.now() < 8000)
+      if (performance.now() < 15000)
         expect(sample).toHaveBeenLastCalledWith(
           expect.objectContaining({ x: 0.5, y: 0.5, confidence: 0, handHold: false }),
         );

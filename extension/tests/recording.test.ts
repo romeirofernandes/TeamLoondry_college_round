@@ -57,3 +57,15 @@ it("preserves transcription failure status until a new utterance", async () => {
   expect(status).toHaveBeenLastCalledWith("Groq speech credentials were rejected.");
   recording.stop();
 });
+it("keeps the microphone recorder ready before speech and accepts a short click utterance", async () => {
+  amplitude = 0;
+  vi.spyOn(Blob.prototype, "arrayBuffer").mockResolvedValue(new ArrayBuffer(2));
+  const heard = vi.fn(), recording = new RecordedSpeech(heard, vi.fn());
+  await recording.start("en-US");
+  expect(RecorderMock.instance.state).toBe("recording");
+  await vi.advanceTimersByTimeAsync(200);
+  amplitude = 0.1; await vi.advanceTimersByTimeAsync(100);
+  amplitude = 0; await vi.advanceTimersByTimeAsync(750);
+  expect(sendMessage).toHaveBeenCalledOnce();
+  recording.stop();
+});

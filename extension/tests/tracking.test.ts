@@ -2,6 +2,20 @@ import { describe, it, expect } from "vitest";
 import { PointerFilter, landmarkPoint } from "../src/tracking/math";
 import { defaults } from "../src/shared";
 import { ActivationGate } from "../src/core/safety";
+import { calibrationFromPoses } from "../src/tracking/calibration";
+
+it("maps five small hand captures independently and rejects a missing direction", () => {
+  const points = (x: number, y: number) => Array.from({ length: 12 }, () => ({ x, y, confidence: 1 }));
+  const poses = { center: points(0.5, 0.5), left: points(0.512, 0.5), right: points(0.482, 0.5), up: points(0.5, 0.49), down: points(0.5, 0.516) };
+  const calibration = calibrationFromPoses(poses, "hand");
+  expect(calibration.left).toBeCloseTo(0.012);
+  expect(calibration.right).toBeCloseTo(0.018);
+  expect(calibration.up).toBeCloseTo(0.01);
+  const filter = new PointerFilter(); filter.setCalibration(calibration);
+  const position = filter.update({ x: 0.508, y: 0.5, confidence: 1 }, 0, { ...defaults, pointerMode: "hand" });
+  expect(position.x).toBe(0);
+  expect(() => calibrationFromPoses({ ...poses, right: poses.center }, "hand")).toThrow("right");
+});
 
 describe("tracking cursor contract", () => {
   it("keeps hand mapping absolute, with neutral at center and mirrored range at the edge", () => {

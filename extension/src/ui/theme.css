@@ -239,3 +239,16 @@ footer {
     font-size: 1.35rem;
   }
 }
+.permission-setup { max-width: 480px; margin: auto; padding: 28px; }
+.permission-setup h1 { margin: 14px 0 8px; font-size: 1.75rem; line-height: 1.2; }
+.permission-setup p { color: var(--muted); }
+.permission-row { display: grid; grid-template-columns: minmax(0, 1fr) 42px; gap: 6px 16px; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.permission-row label { font-weight: 600; }
+.permission-row p { margin: 3px 0 0; font-size: 0.8125rem; }
+.permission-row span { grid-column: 1 / -1; font-size: 0.75rem; color: var(--muted); }
+.permission-row input[type=checkbox] { appearance: none; width: 42px; height: 24px; min-height: 24px; padding: 2px; margin: 0; border: 1px solid var(--control); border-radius: 24px; background: var(--panel); cursor: pointer; }
+.permission-row input[type=checkbox]::before { content: ''; display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--text); }
+.permission-row input[type=checkbox]:checked { background: var(--accent); border-color: var(--ring); }
+.permission-row input[type=checkbox]:checked::before { transform: translateX(16px); background: var(--accent-text); }
+.permission-row input[type=checkbox]:disabled { cursor: default; opacity: 0.65; }
+.permission-actions { display: grid; gap: 10px; margin-top: 20px; }

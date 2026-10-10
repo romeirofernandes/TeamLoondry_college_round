@@ -698,3 +698,11 @@
 .dashboard-cursor-choice input {
   accent-color: var(--foreground);
 }
+.dashboard-calibration-photos { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.dashboard-calibration-photos figure { margin: 0; min-width: 0; padding: 4px; border: 1px solid var(--border); border-radius: 8px; }
+.dashboard-calibration-photos figure[data-active="true"] { outline: 2px solid var(--ring); outline-offset: 1px; }
+.dashboard-calibration-photos img, .dashboard-calibration-photos figure > div { display: block; width: 100%; aspect-ratio: 4 / 3; height: auto; object-fit: cover; border-radius: 4px; background: var(--muted); }
+.dashboard-calibration-photos img { transform: scaleX(-1); outline: 1px solid oklch(0 0 0 / 0.1); outline-offset: -1px; }
+.dashboard-calibration-photos figure > div { display: grid; place-items: center; }
+.dashboard-calibration-photos figcaption { margin-top: 5px; font-size: 11px; line-height: 1.5; text-transform: capitalize; overflow-wrap: anywhere; }
+@media (max-width: 480px) { .dashboard-calibration-photos { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

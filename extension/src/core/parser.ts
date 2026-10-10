@@ -1,4 +1,4 @@
-import type { Intent } from "../shared";
+import type { Intent, Settings } from "../shared";
 
 /** Normalize recognizer punctuation and spacing, without interpreting partial commands. */
 export function normalizeSpeech(text: string): string {
@@ -19,6 +19,9 @@ const fixed: Record<string, Intent> = {
   "go forward": { type: "forward" },
   forward: { type: "forward" },
   "click this": { type: "click" },
+  "click here": { type: "click" },
+  "click that": { type: "click" },
+  "click it": { type: "click" },
   click: { type: "click" },
   "open this": { type: "open" },
   "start typing": { type: "start-typing" },
@@ -57,9 +60,34 @@ const numberNames = [
   "ten",
 ];
 
+/** Session controls are exact and available even during dictation and pause. */
+export function sessionIntent(text: string, settings: Settings): Intent | null {
+  const normalized = normalizeSpeech(text);
+  if (normalized === settings.pausePhrase) return { type: "pause" };
+  if (normalized === settings.resumePhrase) return { type: "resume" };
+  const intent = fixed[normalized];
+  return intent && ["pause", "resume", "stop"].includes(intent.type) ? { ...intent } : null;
+}
+
+export function wakeRequest(text: string): string | null {
+  const match = /^(?:hey|hello|okay|ok)[\s,]+hands?[\s-]*free\b[\s,:.!-]*(.*)$/i.exec(text.trim());
+  return match ? match[1].trim() : null;
+}
+
 /** Only call in command mode. Dictation bypasses this parser altogether. */
 export function parseIntent(text: string): Intent {
-  const normalized = normalizeSpeech(text);
+  const normalized = normalizeSpeech(text).replace(/^(?:(?:could|can|would) you )?(?:please )?/, "").replace(/ please$/, "");
+  if (/^(?:(?:open|create|make)(?: me)? )?(?:a |another )?(?:new|fresh|blank) tab$/.test(normalized)) return { type: "new-tab" };
+  const endScroll = /^(?:scroll|go|move|jump)(?: all the way)? to (?:the )?(top|bottom)(?: of (?:the |this )?page)?$/.exec(normalized);
+  if (endScroll) return { type: "scroll", direction: endScroll[1] as "top" | "bottom" };
+  if (/^(?:play|resume)(?: (?:the |this )?(?:video|movie|music|song|playback))?$/.test(normalized) && normalized !== "resume") return { type: "media-play" };
+  if (/^(?:pause|stop) (?:the |this )?(?:video|movie|music|song|playback)$/.test(normalized)) return { type: "media-pause" };
+  if (/^(?:toggle playback|play or pause|pause or play)$/.test(normalized)) return { type: "media-toggle" };
+  const seek = /^(?:(?:skip|seek|fast) )?(forward|backward|back|rewind|fast forward)(?: (?:by )?(\d{1,3}|ten|five|thirty)(?: seconds?)?)?(?: (?:in |of )?(?:the |this )?(?:video|movie|song))?$/.exec(normalized);
+  if (seek && normalized !== "forward" && normalized !== "back") {
+    const amount = seek[2] ? ({ ten: 10, five: 5, thirty: 30 }[seek[2]] ?? Number(seek[2])) : 10;
+    if (amount > 0 && amount <= 600) return { type: "media-seek", seconds: /forward/.test(seek[1]) ? amount : -amount };
+  }
   const politeScroll = /^(?:(?:could|can|would) you )?(?:please )?scroll (up|down)(?: please)?$/.exec(normalized);
   if (politeScroll) return { type: "scroll", direction: politeScroll[1] as "up" | "down" };
   if (Object.hasOwn(fixed, normalized)) return { ...fixed[normalized] };
@@ -75,10 +103,12 @@ export function parseIntent(text: string): Intent {
     if (index >= 1 && index <= 10) return { type: "choose", index };
   }
 
-  const adjacentTab = /^(?:(?:switch|go) to (?:the )?)?(next|previous) tab$/.exec(normalized);
+  const adjacentTab = /^(?:(?:switch|go|move)(?: over)? to (?:the )?)?(next|previous|last) tab$/.exec(normalized);
   if (adjacentTab) return { type: adjacentTab[1] === "next" ? "next-tab" : "previous-tab" };
 
-  const namedTab = /^(?:go to (?:the |named )?tab|switch to (?:the )?tab|go to) (.+)$/.exec(
+  const tabSuffix = /^(?:switch|go|move) to (?:the )?(.+?) tab$/.exec(normalized);
+  if (tabSuffix) return { type: "named-tab", name: tabSuffix[1] };
+  const namedTab = /^(?:go to (?:the |named )?tab|switch to (?:the )?tab|switch to|go to) (.+)$/.exec(
     normalized,
   );
   if (namedTab) return { type: "named-tab", name: namedTab[1] };

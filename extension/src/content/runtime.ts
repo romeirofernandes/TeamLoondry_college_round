@@ -19,6 +19,7 @@ import {
 } from "./dom";
 import { Overlay } from "./overlay";
 import { ScrollMotion, scrollPixels } from "./scroll";
+import { mediaControl } from "./media";
 
 type Pending = {
   target: HTMLElement;
@@ -272,9 +273,15 @@ export class ContentRuntime {
     if (blocked) this.scrollMotion.cancel();
     else this.scrollMotion.tick(now);
   }
-  private scroll(direction: "up" | "down") {
+  private scroll(direction: "up" | "down" | "top" | "bottom") {
     this.edge = null;
     const origin = this.target || document.elementFromPoint(this.x, this.y) || document.activeElement;
+    if (direction === "top" || direction === "bottom") {
+      this.scrollMotion.cancel();
+      scrollPixels((direction === "bottom" ? 1 : -1) * Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 10000000), origin);
+      this.metric("scroll", direction);
+      return;
+    }
     this.scrollMotion.command(
       (direction === "down" ? 1 : -1) * Math.max(200, innerHeight * 0.65) * this.settings.scrollSensitivity,
       origin, this.clock(),
@@ -400,6 +407,12 @@ export class ContentRuntime {
         return { ok: true };
       }
       case "PAGE_ACTION": {
+        if (message.intent.type.startsWith("media-")) {
+          if (!this.running || this.paused || this.dictating) return { ok: false };
+          const result = await mediaControl(message.intent);
+          this.feedback(result.error || "Player updated.");
+          return result;
+        }
         const ok = this.action(message.intent);
         return { ok, dictating: this.dictating };
       }
@@ -604,6 +617,42 @@ export class ContentRuntime {
       return true;
     }
     if (intent.type === "click" || intent.type === "open") {
+      // A named find still addresses its selected target. Pointer clicks use the
+      // last cursor position, even when the page has no semantic target there.
+      if ((!this.target || this.pointerTarget) && this.sample) {
+        if (this.clock() - this.receivedAt >= 650 || this.sample.confidence < this.settings.confidenceThreshold) {
+          this.feedback("Tracking is uncertain. Move back into view before clicking.");
+          return false;
+        }
+        let hit: Element | null = document.elementFromPoint(this.x, this.y);
+        let localX = this.x, localY = this.y;
+        while (hit) {
+          const nested = hit.shadowRoot?.elementFromPoint?.(localX, localY);
+          if (nested && nested !== hit) { hit = nested; continue; }
+          if (hit instanceof HTMLIFrameElement) {
+            try {
+              const box = hit.getBoundingClientRect();
+              const nestedHit = hit.contentDocument?.elementFromPoint(localX - box.left, localY - box.top);
+              if (nestedHit) { localX -= box.left; localY -= box.top; hit = nestedHit; continue; }
+            } catch { /* Cross-origin media commands are handled in background. */ }
+          }
+          break;
+        }
+        const element = hit?.closest('a[href],button,input,textarea,select,[contenteditable],[role="button"],[role="link"]') || hit;
+        if (element instanceof HTMLElement && usable(element)) {
+          if (element instanceof HTMLIFrameElement) {
+            this.feedback("Use play video, pause video, forward ten seconds or rewind for this embedded player.");
+            return false;
+          }
+          this.select(element, true);
+          this.choices = [];
+          this.overlay.options([]);
+          if (!this.voiceAllowed()) return false;
+          return this.activate(element, "voice", { x: localX, y: localY });
+        }
+        this.feedback("No available click area at the cursor position.");
+        return false;
+      }
       if (
         !this.target &&
         document.activeElement instanceof HTMLElement &&
@@ -624,7 +673,7 @@ export class ContentRuntime {
     }
     return false;
   }
-  private activate(element: HTMLElement, source: "voice" | "pointer"): boolean {
+  private activate(element: HTMLElement, source: "voice" | "pointer", point?: { x: number; y: number }): boolean {
     if (!element.isConnected || !usable(element) || sensitive(element)) {
       this.feedback("That target is unavailable or sensitive.");
       return false;
@@ -648,7 +697,13 @@ export class ContentRuntime {
     else {
       this.activationTarget = element;
       try {
-        element.click();
+        if (point) {
+          const options = { bubbles: true, cancelable: true, composed: true, clientX: point.x, clientY: point.y, button: 0 };
+          for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+            const event = type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? new PointerEvent(type, { ...options, pointerId: 1, pointerType: "mouse", isPrimary: true, buttons: type === "pointerdown" ? 1 : 0 }) : new MouseEvent(type, { ...options, buttons: type === "mousedown" ? 1 : 0 });
+            element.dispatchEvent(event);
+          }
+        } else element.click();
       } finally {
         this.activationTarget = null;
       }

@@ -76,6 +76,24 @@ await dashboard.bringToFront();await dashboard.waitForLoadState('domcontentloade
  await expect(dashboard.getByText('Hold a small turn to keep moving. Return to neutral to stop in place.',{exact:true})).toBeVisible();
  await dashboard.getByRole('radio',{name:'Hand gestures',exact:true}).click();
  await expect(dashboard.getByText(/Keep your complete open palm in view/)).toBeVisible();
+ const grants=await send({type:'GET_PERMISSIONS'});
+ for(const [label,kind] of [['Webpage control','pages'],['Tab commands','tabs']]) {
+  await expect(dashboard.getByRole('switch',{name:label,exact:true})).toHaveAttribute('aria-checked',String(grants[kind]));
+ }
+ const dwellSwitch=dashboard.getByRole('switch',{name:'Select with dwell',exact:true});
+ const initialChecked=await dwellSwitch.getAttribute('aria-checked');
+ const initialOffset=await dwellSwitch.locator('[data-slot="switch-thumb"]').evaluate(el=>getComputedStyle(el).translate);
+ await dwellSwitch.click();
+ await expect(dwellSwitch).toHaveAttribute('aria-checked',initialChecked==='true'?'false':'true');
+ await expect.poll(()=>dwellSwitch.locator('[data-slot="switch-thumb"]').evaluate(el=>getComputedStyle(el).translate)).not.toBe(initialOffset);
+ const photo=await popup.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=160;canvas.height=120;canvas.getContext('2d').fillRect(0,0,160,120);return canvas.toDataURL('image/jpeg');});
+ await send({type:'SET_STATE',patch:{calibrationProgress:0.25,calibrationStage:'2/5 · left · Hold left',calibrationSnapshots:{center:photo}}});
+ await expect(dashboard.getByAltText('center calibration capture')).toBeVisible();
+ await expect(dashboard.locator('.dashboard-calibration-photos figure[data-active="true"]')).toContainText('left');
+ const persisted=await worker.evaluate(async()=>{const {state}=await chrome.storage.session.get('state');return state.calibrationSnapshots;});
+ if(Object.keys(persisted).length)throw new Error('Calibration photos persisted');
+ await send({type:'SET_STATE',patch:{calibrationProgress:null,calibrationStage:'',calibrationSnapshots:{}}});
+ reports.push({permissionStates:true,switchVisualState:true,calibrationPhotos:true,photosNotPersisted:true});
  reports.push({preferencesPersist:true,cursorChoices:true,expandedSliders:true});
  await mkdir(path.join(extensionRoot,'test-results'),{recursive:true});
  if (!AxeBuilder) reports.push({ accessibility: 'Install @axe-core/playwright to include automated accessibility checks.' });

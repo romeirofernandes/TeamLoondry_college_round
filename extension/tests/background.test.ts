@@ -121,6 +121,28 @@ afterEach(() => {
 });
 
 describe("background command and permission boundary", () => {
+  it("opens a new tab from ordinary phrasing without selecting a page target", async () => {
+    const { browser, send } = await setup();
+    await send({ type: "HEARD", text: "open a fresh tab please" });
+    expect(browser.tabs.create).toHaveBeenCalledWith({ url: "about:blank" });
+  });
+  it("accepts configurable resume speech while paused and ignores other speech", async () => {
+    const { browser, send } = await setup({ settings: { pausePhrase: "take a break", resumePhrase: "carry on" } });
+    await send({ type: "HEARD", text: "take a break" });
+    expect(await send({ type: "GET_STATE" })).toMatchObject({ paused: true });
+    await send({ type: "HEARD", text: "new tab" });
+    expect(browser.tabs.create).not.toHaveBeenCalled();
+    await send({ type: "HEARD", text: "carry on" });
+    expect(await send({ type: "GET_STATE" })).toMatchObject({ paused: false });
+  });
+  it("arms the wake route across separate final transcripts", async () => {
+    const { send, fetch } = await setup({ key: "fixture-key" });
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ ids: [], intent: { type: "new-tab" } }) } }] }) });
+    await send({ type: "HEARD", text: "Hey, Hands Free." });
+    expect(fetch).not.toHaveBeenCalled();
+    await send({ type: "HEARD", text: "open a fresh tab" });
+    expect(fetch.mock.calls[0]?.[0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+  });
   it("does no tab reads or mutations when optional tab permission is denied", async () => {
     const { browser, send } = await setup({ tabPermission: false });
     for (const text of [
@@ -265,26 +287,12 @@ describe("background command and permission boundary", () => {
     });
   });
 
-  it("inserts concurrent pause and stop phrases when the earlier phrase starts dictation", async () => {
+  it("reserves universal session controls even when dictation is starting", async () => {
     const { browser, send } = await setup();
-    await Promise.all(
-      ["start typing", "pause handsfree", "stop handsfree"].map((text) =>
-        send({ type: "HEARD", text }),
-      ),
-    );
-    expect(await send({ type: "GET_STATE" })).toMatchObject({
-      running: true,
-      paused: false,
-      dictating: true,
-    });
-    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, {
-      type: "DICTATE",
-      text: "pause handsfree",
-    });
-    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, {
-      type: "DICTATE",
-      text: "stop handsfree",
-    });
+    await Promise.all(["start typing", "pause handsfree", "stop handsfree"].map(text => send({ type: "HEARD", text })));
+    expect(await send({ type: "GET_STATE" })).toMatchObject({ running: false, dictating: false });
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: "DICTATE", text: "pause handsfree" });
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: "DICTATE", text: "stop handsfree" });
   });
 
   it("cannot change privileged session fields through a content state patch", async () => {

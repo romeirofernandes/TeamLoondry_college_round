@@ -1,6 +1,9 @@
 export type PointerMode = "face" | "hand";
 export interface Settings {
   sensitivity: number;
+  handSensitivity: number;
+  pausePhrase: string;
+  resumePhrase: string;
   scrollSensitivity: number;
   cursorStyle: "circle" | "arrow" | "crosshair" | "spark";
   dwellMs: number;
@@ -19,6 +22,9 @@ export interface Settings {
 }
 export const defaults: Settings = {
   sensitivity: 1,
+  handSensitivity: 1.6,
+  pausePhrase: "pause handsfree",
+  resumePhrase: "resume handsfree",
   scrollSensitivity: 1,
   cursorStyle: "circle",
   dwellMs: 800,
@@ -40,9 +46,18 @@ export function normalizeControlSettings(value: Partial<Settings>): Settings {
   const next = { ...defaults, ...value };
   const bounded = (n: unknown, minimum: number, maximum: number, fallback: number) =>
     typeof n === "number" && Number.isFinite(n) ? Math.max(minimum, Math.min(maximum, n)) : fallback;
+  const phrase = (value: unknown, fallback: string) => {
+    if (typeof value !== "string" || value.length > 80) return fallback;
+    return value.normalize("NFKC").toLowerCase().trim().replace(/[.!?,;:]+$/g, "").replace(/\s+/g, " ") || fallback;
+  };
+  const pausePhrase = phrase(next.pausePhrase, defaults.pausePhrase);
+  const resumePhrase = phrase(next.resumePhrase, defaults.resumePhrase);
   return {
     ...next,
     sensitivity: bounded(next.sensitivity, 0.2, 6, defaults.sensitivity),
+    handSensitivity: bounded(next.handSensitivity, 0.2, 6, defaults.handSensitivity),
+    pausePhrase,
+    resumePhrase: resumePhrase === pausePhrase ? pausePhrase === defaults.resumePhrase ? "resume" : defaults.resumePhrase : resumePhrase,
     dwellMs: bounded(next.dwellMs, 400, 5000, defaults.dwellMs),
     scrollSensitivity: bounded(next.scrollSensitivity, 0.2, 3, defaults.scrollSensitivity),
     cursorStyle: ["circle", "arrow", "crosshair", "spark"].includes(next.cursorStyle) ? next.cursorStyle : "circle",
@@ -59,6 +74,10 @@ export interface Calibration {
   neutralY: number;
   rangeX: number;
   rangeY: number;
+  left?: number;
+  right?: number;
+  up?: number;
+  down?: number;
 }
 export interface PointerSample {
   x: number;
@@ -86,6 +105,7 @@ export interface SessionState {
   interimTranscript: string;
   calibrationProgress: number | null;
   calibrationStage: string;
+  calibrationSnapshots: Record<string, string>;
 }
 export const initialState: SessionState = {
   running: false,
@@ -103,9 +123,11 @@ export const initialState: SessionState = {
   interimTranscript: "",
   calibrationProgress: null,
   calibrationStage: "",
+  calibrationSnapshots: {},
 };
 export type Intent =
-  | { type: "scroll"; direction: "up" | "down" }
+  | { type: "scroll"; direction: "up" | "down" | "top" | "bottom" }
+  | { type: "media-seek"; seconds: number }
   | {
       type:
         | "back"
@@ -127,7 +149,10 @@ export type Intent =
         | "incognito"
         | "history"
         | "downloads"
-        | "settings";
+        | "settings"
+        | "media-play"
+        | "media-pause"
+        | "media-toggle";
     }
   | { type: "search"; query: string; background: boolean }
   | { type: "named-tab"; name: string }
@@ -151,7 +176,18 @@ export interface MetricEvent {
   detail?: string;
   value?: number;
 }
+export interface PermissionState {
+  pages: boolean;
+  tabs: boolean;
+  provider: boolean;
+  camera: PermissionStateValue;
+  microphone: PermissionStateValue;
+}
+export type PermissionStateValue = "granted" | "denied" | "prompt" | "unknown";
 export type Message =
+  | { type: "GET_PERMISSIONS" }
+  | { type: "REVOKE_PERMISSION"; kind: "pages" | "tabs" }
+  | { type: "MEDIA_PERMISSIONS"; camera: PermissionStateValue; microphone: PermissionStateValue }
   | { type: "GET_STATE" }
   | { type: "GET_SETTINGS" }
   | { type: "OPEN_DASHBOARD"; tabId?: number; hash?: string }

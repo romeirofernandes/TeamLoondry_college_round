@@ -55,7 +55,7 @@ test.beforeAll(async () => {
     await readFile(path.join(dist, "manifest.json"), "utf8"),
   );
   manifest.permissions.push("tabs");
-  manifest.host_permissions = ["http://127.0.0.1/*"];
+  manifest.host_permissions = ["http://127.0.0.1/*", "http://localhost/*"];
   await writeFile(path.join(dist, "manifest.json"), JSON.stringify(manifest));
   context = await chromium.launchPersistentContext(
     path.join(staging, "profile"),
@@ -119,6 +119,55 @@ test("actual content script points, clicks, and leaves native page clicks usable
       .locator("#handsfree-assist-overlay")
       .evaluate((el) => getComputedStyle(el).pointerEvents),
   ).toBe("none");
+});
+
+test("voice controls the main media in a cross-origin iframe", async () => {
+  await message({ type: "OFFSCREEN_COMMAND", command: "pause" });
+  await page.evaluate(() => {
+    const frame = document.createElement("iframe");
+    frame.id = "media-frame"; frame.src = "http://localhost:4177/media";
+    frame.width = "660"; frame.height = "380";
+    document.body.prepend(frame);
+  });
+  const player = page.frameLocator("#media-frame").locator("#player");
+  await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.duration)).toBe(15);
+  await heard("play the video");
+  await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.paused)).toBe(false);
+  await heard("pause video");
+  await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.paused)).toBe(true);
+  await player.evaluate((video: HTMLVideoElement) => { video.currentTime = 5; });
+  await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.currentTime)).toBe(5);
+  await heard("forward five seconds");
+  await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.currentTime)).toBe(10);
+  await heard("rewind five seconds");
+  await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.currentTime)).toBe(5);
+});
+
+test("plain click activates an unsnapped hit area at its coordinates", async () => {
+  await page.evaluate(() => {
+    const area = document.createElement("div"); area.id = "free-area";
+    area.style.cssText = "position:fixed;top:10px;left:10px;width:80px;height:80px;background:lime;z-index:10";
+    area.textContent = "0"; area.addEventListener("click", event => { area.textContent = `${event.clientX},${event.clientY}`; });
+    document.body.append(area);
+  });
+  await point("#free-area");
+  await heard("click");
+  await expect(page.locator("#free-area")).toHaveText("50,50");
+});
+
+test("custom pause and resume keywords gate page and tab actions", async () => {
+  const original = await message({ type: "GET_SETTINGS" });
+  await message({ type: "SAVE_SETTINGS", settings: { ...original, pausePhrase: "take a break", resumePhrase: "carry on" } });
+  try {
+    await heard("take a break");
+    expect((await message({ type: "GET_STATE" })).paused).toBe(true);
+    await heard("click");
+    await expect(page.locator("#clicks")).toHaveText("0");
+    await heard("carry on");
+    expect((await message({ type: "GET_STATE" })).paused).toBe(false);
+    await point("#count"); await heard("click");
+    await expect(page.locator("#clicks")).toHaveText("1");
+  } finally { await message({ type: "SAVE_SETTINGS", settings: original }); }
 });
 test("dictation words do not navigate; submission requires confirmation", async () => {
   await point("#search");

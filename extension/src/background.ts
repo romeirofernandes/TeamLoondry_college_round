@@ -10,10 +10,11 @@ import {
   type TargetText,
   type PageContext,
 } from "./shared";
-import { parseIntent } from "./core/parser";
+import { parseIntent, sessionIntent, wakeRequest } from "./core/parser";
+import { mediaControl } from "./content/media";
 import { bundledProviders } from "./provider-config";
 import { mapCommand, resolveArbitrary, transcribeAudio } from "./providers";
-import { rankTabs, adjacentTabId } from "./core/ranking";
+import { rankTabs, rankTargets, adjacentTabId } from "./core/ranking";
 import { appendMetric, summarizeMetrics } from "./core/metrics";
 
 let state: SessionState = { ...initialState };
@@ -25,6 +26,10 @@ let dashboardTabs = new Set<number>();
 let creatingOffscreen: Promise<void> | null = null;
 let lastBroadcast = 0;
 const dashboardMessages = new Set(["GET_STATE", "GET_SETTINGS", "SAVE_SETTINGS", "START", "PAUSE", "RESUME", "STOP", "RECALIBRATE", "HEARD", "ACTION", "GET_LOGS", "CLEAR_LOGS", "METRIC", "GET_PROVIDER_STATUS", "SAVE_PROVIDERS", "SET_DASHBOARD_URL", "GRANT_PERMISSIONS", "INSTALL_SPEECH_PACK", "GET_TABS", "ACTIVATE_TAB"]);
+dashboardMessages.add("GET_PERMISSIONS");
+dashboardMessages.add("REVOKE_PERMISSION");
+let wakeUntil = 0;
+let mediaPermissions: { camera: "granted" | "denied" | "prompt" | "unknown"; microphone: "granted" | "denied" | "prompt" | "unknown" } = { camera: "unknown", microphone: "unknown" };
 const keyIndexStore = {
   async get(): Promise<number> { const value = (await chrome.storage.local.get("groqKeyIndex")).groqKeyIndex; return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0; },
   async set(next: number) { await chrome.storage.local.set({ groqKeyIndex: next }); },
@@ -70,7 +75,7 @@ function record(type: string, value?: number) {
 }
 async function publish(patch: Partial<SessionState>, persist = true) {
   state = { ...state, ...patch };
-  if (persist) await chrome.storage.session.set({ state, dashboardTabs: [...dashboardTabs] });
+  if (persist) await chrome.storage.session.set({ state: { ...state, calibrationSnapshots: {} }, dashboardTabs: [...dashboardTabs] });
   const now = Date.now();
   if (!persist && now - lastBroadcast < 250) return;
   lastBroadcast = now;
@@ -139,6 +144,7 @@ async function attach(tabId: number) {
   }
 }
 async function target(tabId: number) {
+  wakeUntil = 0;
   activeProvider?.abort();
   pageRevision++;
   if (state.targetTabId !== null && state.targetTabId !== tabId)
@@ -169,6 +175,7 @@ async function controller(command: "start" | "stop" | "pause" | "resume" | "cali
   await chrome.runtime.sendMessage({ type: "OFFSCREEN_COMMAND", command, settings: pageSettings() }).catch(() => {});
 }
 async function stop() {
+  wakeUntil = 0;
   activeProvider?.abort();
   pageRevision++;
   pendingClose = null;
@@ -185,6 +192,7 @@ async function stop() {
     interimTranscript: "",
     calibrationProgress: null,
     calibrationStage: "",
+    calibrationSnapshots: {},
     fps: 0,
     latencyMs: 0,
     feedback: "Stopped. Camera and microphone are released.",
@@ -196,6 +204,7 @@ async function stop() {
   await chrome.storage.local.set({ logs });
 }
 async function pause() {
+  wakeUntil = 0;
   activeProvider?.abort();
   pageRevision++;
   pendingClose = null;
@@ -205,8 +214,9 @@ async function pause() {
     paused: true,
     dictating: false,
     confidence: 0,
-    voice: "Paused",
-    feedback: "Paused. Pointing, voice, and dictation are stopped.",
+    voice: "Listening for resume",
+    interimTranscript: "",
+    feedback: `Paused. Say "${settings.resumePhrase}" to resume. Only session controls are accepted.`,
   });
   await pageState();
   await controller("pause");
@@ -471,6 +481,18 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     await providerWork(signal => arbitraryFind(intent.query, signal));
     return;
   }
+  if (intent.type.startsWith("media-") && state.targetTabId !== null) {
+    const tabId = state.targetTabId;
+    const revision = pageRevision;
+    const probes = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: mediaControl, args: [null] });
+    if (!current() || pageRevision !== revision || state.paused || !state.running || state.targetTabId !== tabId) return;
+    const selected = probes.filter(probe => probe.result?.found).sort((a, b) => (b.result?.score || 0) - (a.result?.score || 0))[0];
+    if (selected) {
+      const results = await chrome.scripting.executeScript({ target: { tabId, frameIds: [selected.frameId] }, func: mediaControl, args: [intent] });
+      if (current() && pageRevision === revision && state.running && !state.paused) await publish({ feedback: results[0]?.result?.error || "Player updated." });
+      return;
+    }
+  }
   const result = await page({ type: "PAGE_ACTION", intent });
   if (typeof result?.dictating === "boolean")
     await publish({ dictating: result.dictating });
@@ -506,11 +528,48 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     if (result?.error) await publish({ feedback: result.error });
     return;
   }
-  const wake = /^hey[\s,]+hands[\s-]*free[\s,:.!-]+(.+)$/i.exec(text.trim());
-  if (wake) { await providerWork(signal => arbitraryFind(wake[1], signal)); return; }
-  if (parsed.type !== "unknown" && parsed.type !== "find") { await action(parsed); return; }
+  const wake = wakeRequest(text);
+  if (wake !== null) {
+    wakeUntil = 0;
+    if (!wake) {
+      wakeUntil = Date.now() + 10000;
+      await publish({ feedback: "Hey Handsfree is ready. Say your request within ten seconds." });
+    } else await providerWork(signal => arbitraryFind(wake, signal));
+    return;
+  }
+  if (wakeUntil > Date.now()) {
+    wakeUntil = 0;
+    await providerWork(signal => arbitraryFind(text, signal));
+    return;
+  }
+  wakeUntil = 0;
+  if (parsed.type === "find") {
+    const listed = await page({ type: "GET_TARGETS" });
+    if (revision !== pageRevision || !state.running || state.paused) return;
+    const matches = rankTargets(parsed.query, Array.isArray(listed) ? listed : []);
+    const result = await page({ type: "FIND_RESULT", ids: matches.ids });
+    if (result?.error) await publish({ feedback: result.error });
+    return;
+  }
+  let classifyNamed = false;
+  if (parsed.type === "click-target" && jevOptions().jevKey) {
+    const listed = await page({ type: "GET_TARGETS" });
+    if (revision !== pageRevision || !state.running || state.paused) return;
+    classifyNamed = rankTargets(parsed.query, Array.isArray(listed) ? listed : []).kind === "none";
+  }
+  if (parsed.type !== "unknown" && !classifyNamed) { await action(parsed); return; }
   await providerWork(async signal => {
-    const intent = await mapCommand(text, jevOptions(), signal);
+    const options = jevOptions();
+    let tabs: { id: number; title: string }[] = [];
+    let targets: TargetText[] = [];
+    if (options.jevKey) {
+      if (await chrome.permissions.contains({ permissions: ["tabs"] }))
+        tabs = (await chrome.tabs.query({})).filter(tab => tab.id !== undefined && !dashboardTabs.has(tab.id)).map(tab => ({ id: tab.id!, title: tab.title || "" }));
+      const listed = await page({ type: "GET_TARGETS" });
+      if (Array.isArray(listed)) targets = listed.slice(0, 80);
+    }
+    if (signal.aborted) return;
+    const intent = await mapCommand(text, { ...options, tabs, targets, forceClassification: classifyNamed }, signal);
     if (signal.aborted || revision !== pageRevision || !state.running || state.paused) return;
     await action(intent, () => !signal.aborted && revision === pageRevision && state.running && !state.paused);
   });
@@ -534,6 +593,24 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       error: "This message is reserved for extension controls.",
     };
   switch (message.type) {
+    case "GET_PERMISSIONS": {
+      const [pages, tabs, provider] = await Promise.all([
+        chrome.permissions.contains({ origins: ["http://*/*", "https://*/*"] }),
+        chrome.permissions.contains({ permissions: ["tabs"] }),
+        chrome.permissions.contains({ origins: [settings.jevProvider === "typesafe" ? "https://api.typesafe.ai/*" : "https://openrouter.ai/*"] }),
+      ]);
+      return { pages, tabs, provider, ...mediaPermissions };
+    }
+    case "REVOKE_PERMISSION": {
+      if (message.kind !== "pages" && message.kind !== "tabs") return { ok: false };
+      await chrome.permissions.remove(message.kind === "pages" ? { origins: ["http://*/*", "https://*/*"] } : { permissions: ["tabs"] });
+      if (message.kind === "pages" && state.running) await pause();
+      return { ok: true };
+    }
+    case "MEDIA_PERMISSIONS":
+      if ([message.camera, message.microphone].every(value => ["granted", "denied", "prompt", "unknown"].includes(value)))
+        mediaPermissions = { camera: message.camera, microphone: message.microphone };
+      return { ok: true };
     case "GET_STATE":
       return state;
     case "GET_SETTINGS":
@@ -551,11 +628,11 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       await chrome.storage.local.set({ [`calibration-${message.mode}`]: message.calibration });
       return { ok: true };
     case "TRANSCRIBE_AUDIO": {
-      if (!state.running || state.paused || settings.speechMode !== "browser") return { ok: false, error: "Voice session is paused." };
+      if (!state.running || settings.speechMode !== "browser") return { ok: false, error: "Voice session is stopped." };
       if (!Array.isArray(message.audio) || message.audio.length > 2000000 || !/^audio\/(webm|ogg|mp4)/.test(message.mime)) return { ok: false, error: "Invalid microphone recording." };
       const revision = pageRevision;
       const text = await transcribeAudio(new Blob([new Uint8Array(message.audio)], { type: message.mime }), { ...groqOptions(), language: settings.language }, AbortSignal.timeout(12000));
-      return { text: revision === pageRevision && state.running && !state.paused ? text : "" };
+      return { text: revision === pageRevision && state.running ? text : "" };
     }
     case "TRANSCRIPT":
       if (state.running && !state.paused) {
@@ -675,7 +752,13 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       }
       return { ok: true };
     case "HEARD": {
-      if (!state.running || state.paused) return { ok: true };
+      if (!state.running) return { ok: true };
+      const session = sessionIntent(message.text, settings);
+      if (session) {
+        await action(session);
+        return { ok: true };
+      }
+      if (state.paused) return { ok: true };
       const revision = pageRevision;
       const intent = parseIntent(message.text);
       // Typing transitions remain serialized. A click can cancel slow provider
@@ -754,6 +837,7 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
     if (change.status === "complete") await connectDashboard(tabId);
     if (tabId !== state.targetTabId) return;
     if (change.status === "loading") {
+      wakeUntil = 0;
       activeProvider?.abort();
       pageRevision++;
       pendingClose = null;
@@ -778,4 +862,19 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 chrome.commands.onCommand.addListener((command) => {
   if (command === "pause-handsfree")
     void ready.then(() => (state.paused ? resume() : pause()));
+});
+chrome.permissions.onAdded?.addListener(() => {
+  void ready.then(async () => {
+    if (state.running && state.targetTabId !== null) await attach(state.targetTabId);
+  });
+});
+chrome.permissions.onRemoved?.addListener(() => {
+  void ready.then(async () => {
+    pendingClose = null;
+    tabChoices = [];
+    activeProvider?.abort();
+    wakeUntil = 0;
+    pageRevision++;
+    if (state.running) await pause();
+  });
 });

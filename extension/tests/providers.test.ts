@@ -28,6 +28,17 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Jev finite command mapping", () => {
+  it("selects an existing tab from natural language and advertises media actions to both judgments", async () => {
+    request.mockResolvedValue({ ok: true, json: async () => ({ answers: {
+      command: { type: "choice", choice: "tab-0", confidence: 0.97, probabilities: { "tab-0": 0.97 } },
+      direct: { type: "noul", noul: 0.96 },
+    } }) });
+    expect(await mapCommand("bring my inbox to the front", { jevKey: "fixture", language: "en-IN", tabs: [{ id: 4, title: "Inbox" }] })).toEqual({ type: "named-tab", name: "Inbox" });
+    const body = JSON.parse(request.mock.calls[0][1].body);
+    expect(body.questions.command.criteria["media-pause"]).toContain("video");
+    expect(body.questions.direct.instructions).toContain("media-pause");
+    expect(body.questions.command.criteria["scroll-bottom"]).toContain("bottom");
+  });
   it("keeps exact commands available without a key and makes unknown speech a no-op", async () => {
     expect(
       await mapCommand("scroll down", { jevKey: "", language: "en-US" }),
@@ -183,6 +194,14 @@ describe("Jev finite command mapping", () => {
     });
     expect(request).not.toHaveBeenCalled();
   });
+});
+
+it("reconstructs supported Groq shorthand and bounded media intents", () => {
+  expect(validateIntent("media-pause")).toEqual({ type: "media-pause" });
+  expect(validateIntent("execute-script")).toBeNull();
+  expect(validateIntent({ type: "media-seek", seconds: -10 })).toEqual({ type: "media-seek", seconds: -10 });
+  expect(validateIntent({ type: "media-seek", seconds: Infinity })).toBeNull();
+  expect(validateIntent({ type: "media-seek", seconds: 601 })).toBeNull();
 });
 
 describe("Groq bounded actions and target IDs", () => {
