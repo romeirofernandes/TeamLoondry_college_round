@@ -221,8 +221,9 @@ export class ContentRuntime {
       paused: blocked,
       tracking: tracked,
       now,
-      activate: this.sample?.handHold ? "hand" : "dwell",
-      handHold: this.sample?.handHold ?? false,
+      activate:
+        !this.settings.dwellEnabled && this.sample?.handHold ? "hand" : "dwell",
+      handHold: !this.settings.dwellEnabled && (this.sample?.handHold ?? false),
       dwellEnabled: this.settings.dwellEnabled,
     });
     this.overlay.pointer(

@@ -2,7 +2,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { ContentRuntime } from "../src/content/runtime";
 import { defaults, type Message, type PointerSample } from "../src/shared";
-import { insertText, PageTargets } from "../src/content/dom";
+import { insertText, PageTargets, usable } from "../src/content/dom";
 
 let runtime: ContentRuntime;
 let time = 0;
@@ -342,6 +342,75 @@ describe("page interactions", () => {
     expect(
       targets.some((target) => target.text.includes("Handsfree is ready")),
     ).toBe(false);
+  });
+  it("excludes invisible ancestors and inherited pointer-events while allowing explicit child pointer events", () => {
+    const group = document.createElement("div");
+    const button = document.createElement("button");
+    button.textContent = "Hidden control";
+    group.append(button);
+    document.body.append(group);
+    group.style.opacity = "0";
+    expect(usable(button)).toBe(false);
+    expect(
+      new PageTargets()
+        .scan()
+        .some((target) => target.text === "Hidden control"),
+    ).toBe(false);
+    group.style.opacity = "1";
+    group.style.visibility = "hidden";
+    expect(usable(button)).toBe(false);
+    group.style.visibility = "visible";
+    group.style.pointerEvents = "none";
+    expect(usable(button)).toBe(false);
+    button.style.pointerEvents = "auto";
+    expect(usable(button)).toBe(true);
+  });
+  it("rejects snap candidates covered by a page layer but accepts visible descendants", () => {
+    const button = document.getElementById("button")!;
+    const child = document.createElement("span");
+    button.append(child);
+    const cover = document.createElement("div");
+    document.body.append(cover);
+    const hitTest = document.elementFromPoint as ReturnType<typeof vi.fn>;
+    hitTest.mockReturnValue(cover);
+    expect(new PageTargets().snap(70, 120)).toBeNull();
+    hitTest.mockImplementation((x: number) =>
+      x >= 100 ? child : document.body,
+    );
+    expect(new PageTargets().snap(70, 120)).toBe(button);
+    hitTest.mockReturnValue(null);
+    expect(
+      new PageTargets().scan().some((target) => target.text === "Send"),
+    ).toBe(true);
+  });
+  it("never serializes editable drafts as arbitrary-find labels", () => {
+    const input = document.getElementById("text") as HTMLInputElement;
+    input.value = "Private search query";
+    const textarea = document.createElement("textarea");
+    textarea.name = "comments";
+    textarea.textContent = "Private multiline draft";
+    const label = document.createElement("label");
+    label.append("Comments", textarea);
+    document.body.append(label);
+    const editor = document.getElementById("editor")!;
+    editor.setAttribute("aria-label", "Document editor");
+    editor.textContent = "Private document draft";
+    const nestedButton = document.createElement("button");
+    nestedButton.textContent = "Private nested draft";
+    editor.append(nestedButton);
+    const labelledButton = document.createElement("button");
+    labelledButton.setAttribute("aria-labelledby", "editor");
+    labelledButton.title = "Safe fallback";
+    document.body.append(labelledButton);
+    const labels = new PageTargets().scan();
+    expect(JSON.stringify(labels)).not.toContain("Private");
+    expect(labels.some((target) => target.text === "Comments")).toBe(true);
+    expect(labels.some((target) => target.text === "Safe fallback")).toBe(true);
+    expect(labels.some((target) => target.text === "Document editor")).toBe(
+      true,
+    );
+    expect(labels.some((target) => target.text === "Click me")).toBe(true);
+    expect(labels.some((target) => target.text === "Message")).toBe(true);
   });
   it("asks on ties, chooses one target without activating it, and reports no match", async () => {
     const targets = (await runtime.handle({ type: "GET_TARGETS" })) as {

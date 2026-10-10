@@ -4,10 +4,10 @@
 
 **Blocked by:** 02, 03, 04, 05, 06.
 
-**Status:** implemented, awaiting final review
+**Status:** complete, reviewed
 
 - [x] Parser, safety, tracking mapping, tab selection, find ranking, and DOM behavior have meaningful tests.
 - [x] Playwright loads the real built extension and exercises selection, dictation, pause, confirmation, and tab switching.
 - [x] Spec conflicts, device checks, ADRs, and manual performance evaluation are documented honestly.
 
-**Verification:** Extension TypeScript/build pass; automated unit/DOM and built-extension checks pass. Real-device reliability follows the laptop checklist, not an automated accuracy claim. See README.md and docs/testing.md.
+**Verification:** Extension TypeScript/build pass; automated unit/DOM and built-extension checks pass. Real-device reliability follows the laptop checklist, not an automated accuracy claim. See README.md, docs/testing.md, and docs/review.md for results and remaining manual evaluation.

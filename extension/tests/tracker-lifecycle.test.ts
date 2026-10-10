@@ -12,6 +12,7 @@ import { defaults } from "../src/shared";
 
 class WorkerMock {
   static instances: WorkerMock[] = [];
+  static autoReady = true;
   onmessage: ((event: any) => void) | null = null;
   onerror: any = null;
   terminate = vi.fn();
@@ -20,7 +21,7 @@ class WorkerMock {
     WorkerMock.instances.push(this);
   }
   postMessage(data: any) {
-    if (data.type === "init")
+    if (data.type === "init" && WorkerMock.autoReady)
       queueMicrotask(() => this.onmessage?.({ data: { type: "ready" } }));
     else this.frames.push(data);
   }
@@ -54,6 +55,7 @@ beforeEach(() => {
     ],
   });
   WorkerMock.instances = [];
+  WorkerMock.autoReady = true;
   vi.stubGlobal("Worker", WorkerMock);
   vi.stubGlobal(
     "createImageBitmap",
@@ -85,6 +87,33 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe("tracker lifecycle", () => {
+  it("keeps a pointer-mode restart paused while its model loads", async () => {
+    const preview = video(),
+      tracker = new Tracker(preview, vi.fn(), vi.fn());
+    await tracker.start(defaults);
+    tracker.pause();
+    WorkerMock.autoReady = false;
+    tracker.updateSettings({ ...defaults, pointerMode: "hand" });
+    await vi.advanceTimersByTimeAsync(100);
+    const worker = WorkerMock.instances[1];
+    expect(worker).toBeDefined();
+    const progress = vi.fn();
+    const calibration = tracker.calibrate(progress).catch((error) => error);
+    expect(progress).not.toHaveBeenCalled();
+    expect(await calibration).toBeInstanceOf(Error);
+    worker.emit({ type: "ready" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(
+      worker.frames.filter((frame) => frame.type === "frame"),
+    ).toHaveLength(0);
+    tracker.resume();
+    preview.currentTime += 0.1;
+    await vi.advanceTimersByTimeAsync(34);
+    expect(
+      worker.frames.filter((frame) => frame.type === "frame"),
+    ).toHaveLength(1);
+    tracker.stop();
+  });
   it("closes a late camera stream after start has been cancelled", async () => {
     let release!: (stream: any) => void;
     vi.mocked(navigator.mediaDevices.getUserMedia).mockImplementationOnce(

@@ -272,3 +272,167 @@ test("closing the owned control window stops the session", async () => {
     .poll(async () => (await message({ type: "GET_STATE" })).running)
     .toBe(false);
 });
+
+test("stop during an outstanding settings save cannot acquire camera afterward", async () => {
+  await controls.reload();
+  await controls.evaluate(() => {
+    const scope = window as any;
+    const runtime = chrome.runtime as any;
+    const original = runtime.sendMessage.bind(runtime);
+    const camera = navigator.mediaDevices.getUserMedia.bind(
+      navigator.mediaDevices,
+    );
+    scope.cameraStarts = 0;
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      scope.cameraStarts++;
+      return camera(constraints);
+    };
+    runtime.sendMessage = async (msg: any) => {
+      if (msg.type === "SAVE_SETTINGS")
+        await new Promise<void>((resolve) => {
+          scope.releaseSave = resolve;
+        });
+      return original(msg);
+    };
+  });
+  await controls
+    .getByRole("button", { name: /^(Start|Restart) session$/ })
+    .click();
+  await expect
+    .poll(() => controls.evaluate(() => typeof (window as any).releaseSave))
+    .toBe("function");
+  await controls.getByRole("button", { name: "Stop", exact: true }).click();
+  await controls.evaluate(() => (window as any).releaseSave());
+  await expect(
+    controls.getByRole("button", { name: "Start session", exact: true }),
+  ).toBeEnabled();
+  expect(await controls.evaluate(() => (window as any).cameraStarts)).toBe(0);
+  expect((await message({ type: "GET_STATE" })).running).toBe(false);
+});
+
+test("pause during camera startup cannot start speech until resumed", async () => {
+  await controls.reload();
+  await controls.evaluate(() => {
+    const scope = window as any;
+    const camera = navigator.mediaDevices.getUserMedia.bind(
+      navigator.mediaDevices,
+    );
+    scope.speechStarts = 0;
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      await new Promise<void>((resolve) => {
+        scope.releaseCamera = resolve;
+      });
+      return camera(constraints);
+    };
+    class MockSpeech {
+      static async available() {
+        return "available";
+      }
+      processLocally = true;
+      lang = "";
+      continuous = true;
+      interimResults = false;
+      maxAlternatives = 1;
+      onstart: null | (() => void) = null;
+      onend = null;
+      onresult = null;
+      onerror = null;
+      start() {
+        scope.speechStarts++;
+        this.onstart?.();
+      }
+      abort() {}
+    }
+    Object.defineProperty(window, "SpeechRecognition", {
+      value: MockSpeech,
+      configurable: true,
+    });
+  });
+  await controls
+    .getByRole("button", { name: /^(Start|Restart) session$/ })
+    .click();
+  await expect
+    .poll(() => controls.evaluate(() => typeof (window as any).releaseCamera))
+    .toBe("function");
+  await controls
+    .getByRole("button", { name: "Pause all", exact: true })
+    .click();
+  await controls.evaluate(() => (window as any).releaseCamera());
+  await expect(
+    controls.getByRole("button", { name: "Restart session", exact: true }),
+  ).toBeEnabled();
+  expect((await message({ type: "GET_STATE" })).paused).toBe(true);
+  expect(await controls.evaluate(() => (window as any).speechStarts)).toBe(0);
+  await controls.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect
+    .poll(() => controls.evaluate(() => (window as any).speechStarts))
+    .toBe(1);
+  await controls.getByRole("button", { name: "Stop", exact: true }).click();
+});
+
+test("local notices do not hide close-tab confirmation feedback", async () => {
+  await controls
+    .getByRole("button", { name: "Mark task start", exact: true })
+    .click();
+  await expect(controls.locator(".local-notice")).toHaveText(
+    "Task timer started.",
+  );
+  await heard("close tab");
+  await expect(controls.locator(".feedback")).toContainText("Say confirm");
+  await heard("cancel");
+});
+
+test("pause and resume during speech availability restarts cancelled startup", async () => {
+  await controls.reload();
+  await controls.evaluate(() => {
+    const scope = window as any;
+    scope.speechStarts = 0;
+    scope.availabilityChecks = 0;
+    class DelayedSpeech {
+      static async available() {
+        scope.availabilityChecks++;
+        if (scope.availabilityChecks === 1)
+          await new Promise<void>((resolve) => {
+            scope.releaseSpeech = resolve;
+          });
+        return "available";
+      }
+      processLocally = true;
+      lang = "";
+      continuous = true;
+      interimResults = false;
+      maxAlternatives = 1;
+      onstart: null | (() => void) = null;
+      onend = null;
+      onresult = null;
+      onerror = null;
+      start() {
+        scope.speechStarts++;
+        this.onstart?.();
+      }
+      abort() {}
+    }
+    Object.defineProperty(window, "SpeechRecognition", {
+      value: DelayedSpeech,
+      configurable: true,
+    });
+  });
+  await controls
+    .getByRole("button", { name: /^(Start|Restart) session$/ })
+    .click();
+  await expect
+    .poll(() => controls.evaluate(() => typeof (window as any).releaseSpeech), {
+      timeout: 30000,
+    })
+    .toBe("function");
+  await controls
+    .getByRole("button", { name: "Pause all", exact: true })
+    .click();
+  await controls.getByRole("button", { name: "Resume", exact: true }).click();
+  await controls.evaluate(() => (window as any).releaseSpeech());
+  await expect
+    .poll(() => controls.evaluate(() => (window as any).speechStarts))
+    .toBe(1);
+  expect((await message({ type: "GET_STATE" })).paused).toBe(false);
+  await controls.getByRole("button", { name: "Stop", exact: true }).click();
+});

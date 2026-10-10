@@ -31,7 +31,9 @@ function App() {
   const stateRef = useRef(state);
   stateRef.current = state;
   const generation = useRef(0);
+  const desired = useRef<"running" | "paused" | "stopped">("stopped");
   const busyRef = useRef(false);
+  const deferredSpeechResume = useRef(false);
   const alive = useRef(true);
   async function safe(task: () => Promise<unknown>) {
     try {
@@ -69,15 +71,50 @@ function App() {
       setProgress(null);
     }
   }
+  function shouldRun() {
+    return desired.current === "running";
+  }
+  async function beginSpeech(token: number) {
+    if (token !== generation.current || desired.current !== "running") return;
+    speech.current?.stop();
+    speech.current = new SpeechAdapter(
+      (text) => {
+        if (token === generation.current && desired.current === "running")
+          void send({ type: "HEARD", text }).catch(() => {});
+      },
+      (voice) => {
+        if (token === generation.current)
+          void send({ type: "SET_STATE", patch: { voice } }).catch(() => {});
+      },
+    );
+    try {
+      await speech.current.start(settingsRef.current);
+    } catch (error) {
+      if (token === generation.current && desired.current === "running")
+        setNotice(
+          error instanceof Error
+            ? error.message
+            : "Voice unavailable. Check microphone permission.",
+        );
+    }
+  }
   async function start() {
     if (busyRef.current) return;
     busyRef.current = true;
+    desired.current = "running";
     setBusy(true);
     setNotice("");
     const current = ++generation.current;
+    deferredSpeechResume.current = false;
+    speech.current?.stop();
+    speech.current = null;
     try {
       await send({ type: "SAVE_SETTINGS", settings: settingsRef.current });
+      if (current !== generation.current || desired.current !== "running")
+        return;
       await send({ type: "START" });
+      if (current !== generation.current || desired.current !== "running")
+        return;
       if (!video.current) throw new Error("Camera preview is unavailable.");
       tracker.current?.stop();
       tracker.current = new Tracker(
@@ -94,6 +131,7 @@ function App() {
       try {
         await tracker.current.start(settingsRef.current);
       } catch (error) {
+        if (current !== generation.current) return;
         await send({
           type: "SET_STATE",
           patch: {
@@ -112,32 +150,30 @@ function App() {
         tracker.current?.stop();
         return;
       }
-      speech.current?.stop();
-      speech.current = new SpeechAdapter(
-        (text) => {
-          void send({ type: "HEARD", text }).catch(() => {});
-        },
-        (voice) => {
-          void send({ type: "SET_STATE", patch: { voice } }).catch(() => {});
-        },
-      );
-      try {
-        await speech.current.start(settingsRef.current);
-      } catch (error) {
-        setNotice(
-          error instanceof Error
-            ? error.message
-            : "Voice unavailable. Check microphone permission.",
-        );
+      if (!shouldRun()) {
+        tracker.current?.pause();
+        return;
       }
+      await beginSpeech(current);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Start failed.");
+      if (current === generation.current)
+        setNotice(error instanceof Error ? error.message : "Start failed.");
     } finally {
       busyRef.current = false;
       if (alive.current) setBusy(false);
+      if (
+        deferredSpeechResume.current &&
+        current === generation.current &&
+        shouldRun()
+      ) {
+        deferredSpeechResume.current = false;
+        void beginSpeech(current);
+      }
     }
   }
   async function shutdown() {
+    desired.current = "stopped";
+    deferredSpeechResume.current = false;
     setNotice("");
     ++generation.current;
     tracker.current?.stop();
@@ -159,20 +195,52 @@ function App() {
       })
       .catch(() => setNotice("Could not connect. Reload the extension."));
     function listener(message: Message) {
-      if (message.type === "STATE") setState(message.state);
+      if (message.type === "STATE") {
+        setState(message.state);
+        if (
+          controllerView &&
+          message.state.paused &&
+          desired.current === "running"
+        ) {
+          if (busyRef.current && speech.current)
+            deferredSpeechResume.current = true;
+          desired.current = "paused";
+          tracker.current?.pause();
+          speech.current?.pause();
+          setProgress(null);
+        }
+        if (
+          controllerView &&
+          !message.state.running &&
+          desired.current !== "stopped"
+        ) {
+          desired.current = "stopped";
+          ++generation.current;
+          tracker.current?.stop();
+          speech.current?.stop();
+          setProgress(null);
+        }
+      }
       if (controllerView && message.type === "CONTROLLER_COMMAND") {
         if (message.command === "pause") {
+          if (busyRef.current && speech.current)
+            deferredSpeechResume.current = true;
+          desired.current = "paused";
           tracker.current?.pause();
           speech.current?.pause();
           setProgress(null);
         }
         if (message.command === "resume") {
-          tracker.current?.resume();
-          void speech.current
-            ?.resume()
-            .catch((error) => setNotice(String(error)));
+          desired.current = "running";
+          if (!tracker.current && !busyRef.current) {
+            void start();
+          } else {
+            tracker.current?.resume();
+            if (!busyRef.current) void beginSpeech(generation.current);
+          }
         }
         if (message.command === "stop") {
+          desired.current = "stopped";
           setNotice("");
           ++generation.current;
           tracker.current?.stop();
@@ -186,6 +254,7 @@ function App() {
     chrome.runtime.onMessage.addListener(listener);
     return () => {
       alive.current = false;
+      desired.current = "stopped";
       ++generation.current;
       chrome.runtime.onMessage.removeListener(listener);
       tracker.current?.stop();
@@ -370,7 +439,10 @@ function App() {
         )}
       </div>
       <p className="feedback" role="status">
-        {notice || state.feedback}
+        {state.feedback}
+      </p>
+      <p className="fine local-notice" role="status" aria-live="polite">
+        {notice}
       </p>
       {!controllerView && (
         <>

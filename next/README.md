@@ -28,7 +28,7 @@ TypeScript check: `npm run typecheck`.
 - **Hand gestures:** broad movement as a second pointer with hold confirmation; no pinch required.
 - **Face movements:** primary in-page pointer with smoothing, posture adaptation, and adjustable sensitivity.
 
-Content follows the repository-root `spec.md`: Chrome-only scope, intentional selection, instant pause, local tracking/settings/logs, optional text-only LLM find, and explicit confirmations for form submission and tab closing. The page introduces each mode with three editorial feature rows, a setup overview, and a quick-guide accordion. Real camera/microphone control and a browser extension are future work. Voice typing belongs to the voice mode.
+Content follows the repository-root `spec.md`: Chrome-only scope, intentional selection, instant pause, local tracking/settings/logs, optional text-only LLM find, and explicit confirmations for form submission and tab closing. The page introduces each mode with three editorial feature rows, a setup overview, and a quick-guide accordion. The development extension lives in `../extension/`; see the [root README](../README.md) for building, loading, and testing it. Voice typing belongs to the voice mode. Real-device performance still needs evaluation.
 
 No authentication or environment variables are required. A single shadcn Button toggles light/dark mode through `next-themes` and remembers the choice locally. The page follows the system theme initially and respects the operating system’s reduced-motion preference automatically.
 

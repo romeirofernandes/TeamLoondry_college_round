@@ -105,7 +105,6 @@ export class PointerFilter {
   private current = { x: 0.5, y: 0.5 };
   private lastRaw: RawPoint | null = null;
   private holdAnchor: RawPoint | null = null;
-  private holdSince = 0;
   private driftSince = 0;
   private lastTime = 0;
   setCalibration(calibration: Calibration) {
@@ -175,9 +174,9 @@ export class PointerFilter {
         Math.hypot(raw.x - this.holdAnchor.x, raw.y - this.holdAnchor.y) > 0.018
       ) {
         this.holdAnchor = { ...raw };
-        this.holdSince = time;
-      }
-      handHold = time - this.holdSince >= settings.dwellMs;
+      } else handHold = true;
+      // This reports steadiness only. ActivationGate owns the single dwell/hold
+      // timer, so pointing never adds a second wait before the visible ring.
     } else this.holdAnchor = null;
     return { ...this.current, confidence: raw.confidence, handHold };
   }

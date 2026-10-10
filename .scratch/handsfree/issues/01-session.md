@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** implemented, awaiting final review
+**Status:** complete, reviewed
 
 - [x] Load an unpacked MV3 build with packaged scripts and matching theme.
 - [x] Start, pause, resume, and stop propagate across the popup, controller, and page.
 - [x] Permission denial leaves a voice-only path; no backend or OS actions.
 
-**Verification:** Extension TypeScript/build pass; automated unit/DOM and built-extension checks pass. Real-device reliability follows the laptop checklist, not an automated accuracy claim. See README.md and docs/testing.md.
+**Verification:** Extension TypeScript/build pass; automated unit/DOM and built-extension checks pass. Real-device reliability follows the laptop checklist, not an automated accuracy claim. See README.md, docs/testing.md, and docs/review.md for results and remaining manual evaluation.

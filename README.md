@@ -163,6 +163,7 @@ Open `http://localhost:3000`. The landing keeps its charcoal/ivory theme, green 
 - [Spec review and scope decisions](docs/spec-review.md)
 - [Architecture](docs/architecture.md)
 - [Testing and laptop checklist](docs/testing.md)
+- [Implementation review and verification](docs/review.md)
 - [Implementation tickets](.scratch/handsfree/issues/)
 - [Domain glossary](GLOSSARY.md)
 

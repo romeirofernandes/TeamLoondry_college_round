@@ -130,11 +130,7 @@ async function target(tabId: number) {
 async function controller(
   command: "start" | "stop" | "pause" | "resume" | "calibrate",
 ) {
-  if (controllerTabId === null) return;
-  void chrome.tabs
-    .sendMessage(controllerTabId, { type: "CONTROLLER_COMMAND", command })
-    .catch(() => {});
-  // Runtime messages reach extension pages; tabs.sendMessage is for content scripts.
+  // Extension control pages receive runtime messages even after a worker restart.
   void chrome.runtime
     .sendMessage({ type: "CONTROLLER_COMMAND", command })
     .catch(() => {});
@@ -480,6 +476,25 @@ async function action(intent: Intent) {
   if (result?.error) await publish({ feedback: result.error });
 }
 let commandQueue = Promise.resolve();
+let activeCommand: Intent["type"] | null = null;
+async function routeHeard(text: string, intent: Intent, revision: number) {
+  if (revision !== pageRevision || !state.running || state.paused) return;
+  await publish({ lastHeard: text });
+  if (revision !== pageRevision || !state.running || state.paused) return;
+  // Resolve mode when this transcript executes, after preceding mode changes.
+  // Only the exact stop-typing phrase can leave dictation.
+  if (state.dictating && intent.type !== "stop-typing") {
+    const result = await page({ type: "DICTATE", text });
+    if (result?.error) await publish({ feedback: result.error });
+    return;
+  }
+  activeCommand = intent.type;
+  try {
+    await action(intent);
+  } finally {
+    activeCommand = null;
+  }
+}
 async function handle(message: Message, sender: chrome.runtime.MessageSender) {
   await ready;
   const trusted = uiSender(sender);
@@ -581,20 +596,21 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return { ok: true };
     case "HEARD": {
       if (!state.running || state.paused) return { ok: true };
-      await publish({ lastHeard: message.text });
+      const revision = pageRevision;
       const intent = parseIntent(message.text);
-      // Only the exact stop-typing phrase can leave dictation. No other words become commands.
-      if (state.dictating && intent.type !== "stop-typing") {
-        const result = await page({ type: "DICTATE", text: message.text });
-        if (result?.error) await publish({ feedback: result.error });
-        return { ok: true };
-      }
-      if (intent.type === "pause" || intent.type === "stop") {
-        await action(intent);
+      // A provider request can take seconds. Interrupt it immediately in command
+      // mode, while ordinary transcripts keep their order across typing changes.
+      if (
+        activeCommand === "find" &&
+        !state.dictating &&
+        (intent.type === "pause" || intent.type === "stop")
+      ) {
+        await publish({ lastHeard: message.text });
+        if (revision === pageRevision && !state.dictating) await action(intent);
         return { ok: true };
       }
       commandQueue = commandQueue
-        .then(() => action(intent))
+        .then(() => routeHeard(message.text, intent, revision))
         .catch(async (error) =>
           publish({
             feedback:

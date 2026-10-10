@@ -18,6 +18,7 @@ const pageSender = (id: number): chrome.runtime.MessageSender => ({
 
 async function setup(options: { tabPermission?: boolean; key?: string } = {}) {
   let listener: Listener | undefined;
+  let pageDictating = false;
   const event = () => ({ addListener: vi.fn() });
   const browser = {
     storage: {
@@ -67,11 +68,17 @@ async function setup(options: { tabPermission?: boolean; key?: string } = {}) {
           title: "Inbox",
         },
       ]),
-      sendMessage: vi.fn(async (_id: number, message: Message) =>
-        message.type === "GET_TARGETS"
-          ? [{ id: "careers", text: "Careers", role: "link" }]
-          : { ok: true },
-      ),
+      sendMessage: vi.fn(async (_id: number, message: Message) => {
+        if (message.type === "GET_TARGETS")
+          return [{ id: "careers", text: "Careers", role: "link" }];
+        if (message.type === "PAGE_STATE") pageDictating = message.dictating;
+        if (message.type === "PAGE_ACTION") {
+          if (message.intent.type === "start-typing") pageDictating = true;
+          if (message.intent.type === "stop-typing") pageDictating = false;
+          return { ok: true, dictating: pageDictating };
+        }
+        return { ok: true };
+      }),
       create: vi.fn(async () => ({ id: 3 })),
       update: vi.fn(async () => ({})),
       remove: vi.fn(async () => {}),
@@ -215,6 +222,65 @@ describe("background command and permission boundary", () => {
     }
     expect(browser.tabs.create).not.toHaveBeenCalled();
     expect(browser.storage.local.set).not.toHaveBeenCalled();
+  });
+
+  it("routes concurrent transcripts after start typing as text, never tab commands", async () => {
+    const { browser, send } = await setup();
+    await Promise.all(
+      ["start typing", "close tab", "confirm"].map((text) =>
+        send({ type: "HEARD", text }),
+      ),
+    );
+    expect(browser.tabs.query).not.toHaveBeenCalled();
+    expect(browser.tabs.remove).not.toHaveBeenCalled();
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, {
+      type: "DICTATE",
+      text: "close tab",
+    });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, {
+      type: "DICTATE",
+      text: "confirm",
+    });
+  });
+
+  it("routes concurrent transcripts after stop typing back to navigation", async () => {
+    const { browser, send } = await setup();
+    await send({ type: "HEARD", text: "start typing" });
+    await Promise.all(
+      ["stop typing", "scroll down"].map((text) =>
+        send({ type: "HEARD", text }),
+      ),
+    );
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, {
+      type: "PAGE_ACTION",
+      intent: { type: "scroll", direction: "down" },
+    });
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, {
+      type: "DICTATE",
+      text: "scroll down",
+    });
+  });
+
+  it("inserts concurrent pause and stop phrases when the earlier phrase starts dictation", async () => {
+    const { browser, send } = await setup();
+    await Promise.all(
+      ["start typing", "pause handsfree", "stop handsfree"].map((text) =>
+        send({ type: "HEARD", text }),
+      ),
+    );
+    expect(await send({ type: "GET_STATE" })).toMatchObject({
+      running: true,
+      paused: false,
+      dictating: true,
+    });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, {
+      type: "DICTATE",
+      text: "pause handsfree",
+    });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, {
+      type: "DICTATE",
+      text: "stop handsfree",
+    });
   });
 
   it("cannot change privileged session fields through a content state patch", async () => {
@@ -396,4 +462,72 @@ describe("arbitrary find boundary", () => {
       ),
     ).toBe(false);
   });
+
+  it.each(["pause handsfree", "stop handsfree"])(
+    "interrupts an in-flight provider request with %s",
+    async (text) => {
+      const { browser, send, fetch } = await setup({ key: "test-only-key" });
+      let resolveFetch: (response: unknown) => void = () => {};
+      const started = new Promise<void>((resolve) => {
+        fetch.mockImplementation(() => {
+          resolve();
+          return new Promise((resolver) => {
+            resolveFetch = resolver;
+          });
+        });
+      });
+      const request = send({ type: "HEARD", text: "find careers page" });
+      await started;
+      await send({ type: "HEARD", text });
+      expect(await send({ type: "GET_STATE" })).toMatchObject(
+        text === "pause handsfree" ? { paused: true } : { running: false },
+      );
+      resolveFetch({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"ids":["careers"]}' } }],
+        }),
+      });
+      await request;
+      expect(
+        browser.tabs.sendMessage.mock.calls.some(
+          ([, message]) => message.type === "FIND_RESULT",
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it.each(["pause-resume", "target-change"])(
+    "discards queued speech actions after %s",
+    async (change) => {
+      const { browser, send, fetch } = await setup({ key: "test-only-key" });
+      let resolveFetch: (response: unknown) => void = () => {};
+      const started = new Promise<void>((resolve) => {
+        fetch.mockImplementation(() => {
+          resolve();
+          return new Promise((resolver) => {
+            resolveFetch = resolver;
+          });
+        });
+      });
+      const request = send({ type: "HEARD", text: "find careers page" });
+      await started;
+      const queued = send({ type: "HEARD", text: "close tab" });
+      await send({ type: "GET_STATE" });
+      if (change === "pause-resume") {
+        await send({ type: "PAUSE" });
+        await send({ type: "RESUME" });
+      } else await send({ type: "START", tabId: 2 });
+      resolveFetch({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"ids":["careers"]}' } }],
+        }),
+      });
+      await Promise.all([request, queued]);
+      expect(browser.tabs.query).not.toHaveBeenCalled();
+      await send({ type: "HEARD", text: "confirm" });
+      expect(browser.tabs.remove).not.toHaveBeenCalled();
+    },
+  );
 });

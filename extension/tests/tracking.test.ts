@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { PointerFilter, landmarkPoint } from "../src/tracking/math";
 import { defaults } from "../src/shared";
+import { ActivationGate } from "../src/core/safety";
 
 describe("tracking cursor contract", () => {
   it("maps neutral to center, range to screen edge and mirrors horizontal movement", () => {
@@ -41,13 +42,57 @@ describe("tracking cursor contract", () => {
   it("requires a stationary broad hand for hold and cancels on movement", () => {
     const f = new PointerFilter();
     const settings = { ...defaults, pointerMode: "hand" as const };
-    f.update({ x: 0.5, y: 0.5, confidence: 1 }, 0, settings);
     expect(
-      f.update({ x: 0.5, y: 0.5, confidence: 1 }, 850, settings).handHold,
+      f.update({ x: 0.5, y: 0.5, confidence: 1 }, 0, settings).handHold,
+    ).toBe(false);
+    expect(
+      f.update({ x: 0.5, y: 0.5, confidence: 1 }, 33, settings).handHold,
     ).toBe(true);
     expect(
       f.update({ x: 0.7, y: 0.5, confidence: 1 }, 900, settings).handHold,
     ).toBe(false);
+    expect(
+      f.update({ x: 0.7, y: 0.5, confidence: 1 }, 933, settings).handHold,
+    ).toBe(true);
+    expect(f.update(null, 966, settings).handHold).toBe(false);
+    expect(
+      f.update({ x: 0.7, y: 0.5, confidence: 1 }, 999, settings).handHold,
+    ).toBe(false);
+    expect(
+      f.update({ x: 0.7, y: 0.5, confidence: 1 }, 1032, settings).handHold,
+    ).toBe(true);
+  });
+  it("uses one safety timer for broad-hand selection and latches the activation", () => {
+    const filter = new PointerFilter(),
+      gate = new ActivationGate({ dwellMs: 800 });
+    const settings = {
+      ...defaults,
+      pointerMode: "hand" as const,
+      dwellEnabled: false,
+    };
+    filter.update({ x: 0.5, y: 0.5, confidence: 1 }, -33, settings);
+    const update = (now: number) => {
+      const sample = filter.update(
+        { x: 0.5, y: 0.5, confidence: 1 },
+        now,
+        settings,
+      );
+      return gate.update({
+        targetId: "button",
+        confidence: sample.confidence,
+        paused: false,
+        tracking: true,
+        now,
+        dwellEnabled: false,
+        handHold: sample.handHold,
+        activate: sample.handHold ? "hand" : "dwell",
+      });
+    };
+    expect(update(0)).toMatchObject({ activate: false, progress: 0 });
+    expect(update(400)).toMatchObject({ activate: false, progress: 0.5 });
+    expect(update(799).activate).toBe(false);
+    expect(update(800)).toMatchObject({ activate: true, progress: 1 });
+    expect(update(1600)).toMatchObject({ activate: false, reason: "latched" });
   });
   it("does not call face geometry a model confidence score", () => {
     const points = Array.from({ length: 478 }, () => ({

@@ -453,11 +453,11 @@ export class Tracker {
     this.settings = { ...settings };
     if (modeChanged && this.active) {
       const wasPaused = this.paused;
-      void this.start(settings)
-        .then(() => {
-          if (wasPaused && this.active) this.pause();
-        })
-        .catch(() => {});
+      const restarting = this.start(settings);
+      // start resets lifecycle flags before its first await. Restore pause now,
+      // rather than after loading, and allow a later explicit resume to persist.
+      if (wasPaused) this.pause();
+      void restarting.catch(() => {});
     }
   }
   stop() {

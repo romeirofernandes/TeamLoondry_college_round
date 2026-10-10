@@ -3,6 +3,20 @@ import type { TargetText } from "../shared";
 export const interactiveSelector =
   'a[href],button,input:not([type="hidden"]),textarea,select,[contenteditable="true"],[contenteditable=""],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex]:not([tabindex="-1"])';
 export const overlayId = "handsfree-assist-overlay";
+const privateTextSelector =
+  'input,textarea,[contenteditable="true"],[contenteditable=""],[role="textbox"]';
+
+function staticText(element: Element | null): string {
+  if (!element || element.closest(privateTextSelector)) return "";
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  const pieces: string[] = [];
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    if (!node.parentElement?.closest(privateTextSelector))
+      pieces.push(node.textContent ?? "");
+  }
+  return pieces.join(" ");
+}
 
 export function usable(element: Element): element is HTMLElement {
   if (!(element instanceof HTMLElement) || element.closest(`#${overlayId}`))
@@ -14,33 +28,52 @@ export function usable(element: Element): element is HTMLElement {
     return false;
   const style = getComputedStyle(element);
   const box = element.getBoundingClientRect();
-  return (
-    style.display !== "none" &&
-    style.visibility !== "hidden" &&
-    style.visibility !== "collapse" &&
-    Number(style.opacity || "1") > 0 &&
-    box.width > 0 &&
-    box.height > 0
-  );
+  if (style.pointerEvents === "none" || box.width <= 0 || box.height <= 0)
+    return false;
+  // Opacity and display on an ancestor hide children even when their own styles look visible.
+  for (
+    let ancestor: Element | null = element;
+    ancestor;
+    ancestor = ancestor.parentElement
+  ) {
+    const ancestorStyle =
+      ancestor === element ? style : getComputedStyle(ancestor);
+    if (
+      ancestorStyle.display === "none" ||
+      ancestorStyle.visibility === "hidden" ||
+      ancestorStyle.visibility === "collapse" ||
+      Number(ancestorStyle.opacity || "1") <= 0
+    )
+      return false;
+  }
+  return true;
 }
 
 export function targetLabel(element: HTMLElement): string {
   const labelIds = element.getAttribute("aria-labelledby")?.split(/\s+/) ?? [];
   const labelled = labelIds
-    .map((id) => document.getElementById(id)?.textContent ?? "")
+    .map((id) => staticText(document.getElementById(id)))
     .join(" ");
   const labels =
     "labels" in element
       ? Array.from((element as HTMLInputElement).labels ?? [])
-          .map((label) => label.textContent)
+          .map((label) => staticText(label))
           .join(" ")
       : "";
+  // Editable text is user data, never a label sent to arbitrary-find ranking.
+  const isEditableContent =
+    element instanceof HTMLTextAreaElement ||
+    element.isContentEditable ||
+    element.closest('[contenteditable="true"],[contenteditable=""]') !== null ||
+    element.getAttribute("role") === "textbox";
   const text =
     element instanceof HTMLInputElement
       ? element.type === "submit" || element.type === "button"
         ? element.value
         : ""
-      : element.textContent;
+      : isEditableContent
+        ? ""
+        : staticText(element);
   return (
     element.getAttribute("aria-label") ||
     labelled ||
@@ -225,6 +258,18 @@ export class PageTargets {
       const dy = Math.max(box.top - y, 0, y - box.bottom);
       const gap = Math.hypot(dx, dy);
       if (gap < distance && usable(candidate)) {
+        const left = Math.max(0, box.left);
+        const right = Math.min(innerWidth, box.right);
+        const top = Math.max(0, box.top);
+        const bottom = Math.min(innerHeight, box.bottom);
+        if (right <= left || bottom <= top) continue;
+        const insetX = Math.min(1, (right - left) / 2);
+        const insetY = Math.min(1, (bottom - top) / 2);
+        const hitX = Math.max(left + insetX, Math.min(right - insetX, x));
+        const hitY = Math.max(top + insetY, Math.min(bottom - insetY, y));
+        const hit = document.elementFromPoint(hitX, hitY);
+        // Geometry alone must not select a control behind a modal or another page layer.
+        if (!hit || (hit !== candidate && !candidate.contains(hit))) continue;
         winner = candidate;
         distance = gap;
       }
