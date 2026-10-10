@@ -3,6 +3,13 @@ import { PointerFilter, landmarkPoint } from "../src/tracking/math";
 import { defaults } from "../src/shared";
 import { ActivationGate } from "../src/core/safety";
 import { calibrationFromPoses } from "../src/tracking/calibration";
+import {PointerFilter as sharedFilter} from "../../shared/tracking/math";
+import {calibrationFromPoses as sharedCalibration} from "../../shared/tracking/calibration";
+
+it("uses the same tracking implementation as the desktop app",()=>{
+  expect(PointerFilter).toBe(sharedFilter);
+  expect(calibrationFromPoses).toBe(sharedCalibration);
+});
 
 it("maps five small hand captures independently and rejects a missing direction", () => {
   const points = (x: number, y: number) => Array.from({ length: 12 }, () => ({ x, y, confidence: 1 }));

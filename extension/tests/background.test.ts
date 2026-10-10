@@ -1000,3 +1000,31 @@ describe("trusted selected-link tab authorization", () => {
     expect((await send({ type: "GET_PROVIDER_STATUS" })).jevKeyCount).toBe(0);
   });
 });
+
+
+describe('bounded browser request lifecycle',()=>{
+  it('observes a fresh page between explicit steps and completes once',async()=>{
+    const {browser,send,fetch}=await setup({key:'fixture-only'});let changed=false;
+    browser.tabs.sendMessage.mockImplementation(async(_id,message)=>{
+      if(message.type==='GET_TARGETS')return [{id:'careers',text:'Careers',role:'link'}];
+      if(message.type==='GET_PAGE_CONTEXT')return {ok:true,title:'Fixture',url:'https://example.test/',text:changed?'New destination':'Initial page'};
+      if(message.type==='AGENT_ACTION'){changed=true;return {ok:true};}
+      return {ok:true};
+    });
+    const completion=(output:unknown)=>({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify(output)}}]})});
+    fetch.mockResolvedValueOnce(completion({action:{type:'click',targetId:'careers'},answer:null,done:false,clarify:null})).mockResolvedValueOnce(completion({action:null,answer:null,done:true,clarify:null}));
+    const work=send({type:'HEARD',text:'hey handsfree open careers then read it'});
+    await vi.advanceTimersByTimeAsync(1000);await work;
+    expect(fetch).toHaveBeenCalledTimes(2);expect(browser.tabs.sendMessage.mock.calls.filter(([,m])=>m.type==='AGENT_ACTION')).toHaveLength(1);
+    expect((await send({type:'GET_STATE'})).feedback).toBe('Done.');
+  });
+  it('aborts a pending explicit sequence when Pause is pressed',async()=>{
+    const {browser,send,fetch}=await setup({key:'fixture-only'});
+    browser.tabs.sendMessage.mockImplementation(async(_id,message)=>message.type==='GET_TARGETS'?[{id:'careers',text:'Careers',role:'link'}]:message.type==='GET_PAGE_CONTEXT'?{ok:true,title:'Fixture',url:'https://example.test/',text:'Initial page'}:{ok:true});
+    let finish!:(value:unknown)=>void;const started=new Promise<void>(resolve=>fetch.mockImplementation(()=>{resolve();return new Promise(done=>{finish=done;});}));
+    const work=send({type:'HEARD',text:'hey handsfree open careers then read it'});await started;const signal=fetch.mock.calls[0][1].signal;
+    await send({type:'PAUSE'});await work;expect(signal.aborted).toBe(true);
+    finish({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify({action:{type:'click',targetId:'careers'},answer:null,done:false,clarify:null})}}]})});
+    for(let i=0;i<30;i++)await Promise.resolve();expect(browser.tabs.sendMessage.mock.calls.some(([,m])=>m.type==='AGENT_ACTION')).toBe(false);
+  });
+});

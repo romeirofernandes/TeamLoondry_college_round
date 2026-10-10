@@ -20,7 +20,7 @@ import { parseIntent, sessionIntent, wakeRequest } from "./core/parser";
 import { mediaControl } from "./content/media";
 import { bundledProviders } from "./provider-config";
 import { rankTabs, rankTargets, adjacentTabId } from "./core/ranking";
-import { mapCommand, resolveAgentStep, transcribeAudio, jevKeys } from "./providers";
+import { mapCommand, resolveAgentStep, resolveArbitrary, transcribeAudio, jevKeys } from "./providers";
 import { appendMetric, summarizeMetrics } from "./core/metrics";
 import { normalizeGesturePresets } from "./gestures";
 import type { GesturePreset, GestureRuntimeStatus } from "./shared";
@@ -489,13 +489,66 @@ async function activateTab(id: number, current: () => boolean = () => true) {
     if (tabActivations.get(id) === activation) tabActivations.delete(id);
   }
 }
-async function arbitraryFind(query: string) {
+async function arbitrarySingle(query: string, signal?: AbortSignal) {
+  const parsed = parseIntent(query);
+  if (!groqOptions().groqKeys.length) { await publish({ feedback: "Add a Groq key in the website dashboard to use hey handsfree commands." }); return; }
+  const requestRevision = pageRevision;
+  const snapshotTab = state.targetTabId;
+  const targets = await page({ type: "GET_TARGETS" });
+  const chosen: TargetText[] = Array.isArray(targets) ? targets.slice(0, 1500).map(t => ({ id: String(t.id), text: String(t.text).slice(0, 160), role: String(t.role) })) : [];
+  const context = await page({ type: "GET_PAGE_CONTEXT" });
+  const safeContext: PageContext | undefined = context && typeof context.title === "string" && typeof context.url === "string" && typeof context.text === "string"
+    ? { title: context.title.slice(0, 500), url: context.url.slice(0, 2000), text: context.text.slice(0, 12000) } : undefined;
+  const current = () => !signal?.aborted && pageRevision === requestRevision && !state.paused && state.running && state.targetTabId === snapshotTab;
+  if (!current()) return;
+  await publish({ feedback: "Understanding your request with Groq…" });
+  record("find-request");
+  try {
+    const snapshot: SiteSnapshot | null = await page({type:"GET_SITE_CONTEXT"});
+    if(!current())return;
+    const domainChoices = snapshot?.site ? siteCandidates(query,snapshot) : undefined;
+    const result = await resolveArbitrary(query, chosen, groqOptions(), signal, safeContext, domainChoices);
+    if (!current()) return;
+    if (result.answer) {
+      const response = await page({ type: "ANSWER", text: result.answer });
+      if (current()) await publish({ feedback: response?.error || result.answer });
+      return;
+    }
+    if (result.intent) {
+      if (parsed.type === "click-target" && parsed.disposition && result.intent.type === "click-target")
+        result.intent.disposition = parsed.disposition;
+      if (parsed.type === "click-link" && parsed.disposition && result.intent.type === "click-link")
+        result.intent.disposition = parsed.disposition;
+      await action(result.intent, current); return;
+    }
+    let ids = result.ids;
+    if (ids.length === 1) {
+      const selected = chosen.find(target => target.id === ids[0]);
+      const label = selected?.text.toLowerCase().replace(/\s+/g, " ").trim();
+      if (label) ids = chosen.filter(target => target.role === selected?.role && target.text.toLowerCase().replace(/\s+/g, " ").trim() === label).map(target => target.id);
+    }
+    const requested = parseIntent(query);
+    const disposition = requested.type === "click-link" || requested.type === "click-target" ? requested.disposition : undefined;
+    const response = await page({ type: "FIND_RESULT", ids: ids.slice(0, 10), disposition });
+    if (current() && response?.error) await publish({ feedback: response.error });
+    record(ids.length ? "find-match" : "find-no-match");
+  } catch (error) {
+    if (current()) await publish({ feedback: error instanceof Error ? error.message : "Groq failed. Check your connection and retry." });
+    record("find-error");
+  }
+}
+async function arbitraryFind(query:string){
+  // Direct requests keep their existing finite command contract. Explicit sequences use fresh-page steps.
+  await providerWork(signal=> /\b(?:then|after that)\b|\band (?:play|open|click|search|scroll|pause)\b/i.test(query)
+    ? arbitraryPlan(query,signal) : arbitrarySingle(query,signal));
+}
+async function arbitraryPlan(query: string, signal:AbortSignal) {
   const options = groqOptions();
   if (!options.groqKeys.length) { await publish({ feedback: "Add a Groq key in the website dashboard to use hey handsfree commands." }); return; }
   const tabId = state.targetTabId;
   if (tabId === null || !state.running || state.paused) return;
   const token = ++planToken;
-  const current = () => token === planToken && state.running && !state.paused && state.targetTabId === tabId;
+  const current = () => !signal.aborted && token === planToken && state.running && !state.paused && !state.dictating && state.targetTabId === tabId;
   await publish({ feedback: "Working through your request with Groq…" });
   record("find-request");
   try {
@@ -517,7 +570,7 @@ async function arbitraryFind(query: string) {
       }
       const targets: TargetText[] = listed.slice(0, 100).map((t: any) => ({ id: String(t.id), text: String(t.text).slice(0, 180), role: String(t.role).slice(0, 80) }));
       const pageContext: PageContext = { title: String((context as PageContext).title).slice(0, 500), url: String((context as PageContext).url).slice(0, 2000), text: String((context as PageContext).text).slice(0, 12000) };
-      const result = await resolveAgentStep(query, targets, pageContext, options);
+      const result = await resolveAgentStep(query, targets, pageContext, options, signal);
       if (!current()) return;
       if (result.clarify) { await publish({ feedback: result.clarify }); return; }
       if (result.answer) {
@@ -903,8 +956,8 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     const intent = await mapCommand(text, { ...options, tabs, targets, site:site?.site, siteCandidates:domainCandidates, forceClassification: classifyNamed || !!site?.site }, signal);
     if (signal.aborted || revision !== pageRevision || !state.running || state.paused) return;
     if (intent.type === "unknown") {
-      if (groqOptions().groqKeys.length) { void arbitraryFind(text); return; }
-      await publish({ feedback: `Heard "${text}". Add a Groq key to use arbitrary browser commands.` });
+      if (groqOptions().groqKeys.length) { await arbitraryFind(text); return; }
+      await publish({ feedback: `No command matched "${text}". Add a Groq key to use arbitrary browser commands.` });
       return;
     }
     if (parsed.type === "click-target" && parsed.disposition && intent.type === "click-target")
