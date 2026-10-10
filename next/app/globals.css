@@ -70,6 +70,25 @@
   --page-grid: rgb(190 198 180 / 11%);
   color-scheme: dark;
 }
+:root.reading-comfort {
+  --background: #faf9f3;
+  --card: #fffefa;
+  --popover: #fffefa;
+  --secondary: #f0f0e6;
+  --muted: #f0f0e8;
+  --border: #dedfd4;
+  --page-grid: rgb(118 124 111 / 4%);
+}
+:root.dark.reading-comfort {
+  --background: #1a1c18;
+  --card: #22251f;
+  --popover: #22251f;
+  --secondary: #25291f;
+  --muted: #282c25;
+  --muted-foreground: #bec5b2;
+  --border: #3b4136;
+  --page-grid: rgb(190 198 180 / 5%);
+}
 
 :root {
   --duration-theme: 2.4s;
@@ -210,6 +229,15 @@ section[id] {
   gap: 32px;
   min-height: 94px;
   border-bottom: 1px solid var(--border);
+}
+.reading-comfort-toggle {
+  min-height: 48px;
+  gap: 8px;
+  padding-inline: 13px;
+  font-size: 12px;
+}
+.reading-comfort-toggle svg {
+  color: var(--ring);
 }
 .brand {
   display: inline-flex;
@@ -695,6 +723,47 @@ h2 {
   padding-top: 35px;
   border-top: 1px solid var(--border);
 }
+
+html.reading-comfort {
+  font-size: 110%;
+}
+.reading-comfort p,
+.reading-comfort blockquote {
+  line-height: 1.95;
+  letter-spacing: 0.008em;
+}
+.reading-comfort .section-spacing {
+  padding-block: 116px;
+}
+.reading-comfort .testimonial-card {
+  min-height: 0;
+  padding: 30px;
+  background: color-mix(in srgb, var(--card) 86%, transparent);
+}
+.reading-comfort .testimonials-marquee {
+  overflow: visible;
+  mask-image: none;
+}
+.reading-comfort .testimonials-track {
+  width: 100%;
+  flex-direction: column;
+  gap: 14px;
+  animation: none;
+  transform: none;
+}
+.reading-comfort .testimonials-set {
+  width: 100%;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0;
+}
+.reading-comfort .testimonials-set[aria-hidden="true"] {
+  display: none;
+}
+.reading-comfort .testimonial-card {
+  width: 100%;
+  flex-basis: auto;
+}
 .footer-top {
   display: flex;
   align-items: center;
@@ -871,6 +940,14 @@ h2 {
   .header-guide {
     display: none;
   }
+  .reading-comfort-toggle {
+    width: 44px;
+    min-height: 44px;
+    padding-inline: 0;
+  }
+  .reading-comfort-label {
+    display: none;
+  }
   .hero {
     grid-template-columns: 1fr;
     padding-block: 44px 26px;
@@ -915,6 +992,15 @@ h2 {
   }
   .testimonials-section {
     padding-block: 0 66px;
+  }
+  .reading-comfort .section-spacing {
+    padding-block: 78px;
+  }
+  .reading-comfort .testimonials-section {
+    padding-bottom: 78px;
+  }
+  .reading-comfort .testimonial-card {
+    padding: 24px;
   }
   .testimonials-intro {
     margin-bottom: 25px;
