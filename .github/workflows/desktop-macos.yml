@@ -1,0 +1,65 @@
+name: Desktop macOS build and installation
+on:
+  push:
+    branches: ["feat/macos-desktop"]
+    paths: ["desktop/**", ".github/workflows/desktop-macos.yml"]
+  pull_request:
+    paths: ["desktop/**", ".github/workflows/desktop-macos.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 35
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
+      CARGO_TERM_COLOR: always
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Verify native platform
+        run: |
+          test "$(uname -m)" = arm64
+          sw_vers
+          node --version
+          rustc --version
+      - run: npm ci
+      - run: npx playwright install chromium
+      - run: npm run check
+      - name: Native Rust policy and geometry checks
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: Build the real ARM64 app and DMG
+        run: npm run tauri build -- --target aarch64-apple-darwin --bundles app,dmg
+      - name: Prepare exact candidate
+        run: |
+          mkdir -p release
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg release/
+          cp scripts/install-app.sh scripts/update-app.sh release/
+          cd release
+          shasum -a 256 *.dmg *.sh > SHA256SUMS
+      - name: Install, update, reject corrupt package, and launch installed WKWebView
+        run: python3 scripts/macos-smoke.py release/Handsfree_0.1.0_aarch64.dmg release/macos-validation.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: handsfree-macos-test-evidence
+          path: |
+            desktop/release/*.json
+            desktop/release/*.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: handsfree-macos-preview
+          path: desktop/release/
+          if-no-files-found: error
