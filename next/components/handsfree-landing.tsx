@@ -74,7 +74,7 @@ const faq = [
   {
     question: "What stays on my device?",
     answer:
-      "The spec keeps camera frames and audio on your machine. Calibration, settings, and run logs stay local. Optional arbitrary find sends only link text and your phrase to an LLM; it requires a locally stored key and is disabled without one. Handsfree has no backend or cloud store.",
+      "Camera frames, calibration, settings, and run logs stay on your device. Speech defaults to on-device recognition when Chrome supports it; optional browser-service speech may send audio to Chrome’s provider and requires an explicit choice. Optional arbitrary find sends target labels and your phrase to an LLM with your locally stored key. Handsfree has no backend or cloud store.",
   },
   {
     question: "What can I say?",
@@ -99,7 +99,7 @@ const faq = [
   {
     question: "Can I use the extension yet?",
     answer:
-      "This is the project landing page, not the extension. The controls described here reflect the spec and are still planned. This website does not activate your camera or microphone.",
+      "An unpacked development extension is available in this repository. Follow the root README to build it and load extension/dist in Chrome. Real-device tracking and speech accuracy still need testing. This website does not activate your camera or microphone.",
   },
 ];
 

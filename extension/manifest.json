@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Handsfree",
+  "version": "0.1.0",
+  "description": "Browse with face movements, broad hand gestures, and deliberate voice commands.",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "optional_permissions": ["tabs"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Handsfree",
+    "default_icon": { "32": "brand/handsfree-icon-32.png" }
+  },
+  "icons": {
+    "32": "brand/handsfree-icon-32.png",
+    "128": "brand/handsfree-icon-180.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self' https://api.openai.com"
+  },
+  "commands": {
+    "pause-handsfree": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "Pause or resume Handsfree"
+    }
+  }
+}

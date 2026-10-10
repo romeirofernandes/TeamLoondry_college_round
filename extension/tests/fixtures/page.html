@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Handsfree test page</title>
+    <style>
+      body {
+        font: 18px system-ui;
+        background: #f6f7f2;
+        color: #20231b;
+        margin: 40px;
+      }
+      button,
+      input,
+      textarea {
+        font: inherit;
+        padding: 14px;
+        margin: 12px 0;
+        display: block;
+      }
+      button {
+        background: #c1ef53;
+        border: 1px solid #20231b;
+        border-radius: 8px;
+      }
+      section {
+        margin-top: 30px;
+      }
+      label {
+        display: block;
+      }
+      nav {
+        display: flex;
+        gap: 30px;
+      }
+      .spacer {
+        height: 1400px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Handsfree test page</h1>
+    <p>A controlled page for checking clicks, dictation, and confirmation.</p>
+    <nav>
+      <a href="/second">Second test page</a><a href="#careers">Careers</a>
+    </nav>
+    <button id="count" type="button">Count a selection</button
+    ><output id="clicks">0</output>
+    <form id="form">
+      <label for="search">Search text</label
+      ><input id="search" name="query" type="search" /><label for="notes"
+        >Notes</label
+      ><textarea id="notes"></textarea
+      ><label for="password">Password, dictation blocked</label
+      ><input
+        id="password"
+        type="password"
+        autocomplete="current-password"
+      /><label for="card">Payment, dictation blocked</label
+      ><input id="card" name="card-number" autocomplete="cc-number" /><button
+        id="submit"
+        type="submit"
+      >
+        Submit example form
+      </button>
+    </form>
+    <output id="submissions">0</output>
+    <div
+      id="editor"
+      contenteditable="true"
+      role="textbox"
+      aria-label="Editable notes"
+      style="border: 1px solid; padding: 20px; min-height: 70px"
+    ></div>
+    <div class="spacer"></div>
+    <section id="careers">
+      <h2>Careers</h2>
+      <a href="/second" id="careers-link">Explore careers</a
+      ><button type="button" id="careers-one">Careers contact</button
+      ><button type="button" id="careers-two">Careers contact</button>
+    </section>
+    <script>
+      let count = 0,
+        submissions = 0;
+      document.querySelector("#count").onclick = () =>
+        (document.querySelector("#clicks").textContent = String(++count));
+      document.querySelector("#form").onsubmit = (e) => {
+        e.preventDefault();
+        document.querySelector("#submissions").textContent = String(
+          ++submissions,
+        );
+      };
+    </script>
+  </body>
+</html>

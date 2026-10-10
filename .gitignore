@@ -12,3 +12,8 @@ out/
 coverage/
 *.tsbuildinfo
 .DS_Store
+
+/skills/
+/extension/assets/
+/extension/test-results/
+/extension/playwright-report/

@@ -1,0 +1,27 @@
+# Spec review
+
+The supplied problem statement describes accessible webcam and voice browsing, intentional activation, quick calibration, changing lighting/posture/noise, website compatibility, and evaluation against mouse/keyboard input. The repository spec narrows this to a Chrome-only extension with local settings/logs and no backend or OS cursor.
+
+The implementation follows that narrower scope. These points need explicit interpretation.
+
+| Spec issue                                                                  | Decision in this build                                                                                                                                                                                           |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web Speech API v1 plus “no audio leaving the machine”                       | Local speech is the default and fails with an explanation if unavailable. Browser-service speech requires an explicit mode choice and audio notice. Chrome may use a remote engine.                              |
+| Main problem statement requests mouse/keyboard comparison; spec excludes it | No comparison UI. The manual checklist provides a separate baseline protocol.                                                                                                                                    |
+| Popup start “without touching input devices”                                | First opening and permission grants need a user gesture. Setup assistance and Chrome shortcuts are possible. A closed popup cannot keep capture alive.                                                           |
+| Popup owns camera preview but browsing must continue after it closes        | A persistent extension control window owns capture and recognition. Popup opens it and exposes session controls. Closing controls stops the session.                                                             |
+| “Confirms with dwell plus voice” versus gesture confirmation                | Dwell, broad-hand hold, and explicit voice are alternatives. Submission and tab close always add a separate confirm step.                                                                                        |
+| Face leads plus gross hand second; switching/fusion is unspecified          | Face is default. Hand mode is an explicit alternative with its own calibration, preventing an unexpected automatic source switch.                                                                                |
+| MediaPipe “confidence” is unspecified                                       | Detection thresholds plus a geometry/presence proxy gate selection. It is not presented as a statistical probability of correctness.                                                                             |
+| Dictation never fires commands, but also needs an explicit stop             | Only the exact normalized phrase “stop typing” exits dictation. Other recognized phrases insert text. Pause button, Escape, and shortcut remain immediate stops.                                                 |
+| Instant pause stops speech, but resume by voice is implied                  | Once paused the microphone recognizer is stopped. Resume uses the controls or shortcut.                                                                                                                          |
+| Form-fill user story versus wake-word/form-fill exclusion                   | Wake word, automatic multi-field form fill, and read aloud are deferred. No tickets silently bring them into v1.                                                                                                 |
+| “Submit always needs confirm” across arbitrary websites                     | Recognizable form controls, requestSubmit, and synchronous submit events are guarded. Native form.submit and delayed/custom page handlers can bypass interception. This is a stated browser compatibility limit. |
+| 30-second setup and adaptation to light/noise are goals, not evidence       | Eight-second calibration is implemented. Real device setup time, robustness, and recognition accuracy must be measured with the laptop checklist.                                                                |
+| Arbitrary find on a live DOM without a limit                                | Scan top-document targets outside the viewport, bounded to 1,500 short target labels. No raw HTML, input values, frames, audio, URLs, or keys enter the LLM request body. Ties/no-match do not click.            |
+
+Chrome requires optional permissions to be requested from a user gesture. The control window's buttons provide those gestures; a voice phrase alone cannot approve Chrome's native prompt. See [Chrome permissions](https://developer.chrome.com/docs/extensions/reference/api/permissions).
+
+Chrome's Web Speech API may use server-based recognition. See [MDN SpeechRecognition](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition). Local MediaPipe processes frames on-device. See [Google MediaPipe web tasks](https://github.com/google-ai-edge/mediapipe/blob/master/mediapipe/tasks/web/vision/README.md).
+
+The raw spec stays unchanged so these decisions remain visible rather than rewriting away conflicts.
