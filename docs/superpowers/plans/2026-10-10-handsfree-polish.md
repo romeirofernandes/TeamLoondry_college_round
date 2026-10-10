@@ -20,7 +20,7 @@
 - Ambiguous labels need disambiguation; regex characters in dictated labels must be treated literally.
 - Page assistance must omit editable/secret regions and reject malformed provider results.
 - Face rate movement must be frame-rate independent, stop at neutral, freeze on loss and avoid reacquisition jumps.
-- Smooth scrolling must cancel on pause/loss and target nested scroll containers; thumbnail matching must respect occlusion.
+- All scrolling must cancel on pause; edge scrolling cancels on loss while explicit voice scroll works without tracking; target nested scroll containers; thumbnail matching must respect occlusion.
 
 ### Task 1: Reliable final speech actions and Groq assistance
 
@@ -40,7 +40,7 @@
 - [ ] Add failing tests for continued displacement with held face offset, neutral stopping without recenter, time-based movement, loss freeze/reacquisition and hand absolute mapping.
 - [ ] Implement face rate control with comfortable calibrated offsets and bounded elapsed time, filtering velocity rather than recenter position. Reset timing on loss/pause. Improve calibration small-range acceptance and mode-specific guidance (comfortable small turns, no stretching; hand palm in frame). Preserve calibration safety and separate saved face/hand data.
 - [ ] Add tests and implement thumbnail area snapping using actual usable descendant links/semantic card relationships, stable equivalent target handling and occlusion checks. Cover thumbnail plus title, nearby unrelated link and overlay obstruction. Preserve dwell gate semantics.
-- [ ] Add tests and implement smooth command scroll and continuous frame-driven edge scroll, adjustable scrollSensitivity, nested scrolling, reduced-motion behavior and cancellation on pause/loss/leaving edge. Retain normal voice scroll commands.
+- [ ] Add tests and implement smooth command scroll and continuous frame-driven edge scroll, adjustable scrollSensitivity, nested scrolling, reduced-motion behavior and cancellation on pause/stop, plus edge cancellation on tracking loss/leaving edge. Test explicit voice scroll before pointer calibration/no confident sample. Retain normal voice scroll commands.
 - [ ] Extend settings defaults and persistence/validation bounds; normalize missing/invalid old values. Task 3 consumes these fields. Tests cover invalid saved settings and values at bounds.
 - [ ] Run focused tests during iteration; run extension npm test and npm run typecheck before commit. Write RED/GREEN evidence and commit only task files.
 
