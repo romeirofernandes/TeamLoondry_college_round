@@ -51,7 +51,7 @@ const validCalibration = (value: unknown, mode: PointerMode): value is Calibrati
     c.neutralY >= 0 && c.neutralY <= 1 &&
     c.rangeX >= 0.008 && c.rangeX <= 1 &&
     c.rangeY >= 0.008 && c.rangeY <= 1 &&
-    [c.left, c.right, c.up, c.down].every(n => n === undefined || Number.isFinite(n) && n >= 0.008 && n <= 1) &&
+    [c.left, c.right, c.up, c.down, c.positiveX, c.negativeX, c.positiveY, c.negativeY].every(n => n === undefined || Number.isFinite(n) && n >= 0.008 && n <= 1) &&
     (c.invertX === undefined || typeof c.invertX === "boolean") &&
     (c.invertY === undefined || typeof c.invertY === "boolean")
   );

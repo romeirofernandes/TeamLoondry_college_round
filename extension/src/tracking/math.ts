@@ -141,8 +141,8 @@ export class PointerFilter {
     }
     this.lastRaw = raw;
     const c = this.calibration;
-    let dx = (raw.x - c.neutralX) / (raw.x >= c.neutralX ? c.left ?? c.rangeX : c.right ?? c.rangeX),
-      dy = (raw.y - c.neutralY) / (raw.y >= c.neutralY ? c.down ?? c.rangeY : c.up ?? c.rangeY);
+    let dx = (raw.x - c.neutralX) / (raw.x >= c.neutralX ? c.positiveX ?? c.left ?? c.rangeX : c.negativeX ?? c.right ?? c.rangeX),
+      dy = (raw.y - c.neutralY) / (raw.y >= c.neutralY ? c.positiveY ?? c.down ?? c.rangeY : c.negativeY ?? c.up ?? c.rangeY);
     if (c.invertX) dx = -dx;
     if (c.invertY) dy = -dy;
     // Face rate control needs a quiet neutral band: small landmark noise must

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mapCommand,
+  resolveAgentStep,
   resolveArbitrary,
   transcribeAudio,
   validateIntent,
@@ -205,6 +206,20 @@ it("reconstructs supported Groq shorthand and bounded media intents", () => {
 });
 
 describe("Groq bounded actions and target IDs", () => {
+  it("returns one fresh-page-grounded browser step", async () => {
+    request.mockResolvedValue(completion({ action: { type: "search", targetId: "search", query: "Sidemen latest video" }, answer: null, done: false, clarify: null }));
+    const page = { title: "YouTube", url: "https://www.youtube.com/", text: "Home" };
+    expect(await resolveAgentStep("search for Sidemen's latest video and play it", [{ id: "search", text: "Search", role: "searchbox" }], page, { groqKeys: keys })).toEqual({ action: { type: "search", targetId: "search", query: "Sidemen latest video" }, done: false });
+    const body = JSON.parse(request.mock.calls[0][1].body);
+    expect(JSON.parse(body.messages[1].content)).toEqual({ request: "search for Sidemen's latest video and play it", targets: [{ id: "search", text: "Search", role: "searchbox" }], page });
+    expect(body.messages[0].content).not.toMatch(/execute javascript|eval\(/i);
+  });
+
+  it("rejects a browser-agent action aimed at an ID outside the current observation", async () => {
+    request.mockResolvedValue(completion({ action: { type: "click", targetId: "invented" }, answer: null, done: false, clarify: null }));
+    await expect(resolveAgentStep("open a result", targets, undefined, { groqKeys: keys })).rejects.toThrow("Invalid browser-agent action");
+  });
+
   it("uses the requested model with no reasoning text and validates returned IDs", async () => {
     request.mockResolvedValue(completion({ ids: ["careers"] }));
     expect(

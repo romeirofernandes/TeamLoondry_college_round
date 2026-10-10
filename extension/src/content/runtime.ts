@@ -486,6 +486,43 @@ export class ContentRuntime {
         if (this.preparedLink && linkDisposition) this.selectedDisposition = undefined;
         return response;
       }
+      case "AGENT_ACTION": {
+        if (!this.running || this.paused || this.dictating || !this.voiceAllowed())
+          return { ok: false, error: "Handsfree is paused or voice control is unavailable." };
+        const action = message.action;
+        if (action.type === "scroll") {
+          this.scroll(action.direction);
+          return { ok: true, changed: true };
+        }
+        if (action.type === "media") {
+          const result = await mediaControl({ type: action.command === "play" ? "media-play" : "media-pause" });
+          return { ok: result.found, changed: result.found, error: result.error };
+        }
+        const element = this.targets.get(action.targetId);
+        if (!element || !voiceExposed(element)) return { ok: false, error: "That page control is no longer visible. I will inspect the page again." };
+        if (action.type === "click") {
+          if (element.matches('button,[role="button"],input[type="button"]') && /\b(send|post|delete|remove|buy|purchase|pay|checkout|confirm|publish|transfer|place order)\b/i.test(targetLabel(element)))
+            return { ok: false, error: "I will not activate a control that may send, publish, delete, or purchase something." };
+          const ok = this.activate(element, "voice");
+          return { ok, changed: ok, error: ok ? undefined : "That control could not be activated safely." };
+        }
+        if (!(element instanceof HTMLInputElement) || !["search", "text"].includes(element.type) && element.getAttribute("role") !== "searchbox")
+          return { ok: false, error: "Search can only use a visible search field." };
+        const form = formFor(element);
+        if (!form || (form.method || "get").toLowerCase() !== "get")
+          return { ok: false, error: "That search field does not use a safe GET search form." };
+        let destination: URL;
+        try { destination = new URL(form.action || location.href, location.href); }
+        catch { return { ok: false, error: "That search form has an invalid destination." }; }
+        if (destination.origin !== location.origin || !/^https?:$/.test(destination.protocol))
+          return { ok: false, error: "That search form leads outside this site." };
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(element, action.query);
+        element.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertText", data: action.query }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        form.requestSubmit();
+        return { ok: true, changed: true };
+      }
       case "DICTATE": {
         if (
           !this.running ||

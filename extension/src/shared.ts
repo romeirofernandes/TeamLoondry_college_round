@@ -116,6 +116,11 @@ export interface Calibration {
   right?: number;
   up?: number;
   down?: number;
+  /** Ranges on the positive and negative camera axes, for mirrored inputs. */
+  positiveX?: number;
+  negativeX?: number;
+  positiveY?: number;
+  negativeY?: number;
   /** Direction of the camera coordinates can differ across mirrored camera paths. */
   invertX?: boolean;
   invertY?: boolean;
@@ -245,6 +250,11 @@ export interface TargetText {
   text: string;
   role: string;
 }
+export type AgentAction =
+  | { type: "click"; targetId: string }
+  | { type: "search"; targetId: string; query: string }
+  | { type: "scroll"; direction: "up" | "down" | "top" | "bottom" }
+  | { type: "media"; command: "play" | "pause" };
 export interface MetricEvent {
   at: number;
   type: string;
@@ -314,6 +324,7 @@ export type Message =
       settings: Settings;
     }
   | { type: "PAGE_ACTION"; intent: Intent }
+  | { type: "AGENT_ACTION"; action: AgentAction }
   | { type: "DICTATE"; text: string }
   | { type: "GET_TARGETS" }
   | { type: "VALIDATE_LINK"; id: string; url: string; pageUrl: string }
