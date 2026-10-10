@@ -19,5 +19,5 @@ async function connect(){
 }
 export async function connectDesktop(){await connect();await chrome.storage.local.set({desktopPaired:true});return {ok:true};}
 export async function claimDesktop(){if(!await paired())return;await connect();await nativeRequest("claim");owned=true;if(!heartbeat)heartbeat=setInterval(()=>{if(!choosing)void nativeRequest("heartbeat",{},5000).catch(()=>{port?.disconnect();disconnected();});},1000);}
-export async function releaseDesktop(){if(heartbeat)clearInterval(heartbeat);heartbeat=null;owned=false;if(port)await nativeRequest("release").catch(()=>{});}
+export async function releaseDesktop(){if(heartbeat)clearInterval(heartbeat);heartbeat=null;owned=false;if(port)await nativeRequest("release").catch(()=>{});owned=false;if(heartbeat)clearInterval(heartbeat);heartbeat=null;}
 export async function disconnectDesktop(){await releaseDesktop();port?.disconnect();disconnected();await chrome.storage.local.set({desktopPaired:false});}
