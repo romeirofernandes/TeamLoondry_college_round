@@ -32,7 +32,8 @@ export const maps: Adapter = {
     },
     {
       id: "MAP04",
-      pattern: /^(?:get|show) directions from (.+) to (.+)$/,
+      pattern:
+        /^(?:(?:get|show) directions from (.+) to (.+)|review directions)$/,
       extract: "query",
       write: true,
       operation: { kind: "group-b" },

@@ -13,7 +13,7 @@ try {
  const send=message=>popup.evaluate(message=>chrome.runtime.sendMessage(message),message);
  await send({type:'SAVE_PROVIDERS',groqKeys:[],jevKey:''});await send({type:'SAVE_SETTINGS',settings:{...await send({type:'GET_SETTINGS'}),voiceOnly:true,spokenFeedback:false,dwellEnabled:false,edgeScroll:false}});
  const page=await context.newPage();
- for(const [site,url] of [ ['wikipedia','https://en.wikipedia.org/wiki/India'],['github','https://github.com/microsoft/vscode'],['reddit','https://www.reddit.com/r/accessibility/'],['amazon','https://www.amazon.in/s?k=headphones'],['spotify','https://open.spotify.com/search/Radiohead'],['netflix','https://www.netflix.com/'],['x','https://x.com/search?q=accessibility'] ].filter(([site])=>!process.argv.slice(2).length||process.argv.slice(2).includes(site))) {
+ for(const [site,url] of [ ['wikipedia','https://en.wikipedia.org/wiki/India'],['github','https://github.com/microsoft/vscode'],['reddit','https://www.reddit.com/r/accessibility/'],['amazon','https://www.amazon.in/s?k=headphones'],['spotify','https://open.spotify.com/search/Radiohead'],['netflix','https://www.netflix.com/'],['x','https://x.com/search?q=accessibility'],['whatsapp','https://web.whatsapp.com/'],['gmail','https://mail.google.com/mail/u/0/'],['meet','https://meet.google.com/'],['linkedin','https://www.linkedin.com/jobs/search/?keywords=data%20analyst'],['irctc','https://www.irctc.co.in/nget/train-search'],['maps','https://www.google.com/maps/search/?api=1&query=Bengaluru+Palace'] ].filter(([site])=>!process.argv.slice(2).length||process.argv.slice(2).includes(site))) {
   try {
    await page.goto(url,{waitUntil:'domcontentloaded',timeout:15000});
    const tabId=await worker.evaluate(async url=>(await chrome.tabs.query({})).find(t=>t.url===url)?.id,page.url());
@@ -21,6 +21,7 @@ try {
    const snapshot=await send({type:'GET_SITE_CONTEXT'});
    const states={};for(const capability of snapshot?.capabilities||[])states[capability.state]=(states[capability.state]||0)+1;
    console.log(JSON.stringify({site,adapter:snapshot?.site||null,entities:snapshot?.entities.length||0,current:!!snapshot?.current,states,signedIn:false,qualification:'DOM inspection only'}));
+   if(site === 'maps' && snapshot?.site === 'maps') {await send({type:'HEARD',text:'read the address'});console.log(JSON.stringify({site,addressRead:(await send({type:'GET_STATE'})).feedback.slice(0,300),qualification:'read-only typed-command smoke only'}));}
    if(site==='wikipedia') {
     console.log(JSON.stringify({site,geographyHeadings:snapshot.entities.filter(e=>e.kind==='section'&&e.label==='Geography').map(e=>({label:e.label,href:e.href}))}));
     await send({type:'HEARD',text:'list the sections'});const sections=(await send({type:'GET_STATE'})).feedback;

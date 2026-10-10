@@ -105,6 +105,7 @@ function pause() {
   void beginVoice(generation);
 }
 function resume() {
+  if (!settings.voiceOnly && !tracker) { void start(settings); return; }
   desired = "running";
   tracker?.resume();
   void beginVoice(generation);
@@ -154,7 +155,15 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
   if (message.command === "settings" && message.settings) {
     const previous = settings;
     settings = message.settings;
-    if (desired !== "stopped" && previous?.voiceOnly !== settings.voiceOnly) { void start(settings); respond({ok:true}); return; }
+    if (desired !== "stopped" && previous?.voiceOnly !== settings.voiceOnly) {
+      if (desired === "paused") {
+        const next = settings;
+        stop(); settings = next; desired = "paused";
+        status({camera: next.voiceOnly ? "Off, voice-only session" : "Camera waits for resume", confidence:0, fps:0});
+        void beginVoice(generation);
+      } else void start(settings);
+      respond({ok:true}); return;
+    }
     tracker?.updateSettings(settings);
     if (desired !== "stopped" && (settings.language !== previous?.language || settings.speechMode !== previous?.speechMode)) void beginVoice(generation);
   }

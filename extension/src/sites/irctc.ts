@@ -36,6 +36,7 @@ export const irctc: Adapter = {
     },
     {
       id: "IR05",
+      guardNames: ["Search", "Search trains"],
       pattern: /^(?:search|find) trains$/,
       write: true,
       operation: { kind: "group-b" },

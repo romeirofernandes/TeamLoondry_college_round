@@ -55,7 +55,9 @@ export type RecipientAllowed = (
 
 function recipients(s: SiteSnapshot, scope: ParentNode): string[] {
   if (s.site === "whatsapp")
-    return s.current?.kind === "chat" ? [s.current.label] : [];
+    return s.current?.kind === "chat" && s.current.identity
+      ? [s.current.identity]
+      : [];
   if (s.site === "meet") return meetingCode(s) ? [meetingCode(s)!] : [];
   if (s.site !== "gmail") return [];
   // Require committed recipient chips, not a pending suggestion or an uncommitted address.
@@ -195,6 +197,8 @@ function journeySummary() {
   if (!klass || !quota || !label(klass).trim() || !label(quota).trim())
     return null;
   return {
+    fromCode: codeFrom,
+    toCode: codeTo,
     from: value(from),
     to: value(to),
     date: value(day),
@@ -248,7 +252,7 @@ export function prepareGroupB(
   const id = spec.id;
   if (groupBSends.has(id)) {
     const parts = sendParts(s, scope),
-      buttons = controls(parts.names, scope);
+      buttons = controls(spec.guardNames || parts.names, scope);
     if (!parts.editor || !value(parts.editor).trim())
       return {
         result: outcome(
@@ -271,7 +275,7 @@ export function prepareGroupB(
       s.site === "gmail" ? one('input[name="subjectbox"]', scope) : undefined;
     return {
       target: buttons[0],
-      preview: `Send to ${parts.destination.join(", ")}${subject ? ", subject " + value(subject).slice(0, 100) : ""}. Draft: ${value(parts.editor).slice(0, 160)}.`,
+      preview: `Send to ${s.current?.label || parts.destination.join(", ")} [${parts.destination.join(", ")}]${subject ? ", subject " + value(subject).slice(0, 100) : ""}. Draft: ${value(parts.editor).slice(0, 160)}.`,
     };
   }
   if (id === "IR05") {
@@ -290,6 +294,39 @@ export function prepareGroupB(
     };
   }
   if (id === "MAP04") {
+    if (request.args.mode === "review") {
+      const inputs = elements(
+        "#directions-searchbox-0 input,#directions-searchbox-1 input",
+      );
+      const routes = elements("[data-trip-index],[data-route-index]");
+      const selectedMode = controls([
+        "Driving",
+        "Walking",
+        "Transit",
+        "Cycling",
+        "Bicycling",
+      ]).filter((e) => stateOf(e, []) === true);
+      if (
+        inputs.length !== 2 ||
+        inputs.some((e) => !value(e).trim()) ||
+        !routes.length ||
+        selectedMode.length !== 1
+      )
+        return {
+          result: outcome(
+            "unavailable",
+            "Resolve both directions fields and a route mode before reviewing directions.",
+          ),
+        };
+      request.args = {
+        query: value(inputs[0]),
+        mode: value(inputs[1]),
+        index: 1,
+      };
+      return {
+        preview: `Confirm displayed directions from ${value(inputs[0])} to ${value(inputs[1])}, ${label(selectedMode[0])}. ${label(routes[0])}.`,
+      };
+    }
     if (!request.args.query?.trim() || !request.args.mode?.trim())
       return {
         result: outcome(
@@ -309,8 +346,23 @@ export function prepareGroupB(
           "Use exact place names or addresses. Saved places and current location are not inferred.",
         ),
       };
+    if (request.args.index === 1)
+      return {
+        preview: `Confirm displayed directions from ${request.args.query} to ${request.args.mode}.`,
+      };
+    const url = new URL("https://www.google.com/maps/dir/");
+    url.search = new URLSearchParams({
+      api: "1",
+      origin: request.args.query,
+      destination: request.args.mode,
+      travelmode: "driving",
+    }).toString();
     return {
-      preview: `Request directions from ${request.args.query} to ${request.args.mode}. Place resolution remains subject to the map's results.`,
+      result: outcome(
+        "available",
+        "Opening a route lookup. After Maps resolves both places, say review directions to hear and confirm the displayed endpoints and route mode.",
+        { navigate: { url: url.href, newTab: false } },
+      ),
     };
   }
   if (id === "LI06") {
@@ -321,7 +373,7 @@ export function prepareGroupB(
           "Open a specific job before changing its saved state.",
         ),
       };
-    const buttons = controls(["Save", "Saved", "Unsave"], scope);
+    const buttons = controls(spec.guardNames || [], scope);
     if (buttons.length !== 1)
       return {
         result: outcome(
@@ -660,6 +712,7 @@ export async function executeGroupB(
       );
     buttons[0].click();
     await until(() => !!field(["Search messages"], scope), valid);
+    if (!valid()) return outcome("unavailable", "The request was cancelled.");
     const input = field(["Search messages"], scope);
     if (!(input instanceof HTMLInputElement) || !args.query)
       return outcome(
@@ -754,7 +807,11 @@ export async function executeGroupB(
         "Opened one compose window. Say write recipient, write subject, or write body.",
       );
     }
-    const dialogs = elements('[role="dialog"]');
+    const selectedDraft =
+      s.selected?.kind === "draft" ? context.node(s.selected.id) : undefined;
+    const dialogs = selectedDraft
+      ? [selectedDraft]
+      : elements('[role="dialog"]');
     if (dialogs.length !== 1)
       return outcome(
         "needs-choice",
@@ -777,6 +834,7 @@ export async function executeGroupB(
       );
     buttons[0].click();
     await until(() => !!mailBody(scope), valid);
+    if (!valid()) return outcome("unavailable", "The request was cancelled.");
     return focus(mailBody(scope));
   }
   if (id === "GM07" || id === "GM08" || id === "GM10") {
@@ -816,7 +874,31 @@ export async function executeGroupB(
       context,
       request,
     );
-  if (id === "LI03")
+  if (id === "LI03") {
+    const filterName = /time/.test(args.query || "")
+      ? "Job type"
+      : "On-site/Remote";
+    const exact =
+      (
+        {
+          "remote jobs": "Remote",
+          "hybrid jobs": "Hybrid",
+          "on site jobs": "On-site",
+          "full time": "Full-time",
+          "part time": "Part-time",
+        } as Record<string, string>
+      )[args.query || ""] || "";
+    if (!controls([exact]).length) {
+      const openers = controls([filterName]);
+      if (openers.length !== 1)
+        return outcome(
+          "unavailable",
+          "The requested filter menu is unavailable.",
+        );
+      openers[0].click();
+      await until(() => controls([exact]).length === 1, valid);
+    }
+    if (!valid()) return outcome("unavailable", "The request was cancelled.");
     return selectControl([
       (
         {
@@ -828,6 +910,7 @@ export async function executeGroupB(
         } as Record<string, string>
       )[args.query || ""] || "",
     ]);
+  }
   if (id === "LI05") {
     if (args.mode === "return to results")
       return outcome("available", "Returning to job results.", {
@@ -853,7 +936,7 @@ export async function executeGroupB(
       return outcome("unavailable", "The job Save control changed.");
     target.click();
     return verified(() => {
-      const buttons = controls(["Save", "Saved", "Unsave"], scope);
+      const buttons = controls(spec.guardNames || [], scope);
       return (
         buttons.length === 1 &&
         stateOf(buttons[0], ["Saved", "Unsave"], ["Save"]) ===
@@ -900,7 +983,7 @@ export async function executeGroupB(
   if (id === "IR03") {
     const formatted = args.query ? dateValue(args.query, new Date()) : null,
       input = journeyDay();
-    if (!formatted || !(input instanceof HTMLInputElement))
+    if (!formatted || !(input instanceof HTMLInputElement) || input.readOnly)
       return outcome(
         "unavailable",
         "Say a valid future date with day, month and year. The date field must be available.",
@@ -946,9 +1029,34 @@ export async function executeGroupB(
         "unavailable",
         "The journey class and quota controls are unavailable.",
       );
+    const quota = [
+      "general",
+      "tatkal",
+      "premium tatkal",
+      "ladies",
+      "lower berth/sr. citizen",
+    ].includes(query);
+    const menu = menus.find(
+      (e) => e.id === (quota ? "journeyQuota" : "journeyClass"),
+    );
+    if (!menu)
+      return outcome(
+        "unavailable",
+        "The intended journey-options menu is unavailable.",
+      );
+    const opener =
+      elements('[role="combobox"],[role="button"]', menu)[0] || menu;
+    if (!controls([expected]).length) opener.click();
+    await until(() => controls([expected]).length === 1, valid);
+    if (!valid()) return outcome("unavailable", "The request was cancelled.");
     const available = controls([expected]);
-    if (available.length === 1)
-      return await selectControl([expected], document);
+    if (available.length === 1) {
+      available[0].click();
+      return verified(
+        () => norm(label(menu)).includes(norm(expected)),
+        `Selected ${expected}.`,
+      );
+    }
     return outcome(
       "unavailable",
       "Open the class or quota menu, then choose an exact displayed option.",
@@ -965,17 +1073,23 @@ export async function executeGroupB(
     );
     target.click();
     return verified(() => {
-      const displayed = one("[data-journey-summary]");
+      const displayed = one(
+        "[data-journey-summary],app-train-list .journey-info,app-train-list .journey-details",
+      );
       return (
         !!displayed &&
-        [stationCode(origin()), stationCode(destination()), summary.date].every(
-          (v) => !!v && norm(label(displayed)).includes(norm(v)),
-        ) &&
+        [
+          summary.fromCode,
+          summary.toCode,
+          summary.date,
+          summary.className,
+          summary.quota,
+        ].every((v) => !!v && norm(label(displayed)).includes(norm(v))) &&
         elements(
           "app-train-list [data-train-number],app-train-list .train-heading",
         ).some((e) => !before.has(e))
       );
-    }, "Train results match the selected station codes and journey date. Booking remains excluded.");
+    }, "Train results match the selected station codes, date, class and quota. Booking remains excluded.");
   }
   if (id === "IR07") {
     const selected = request.entityId
@@ -1043,18 +1157,24 @@ export async function executeGroupB(
         );
   }
   if (id === "MAP04") {
-    const url = new URL("https://www.google.com/maps/dir/");
-    url.search = new URLSearchParams({
-      api: "1",
-      origin: args.query!,
-      destination: args.mode!,
-      travelmode: "driving",
-    }).toString();
-    return outcome(
-      "available",
-      "Opening directions for the confirmed endpoints. Verify resolved place identities and the displayed route before using it.",
-      { navigate: { url: url.href, newTab: false } },
+    const inputs = elements(
+      "#directions-searchbox-0 input,#directions-searchbox-1 input",
     );
+    const routes = elements("[data-trip-index],[data-route-index]");
+    return args.index === 1 &&
+      inputs.length === 2 &&
+      value(inputs[0]) === args.query &&
+      value(inputs[1]) === args.mode &&
+      routes.length > 0
+      ? outcome(
+          "available",
+          `Confirmed the displayed route from ${args.query} to ${args.mode}. ${label(routes[0])}`,
+          { evidence: "resolved-route-endpoints" },
+        )
+      : outcome(
+          "unavailable",
+          "The resolved endpoints or route changed. Say review directions again.",
+        );
   }
   if (id === "MAP05") {
     const names: Record<string, string[]> = {
@@ -1087,7 +1207,9 @@ export async function executeGroupB(
     button.click();
     return verified(
       () =>
-        stateOf(button, []) === true &&
+        controls(names[args.mode || ""] || []).some(
+          (e) => stateOf(e, []) === true,
+        ) &&
         inputs.every((e, i) => value(e) === endpoints[i]) &&
         elements("[data-trip-index],[data-route-index]").some(
           (e) => !routes.includes(e.textContent),
@@ -1148,7 +1270,7 @@ async function autocomplete(
   context: SiteContext,
   request: SiteRequest,
 ): Promise<SiteResult> {
-  if (!(input instanceof HTMLInputElement) || !query)
+  if (!(input instanceof HTMLInputElement) || !editable(input) || !query)
     return outcome(
       "unavailable",
       "A unique search field and exact name are required.",

@@ -57,6 +57,13 @@ await dashboard.bringToFront();await dashboard.waitForLoadState('domcontentloade
  await dashboard.getByRole('button',{name:'Stop',exact:true}).click();
  await dashboard.getByRole('button',{name:'Start session',exact:true}).waitFor();
  if((await send({type:'GET_STATE'})).running)throw new Error('Stop did not release session');
+ await dashboard.getByRole('tab',{name:'Voice',exact:true}).click();
+ await dashboard.getByLabel('Owned test recipients',{exact:true}).fill('gmail:owned@example.test, whatsapp:owned-chat, meet:abc-defg-hij');
+ await dashboard.getByRole('button',{name:'Save test recipients',exact:true}).click();
+ await expect.poll(async()=>(await send({type:'GET_SETTINGS'})).testMessageRecipients).toEqual(['gmail:owned@example.test','whatsapp:owned-chat','meet:abc-defg-hij']);
+ await dashboard.reload();await dashboard.getByRole('tab',{name:'Voice',exact:true}).click();
+ await expect(dashboard.getByLabel('Owned test recipients',{exact:true})).toHaveValue('gmail:owned@example.test, whatsapp:owned-chat, meet:abc-defg-hij');
+ reports.push({ownedTestRecipientsPersist:true});
  await dashboard.getByRole('tab',{name:'Pointer',exact:true}).click();
  const sensitivity=dashboard.getByRole('slider',{name:'Sensitivity',exact:true});
  const dwell=dashboard.getByRole('slider',{name:'Dwell time',exact:true});

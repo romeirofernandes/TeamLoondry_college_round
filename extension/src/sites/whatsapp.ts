@@ -42,6 +42,7 @@ export const whatsapp: Adapter = {
     },
     {
       id: "WA06",
+      guardNames: ["Send"],
       pattern:
         /^(?:send (?:this|the)(?: message| draft| to my test chat)?|please send my draft)$/,
       write: true,
@@ -49,6 +50,7 @@ export const whatsapp: Adapter = {
     },
     {
       id: "WA07",
+      guardNames: ["Clear draft"],
       pattern: /^(?:clear (?:this|the) draft|cancel sending)$/,
       write: true,
       extract: "mode",

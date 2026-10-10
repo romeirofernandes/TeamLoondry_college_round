@@ -33,9 +33,13 @@ export const gmail: Adapter = {
     },
     {
       id: "GM05",
+      guardNames: ["Send", "Send ‪(Ctrl-Enter)‬"],
       pattern: /^send (?:this|the) (?:email|draft|to my test address)$/,
       write: true,
-      operation: { kind: "group-b", scope: '[role="dialog"]' },
+      operation: {
+        kind: "group-b",
+        scope: '[role="dialog"],[data-reply-editor],.ip.adB',
+      },
     },
     {
       id: "GM06",
@@ -44,6 +48,7 @@ export const gmail: Adapter = {
     },
     {
       id: "GM07",
+      guardNames: ["Archive", "Move to Inbox"],
       pattern: /^(?:archive this conversation|restore that email)$/,
       extract: "mode",
       write: true,
@@ -51,6 +56,7 @@ export const gmail: Adapter = {
     },
     {
       id: "GM08",
+      guardNames: ["Mark as read", "Mark as unread"],
       pattern: /^mark as (unread|read)$/,
       extract: "mode",
       write: true,
@@ -63,6 +69,7 @@ export const gmail: Adapter = {
     },
     {
       id: "GM10",
+      guardNames: ["Discard draft", "Discard"],
       pattern: /^discard (?:this|the) draft$/,
       write: true,
       operation: { kind: "group-b", scope: '[role="dialog"]' },

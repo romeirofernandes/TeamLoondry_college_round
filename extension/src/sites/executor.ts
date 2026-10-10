@@ -1,4 +1,9 @@
-import { prepareGroupB, executeGroupB, groupBSends, type RecipientAllowed } from "./group-b";
+import {
+  prepareGroupB,
+  executeGroupB,
+  groupBSends,
+  type RecipientAllowed,
+} from "./group-b";
 import { SiteContext } from "./context";
 import { catalogue } from "./catalogue";
 import {
@@ -88,7 +93,48 @@ export class SiteExecutor {
   }
   snapshot(): SiteSnapshot | null {
     const snapshot = this.context.inspect();
-    if(snapshot && !this.publicationAllowed())snapshot.capabilities=snapshot.capabilities.map(c=>this.context.adapter()?.actions.find(a=>a.id===c.id)?.operation.kind==='submit' ? {...c,state:'not-implemented'}:c);
+    if (snapshot && !this.publicationAllowed())
+      snapshot.capabilities = snapshot.capabilities.map((c) =>
+        this.context.adapter()?.actions.find((a) => a.id === c.id)?.operation
+          .kind === "submit"
+          ? { ...c, state: "not-implemented" }
+          : c,
+      );
+    if (snapshot)
+      snapshot.capabilities = snapshot.capabilities.map((capability) => {
+        if (!groupBSends.has(capability.id)) return capability;
+        const spec = this.context
+          .adapter()!
+          .actions.find((a) => a.id === capability.id)!;
+        const roots =
+          spec.operation.kind === "group-b" && spec.operation.scope
+            ? elements(spec.operation.scope)
+            : [document];
+        if (roots.length !== 1)
+          return {
+            ...capability,
+            state: roots.length ? "needs-choice" : "unavailable",
+          };
+        const prepared = prepareGroupB(
+          spec,
+          {
+            type: "site-action",
+            site: snapshot.site,
+            action: spec.id,
+            args: {},
+            revision: snapshot.revision,
+            documentId: snapshot.documentId,
+            requestId: "capability",
+          },
+          snapshot,
+          roots[0],
+          this.recipientAllowed,
+        );
+        return {
+          ...capability,
+          state: prepared.result?.state || "needs-confirmation",
+        };
+      });
     return snapshot &&
       this.selected &&
       this.selectedRevision === snapshot.revision
@@ -111,19 +157,38 @@ export class SiteExecutor {
     request: SiteRequest,
   ): ParentNode | null {
     const op = spec.operation;
-    if (spec.id === "R07" || op.kind === "group-b" && !op.scope) return document;
+    if (spec.id === "R07" || (op.kind === "group-b" && !op.scope))
+      return document;
     const selector = "scope" in op ? op.scope : undefined;
     if (selector) {
       let roots = elements(selector);
       const selected = this.identity(request, snapshot);
       const selectedNode = selected && this.context.node(selected.id);
-      if (selectedNode && roots.length > 1) { const bound = roots.filter(root => root === selectedNode || root.contains(selectedNode)); if (bound.length === 1) roots = bound; }
-      if(roots.length>1 && op.kind==='field') {
-        const names=request.args.mode?.includes('title') ? ['Title','Add a title'] : request.args.mode?.match(/body|description/) ? ['Body','Description','Add a description'] : op.names;
-        roots=roots.filter(root=>elements('input,textarea,[contenteditable="true"]',root).some(e=>editable(e)&&names.some(n=>norm(label(e))===norm(n))));
+      if (selectedNode && roots.length > 1) {
+        const bound = roots.filter(
+          (root) => root === selectedNode || root.contains(selectedNode),
+        );
+        if (bound.length === 1) roots = bound;
       }
-      if(roots.length>1 && op.kind==='submit')roots=roots.filter(root=>controls(op.names,root).length===1);
-      if(roots.length>1)roots=roots.filter(root=>!roots.some(other=>other!==root && root.contains(other)));
+      if (roots.length > 1 && op.kind === "field") {
+        const names = request.args.mode?.includes("title")
+          ? ["Title", "Add a title"]
+          : request.args.mode?.match(/body|description/)
+            ? ["Body", "Description", "Add a description"]
+            : op.names;
+        roots = roots.filter((root) =>
+          elements('input,textarea,[contenteditable="true"]', root).some(
+            (e) => editable(e) && names.some((n) => norm(label(e)) === norm(n)),
+          ),
+        );
+      }
+      if (roots.length > 1 && op.kind === "submit")
+        roots = roots.filter((root) => controls(op.names, root).length === 1);
+      if (roots.length > 1)
+        roots = roots.filter(
+          (root) =>
+            !roots.some((other) => other !== root && root.contains(other)),
+        );
       return roots.length === 1 ? roots[0] : null;
     }
     if (
@@ -147,7 +212,10 @@ export class SiteExecutor {
     return node
       ? JSON.stringify([
           label(node),
-          elements("[email],[data-email]").map(e=>[e.getAttribute("email"),e.getAttribute("data-email")]),
+          elements("[email],[data-email]").map((e) => [
+            e.getAttribute("email"),
+            e.getAttribute("data-email"),
+          ]),
           node.getAttribute("aria-pressed"),
           node.getAttribute("aria-expanded"),
           node.closest("form")?.textContent,
@@ -174,12 +242,16 @@ export class SiteExecutor {
       adapter = this.context.adapter();
     if (!snapshot || !adapter) return null;
     const name = norm(label(node));
-    if (snapshot.site === "irctc" && node.closest("app-passenger-input,app-review-booking,app-payment")) return "blocked";
+    if (
+      snapshot.site === "irctc" &&
+      node.closest("app-passenger-input,app-review-booking,app-payment")
+    )
+      return "blocked";
     for (const spec of adapter.actions) {
       const op = spec.operation;
       if (spec.write && op.kind === "group-b") {
-        const customNames: Record<string,string[]> = {WA06:["Send"], GM05:["Send"], ME08:["Send a message","Send"], ME01:["Join now","Ask to join"], ME10:["Leave call"], LI06:["Save","Saved","Unsave"], GM07:["Archive","Move to Inbox"], GM08:["Mark as read","Mark as unread"], GM10:["Discard draft","Discard"], IR05:["Search","Search trains"]};
-        if ((customNames[spec.id] || []).some(n => norm(n) === name)) return "blocked";
+        if ((spec.guardNames || []).some((n) => norm(n) === name))
+          return "blocked";
       }
       if (!spec.write || !("names" in op)) continue;
       const names = [...op.names, ...(op.kind === "state" ? op.opposite : [])];
@@ -203,7 +275,7 @@ export class SiteExecutor {
       };
     }
     if (
-      /\b(like|unlike|upvote|downvote|star|unstar|save|unsave|bookmark|repost|retweet|follow|unfollow|send|post|publish|submit|comment|reply|delete|remove|cart|buy|book|booking|pay|payment|apply|checkout|order|merge|subscribe)\b/.test(
+      /\b(like|unlike|upvote|downvote|star|unstar|save|unsave|bookmark|repost|retweet|follow|unfollow|send|post|publish|submit|comment|reply|delete|remove|clear|discard|cart|buy|book|booking|pay|payment|apply|checkout|order|merge|subscribe)\b/.test(
         name,
       ) &&
       !editable(node) &&
@@ -326,7 +398,10 @@ export class SiteExecutor {
               ...choices.request.args,
               index: undefined,
               query: undefined,
-              mode: choices.request.args.mode === "list" ? undefined : choices.request.args.mode,
+              mode:
+                choices.request.args.mode === "list"
+                  ? undefined
+                  : choices.request.args.mode,
             },
           },
           false,
@@ -334,12 +409,33 @@ export class SiteExecutor {
       }
     }
     if (this.pending) this.pending = null;
-    if (/^(?:list results|list comments|list chats|list messages|list drafts|list jobs|list trains|list places|list routes)$/.test(n)) {
+    if (
+      /^(?:list results|list comments|list chats|list messages|list drafts|list jobs|list trains|list places|list routes)$/.test(
+        n,
+      )
+    ) {
       const s = this.context.inspect();
       if (!s) return null;
       const spec = this.context
         .adapter()!
-        .actions.find((a) => a.operation.kind === "entities" && (n === "list results" || a.operation.entity === ({"list comments":"comment","list chats":"chat","list messages":"message","list drafts":"draft","list jobs":"job","list trains":"train","list places":"place","list routes":"route"} as Record<string,string>)[n]));
+        .actions.find(
+          (a) =>
+            a.operation.kind === "entities" &&
+            (n === "list results" ||
+              a.operation.entity ===
+                (
+                  {
+                    "list comments": "comment",
+                    "list chats": "chat",
+                    "list messages": "message",
+                    "list drafts": "draft",
+                    "list jobs": "job",
+                    "list trains": "train",
+                    "list places": "place",
+                    "list routes": "route",
+                  } as Record<string, string>
+                )[n]),
+        );
       if (!spec)
         return result("unavailable", "No result list is available here.");
       return this.run({
@@ -391,7 +487,11 @@ export class SiteExecutor {
         "not-implemented",
         "Comment reactions are not implemented. Repository stars cannot substitute for them.",
       );
-    if(op.kind==='submit' && !this.publicationAllowed())return result('not-implemented','Publishing is disabled outside explicitly configured owned test spaces. No content was posted.');
+    if (op.kind === "submit" && !this.publicationAllowed())
+      return result(
+        "not-implemented",
+        "Publishing is disabled outside explicitly configured owned test spaces. No content was posted.",
+      );
     if (op.kind === "unsupported")
       return this.remember(result("not-implemented", op.reason));
     if (this.pending && this.pending.request.requestId !== request.requestId)
@@ -399,9 +499,17 @@ export class SiteExecutor {
     if (["R09", "R20"].includes(spec.id) && request.args.value !== undefined) {
       const choices = this.choices;
       const chosen = choices?.entities[request.args.value - 1];
-      if (!choices || this.now() > choices.expires || !this.fresh(choices.request) || chosen?.kind !== "comment") {
+      if (
+        !choices ||
+        this.now() > choices.expires ||
+        !this.fresh(choices.request) ||
+        chosen?.kind !== "comment"
+      ) {
         this.choices = null;
-        return result("needs-choice", "Say list comments first, then refer to an announced comment number.");
+        return result(
+          "needs-choice",
+          "Say list comments first, then refer to an announced comment number.",
+        );
       }
       request.entityId = chosen.id;
       this.choices = null;
@@ -426,7 +534,12 @@ export class SiteExecutor {
             "That number is not in the announced list for this object type.",
           );
         request.entityId = chosen.id;
-        request.args = { ...request.args, index: undefined, query: undefined, mode: request.args.mode === "list" ? undefined : request.args.mode };
+        request.args = {
+          ...request.args,
+          index: undefined,
+          query: undefined,
+          mode: request.args.mode === "list" ? undefined : request.args.mode,
+        };
       }
       this.choices = null;
     }
@@ -447,9 +560,16 @@ export class SiteExecutor {
     let target: HTMLElement | undefined;
     let groupPreview: string | undefined;
     if (op.kind === "group-b") {
-      const prepared = prepareGroupB(spec, request, snapshot, scope, this.recipientAllowed);
+      const prepared = prepareGroupB(
+        spec,
+        request,
+        snapshot,
+        scope,
+        this.recipientAllowed,
+      );
       if (prepared.result) return this.remember(prepared.result);
-      target = prepared.target; groupPreview = prepared.preview;
+      target = prepared.target;
+      groupPreview = prepared.preview;
     }
     if (op.kind === "state") {
       const matches = controls([...op.names, ...op.opposite], scope);
@@ -507,7 +627,12 @@ export class SiteExecutor {
     }
     if (spec.write && !confirmed) {
       const identity = this.identity(request, snapshot);
-      if (!identity && op.kind !== "submit" && op.kind !== "clear-draft" && op.kind !== "group-b")
+      if (
+        !identity &&
+        op.kind !== "submit" &&
+        op.kind !== "clear-draft" &&
+        op.kind !== "group-b"
+      )
         return result(
           "needs-choice",
           "Which item should change? Select a named item first.",
@@ -561,7 +686,12 @@ export class SiteExecutor {
     }
     const updated = this.context.inspect();
     if (output.state === "needs-choice" && output.choices?.length && updated) {
-      this.choices = {request: {...request, revision: updated.revision}, entities: output.choices, offset:0, expires:this.now()+30000};
+      this.choices = {
+        request: { ...request, revision: updated.revision },
+        entities: output.choices,
+        offset: 0,
+        expires: this.now() + 30000,
+      };
       output.feedback = this.choiceFeedback(this.choices);
     }
     if (
@@ -589,7 +719,16 @@ export class SiteExecutor {
             "failed",
             "The control was activated, but its result could not be verified. No automatic retry.",
           );
-    if (op.kind === "group-b") return executeGroupB(spec, request, s, scope, target, valid, this.context);
+    if (op.kind === "group-b")
+      return executeGroupB(
+        spec,
+        request,
+        s,
+        scope,
+        target,
+        valid,
+        this.context,
+      );
     if (op.kind === "search" || op.kind === "route") {
       const url = new URL(s.url),
         parts = url.pathname.split("/").filter(Boolean),
@@ -626,23 +765,103 @@ export class SiteExecutor {
         navigate: { url: new URL(path, s.url).href, newTab: false },
       });
     }
+    if (spec.id === "WA01" && a.query && !request.entityId) {
+      const inputs = elements(
+        '#side [contenteditable="true"][role="textbox"],#pane-side input[aria-label="Search chats"],#side input[aria-label="Search chats"],#side [aria-label="Search input textbox"]',
+      );
+      if (inputs.length !== 1 || !editable(inputs[0]))
+        return result(
+          "unavailable",
+          "The chat-search field is unavailable. Only rendered chats can be selected here.",
+        );
+      const input = inputs[0];
+      input.focus();
+      if (input instanceof HTMLInputElement) setInput(input, a.query);
+      else {
+        const range = document.createRange();
+        range.selectNodeContents(input);
+        getSelection()?.removeAllRanges();
+        getSelection()?.addRange(range);
+        insertText(input, a.query);
+      }
+      let signature = "",
+        stableSince = performance.now();
+      const started = stableSince;
+      const settled = await until(() => {
+        const chats =
+          this.context.inspect()?.entities.filter((e) => e.kind === "chat") ||
+          [];
+        const next = chats.map((e) => e.id + ":" + e.label).join("|");
+        if (next !== signature) {
+          signature = next;
+          stableSince = performance.now();
+        }
+        return (
+          performance.now() - started >= 400 &&
+          performance.now() - stableSince >= 200 &&
+          !elements('#side [aria-busy="true"],#pane-side [aria-busy="true"]')
+            .length &&
+          chats.some((e) => norm(e.label).includes(norm(a.query!)))
+        );
+      }, valid);
+      if (!settled)
+        return result(
+          "unavailable",
+          "The chat search did not settle. No chat was opened.",
+        );
+      const refreshed = this.context.inspect();
+      if (!valid() || !refreshed)
+        return result("unavailable", "The chat-search request was cancelled.");
+      s = refreshed;
+      request = { ...request, revision: refreshed.revision };
+    }
     if (spec.id === "G08") {
       const query = a.query;
       if (!query) return result("unavailable", "Name a file to find.");
-      const available = s.entities.filter(e => e.kind === "file" && norm(e.label).includes(norm(query)));
+      const available = s.entities.filter(
+        (e) => e.kind === "file" && norm(e.label).includes(norm(query)),
+      );
       if (!available.length) {
         const openers = controls(["Go to file"]);
-        if (openers.length !== 1) return result("unavailable", "The repository file finder is unavailable. Only rendered files can be selected here.");
+        if (openers.length !== 1)
+          return result(
+            "unavailable",
+            "The repository file finder is unavailable. Only rendered files can be selected here.",
+          );
         openers[0].click();
-        await until(() => elements('[role="dialog"] input,input[aria-label="Go to file"]').filter(editable).length === 1, valid);
-        const fields = elements('[role="dialog"] input,input[aria-label="Go to file"]').filter(editable);
-        if (fields.length !== 1) return result("unavailable", "The file finder input is unavailable or ambiguous.");
+        await until(
+          () =>
+            elements(
+              '[role="dialog"] input,input[aria-label="Go to file"]',
+            ).filter(editable).length === 1,
+          valid,
+        );
+        const fields = elements(
+          '[role="dialog"] input,input[aria-label="Go to file"]',
+        ).filter(editable);
+        if (fields.length !== 1)
+          return result(
+            "unavailable",
+            "The file finder input is unavailable or ambiguous.",
+          );
         setInput(fields[0] as HTMLInputElement, query);
-        await until(() => !!this.context.inspect()?.entities.some(e => e.kind === "file" && norm(e.label).includes(norm(query))), valid);
+        await until(
+          () =>
+            !!this.context
+              .inspect()
+              ?.entities.some(
+                (e) => e.kind === "file" && norm(e.label).includes(norm(query)),
+              ),
+          valid,
+        );
         const refreshed = this.context.inspect();
-        if (!valid() || !refreshed) return result("unavailable", "The repository changed while finding the file.");
+        if (!valid() || !refreshed)
+          return result(
+            "unavailable",
+            "The repository changed while finding the file.",
+          );
         s = refreshed;
-        request = {...request, revision: refreshed.revision};
+        request = { ...request, revision: refreshed.revision };
       }
     }
     if (op.kind === "entities") {
@@ -744,25 +963,51 @@ export class SiteExecutor {
         });
       }
       if (["chat", "thread", "train", "route"].includes(chosen.kind)) {
-        if (chosen.kind === "train") return result("available", `Selected train ${chosen.label}.`, {evidence:chosen.id});
-        if (chosen.kind === "route" && !request.entityId) return result("needs-choice", "Say list routes, then choose an announced number. Fastest is not inferred from an unqualified route list.");
+        if (chosen.kind === "train")
+          return result("available", `Selected train ${chosen.label}.`, {
+            evidence: chosen.id,
+          });
+        if (chosen.kind === "route" && !request.entityId)
+          return result(
+            "needs-choice",
+            "Say list routes, then choose an announced number. Fastest is not inferred from an unqualified route list.",
+          );
         node.click();
-        return verified(() => chosen.kind === "route" ? stateOf(node,[]) === true : chosen.kind === "thread" ? !node.isConnected && !!this.context.inspect()?.current : norm(this.context.inspect()?.current?.label || "") === norm(chosen.label), `Opened ${chosen.label}.`);
+        return verified(
+          () =>
+            chosen.kind === "route"
+              ? stateOf(node, []) === true
+              : chosen.kind === "thread"
+                ? !node.isConnected && !!this.context.inspect()?.current
+                : norm(this.context.inspect()?.current?.label || "") ===
+                  norm(chosen.label),
+          `Opened ${chosen.label}.`,
+        );
       }
-      if (chosen.kind === "draft") {node.focus();return result("available", `Selected draft ${chosen.label}.`,{evidence:chosen.id});}
+      if (chosen.kind === "draft") {
+        node.focus();
+        return result("available", `Selected draft ${chosen.label}.`, {
+          evidence: chosen.id,
+        });
+      }
       const player = node.querySelector<HTMLElement>(
         'button[aria-label^="Play"],button[data-testid="play-button"]',
       );
       (player || node).click();
-      return verified(
-        () => {
-          if(chosen.kind==='profile')return !node.isConnected && !elements('.profile-link').length;
-          const current=this.context.inspect()?.current;
-          const same=chosen.href ? current?.href===chosen.href : !!current && norm(current.label)===norm(chosen.label);
-          return same && elements('video,audio').some(e=>e instanceof HTMLMediaElement&&!e.paused);
-        },
-        `Opened ${chosen.label}.`,
-      );
+      return verified(() => {
+        if (chosen.kind === "profile")
+          return !node.isConnected && !elements(".profile-link").length;
+        const current = this.context.inspect()?.current;
+        const same = chosen.href
+          ? current?.href === chosen.href
+          : !!current && norm(current.label) === norm(chosen.label);
+        return (
+          same &&
+          elements("video,audio").some(
+            (e) => e instanceof HTMLMediaElement && !e.paused,
+          )
+        );
+      }, `Opened ${chosen.label}.`);
     }
     if (op.kind === "sections") {
       const sections = s.entities.filter((e) => e.kind === "section");
@@ -818,9 +1063,16 @@ export class SiteExecutor {
             (e) => norm(e.label) === norm(a.query!),
           );
           if (matches.length === 1) entity = matches[0];
-          else if(matches.length>1) {
-            this.choices={request,entities:matches,offset:0,expires:this.now()+30000};
-            return result('needs-choice',this.choiceFeedback(this.choices),{choices:matches.slice(0,5)});
+          else if (matches.length > 1) {
+            this.choices = {
+              request,
+              entities: matches,
+              offset: 0,
+              expires: this.now() + 30000,
+            };
+            return result("needs-choice", this.choiceFeedback(this.choices), {
+              choices: matches.slice(0, 5),
+            });
           }
         }
         if (entity) {
@@ -1055,46 +1307,111 @@ export class SiteExecutor {
         "The price filter changed the results destination.",
       );
     }
-    if(spec.id==='G09') {
-      const branch=request.args.query;
-      if(!branch)return result('unavailable','Name an available branch.');
-      const currentPath=new URL(s.url).pathname.split('/');
-      if(['tree','blob'].includes(currentPath[3]) && decodeURIComponent(currentPath[4]||'')===branch)return result('already-satisfied',`Already on branch ${branch}.`);
-      let choices=controls([branch],elements('[role="dialog"],[role="menu"]')[0]||document);
-      if(!choices.length) {
-        const openers=elements('button[data-hotkey="w"],button[aria-label="Switch branches or tags"],[data-testid="branch-picker-dropdown"]');
-        if(openers.length!==1)return result('unavailable','The branch selector is unavailable.');
-        openers[0].click();await until(()=>controls([branch],elements('[role="dialog"],[role="menu"]')[0]||document).length>0,valid);
-        choices=controls([branch],elements('[role="dialog"],[role="menu"]')[0]||document);
+    if (spec.id === "G09") {
+      const branch = request.args.query;
+      if (!branch) return result("unavailable", "Name an available branch.");
+      const currentPath = new URL(s.url).pathname.split("/");
+      if (
+        ["tree", "blob"].includes(currentPath[3]) &&
+        decodeURIComponent(currentPath[4] || "") === branch
+      )
+        return result("already-satisfied", `Already on branch ${branch}.`);
+      let choices = controls(
+        [branch],
+        elements('[role="dialog"],[role="menu"]')[0] || document,
+      );
+      if (!choices.length) {
+        const openers = elements(
+          'button[data-hotkey="w"],button[aria-label="Switch branches or tags"],[data-testid="branch-picker-dropdown"]',
+        );
+        if (openers.length !== 1)
+          return result("unavailable", "The branch selector is unavailable.");
+        openers[0].click();
+        await until(
+          () =>
+            controls(
+              [branch],
+              elements('[role="dialog"],[role="menu"]')[0] || document,
+            ).length > 0,
+          valid,
+        );
+        choices = controls(
+          [branch],
+          elements('[role="dialog"],[role="menu"]')[0] || document,
+        );
       }
-      if(choices.length!==1)return result('unavailable','That branch is absent or ambiguous.');
-      const choice=choices[0];
-      if(choice instanceof HTMLAnchorElement) {
-        const destination=new URL(choice.href,s.url);
-        if(destination.hostname!=='github.com'||!destination.pathname.startsWith(currentPath.slice(0,3).join('/')+'/'))return result('unavailable','The branch link belongs to a different repository.');
-        return result('available',`Opening branch ${branch}.`,{navigate:{url:destination.href,newTab:false}});
+      if (choices.length !== 1)
+        return result("unavailable", "That branch is absent or ambiguous.");
+      const choice = choices[0];
+      if (choice instanceof HTMLAnchorElement) {
+        const destination = new URL(choice.href, s.url);
+        if (
+          destination.hostname !== "github.com" ||
+          !destination.pathname.startsWith(
+            currentPath.slice(0, 3).join("/") + "/",
+          )
+        )
+          return result(
+            "unavailable",
+            "The branch link belongs to a different repository.",
+          );
+        return result("available", `Opening branch ${branch}.`, {
+          navigate: { url: destination.href, newTab: false },
+        });
       }
-      choice.click();return verified(()=>stateOf(choice,[])===true||decodeURIComponent(new URL(location.href).pathname.split('/')[4]||'')===branch,`Switched to ${branch}.`);
+      choice.click();
+      return verified(
+        () =>
+          stateOf(choice, []) === true ||
+          decodeURIComponent(
+            new URL(location.href).pathname.split("/")[4] || "",
+          ) === branch,
+        `Switched to ${branch}.`,
+      );
     }
     if (spec.id === "R07") {
       const [sort, range] = (a.query || "").split(" by ");
       const roots = elements('main,[role="menu"]');
-      const root = roots.find(e => e.getAttribute("role") === "menu") || roots[0];
-      if (!root || !sort) return result("unavailable", "Open the post sorting menu first.");
+      const root =
+        roots.find((e) => e.getAttribute("role") === "menu") || roots[0];
+      if (!root || !sort)
+        return result("unavailable", "Open the post sorting menu first.");
       const choices = controls([sort], root);
-      if (choices.length !== 1) return result("unavailable", "That post sort is unavailable. Open its menu first.");
+      if (choices.length !== 1)
+        return result(
+          "unavailable",
+          "That post sort is unavailable. Open its menu first.",
+        );
       if (stateOf(choices[0], []) !== true) {
         choices[0].click();
-        if (!(await until(() => stateOf(choices[0], []) === true, valid))) return result("failed", "The post sort changed without a verifiable selected state.");
+        if (!(await until(() => stateOf(choices[0], []) === true, valid)))
+          return result(
+            "failed",
+            "The post sort changed without a verifiable selected state.",
+          );
       }
       if (range) {
-        const names = {today: ["Today", "Past 24 hours"], "this week": ["This week", "Past week"], "this month": ["This month", "Past month"], "all time": ["All time"]}[range];
+        const names = {
+          today: ["Today", "Past 24 hours"],
+          "this week": ["This week", "Past week"],
+          "this month": ["This month", "Past month"],
+          "all time": ["All time"],
+        }[range];
         const ranges = controls(names || [range]);
-        if (ranges.length !== 1) return result("unavailable", "The sort was selected, but the requested time range is unavailable. Open the time range menu.");
+        if (ranges.length !== 1)
+          return result(
+            "unavailable",
+            "The sort was selected, but the requested time range is unavailable. Open the time range menu.",
+          );
         ranges[0].click();
-        return verified(() => stateOf(ranges[0], []) === true, `Sorted posts by ${sort}, ${range}.`);
+        return verified(
+          () => stateOf(ranges[0], []) === true,
+          `Sorted posts by ${sort}, ${range}.`,
+        );
       }
-      return result("available", `Sorted posts by ${sort}.`, {evidence: "selected-sort"});
+      return result("available", `Sorted posts by ${sort}.`, {
+        evidence: "selected-sort",
+      });
     }
     if (op.kind === "control") {
       let names = op.names;
@@ -1131,13 +1448,32 @@ export class SiteExecutor {
         `Verified ${names[0]}.`,
       );
     }
-    if(spec.id==='S05') {
-      if(!/^\/(?:album|playlist)\//.test(new URL(s.url).pathname))return result('needs-choice','Open the album or playlist first. Resuming the previous track would not start that collection.');
-      const main=elements('main')[0],players=elements('audio,video').filter((e):e is HTMLMediaElement=>e instanceof HTMLMediaElement);
-      const buttons=main?controls(['Play'],main):[];
-      if(buttons.length!==1||players.length!==1)return result('unavailable','The collection player cannot be verified on this page.');
-      const trackHrefs=s.entities.filter(e=>e.kind==='track').map(e=>e.href);
-      buttons[0].click();return verified(()=>!players[0].paused&&trackHrefs.includes(this.context.inspect()?.current?.href),'Playing a track from the current collection.');
+    if (spec.id === "S05") {
+      if (!/^\/(?:album|playlist)\//.test(new URL(s.url).pathname))
+        return result(
+          "needs-choice",
+          "Open the album or playlist first. Resuming the previous track would not start that collection.",
+        );
+      const main = elements("main")[0],
+        players = elements("audio,video").filter(
+          (e): e is HTMLMediaElement => e instanceof HTMLMediaElement,
+        );
+      const buttons = main ? controls(["Play"], main) : [];
+      if (buttons.length !== 1 || players.length !== 1)
+        return result(
+          "unavailable",
+          "The collection player cannot be verified on this page.",
+        );
+      const trackHrefs = s.entities
+        .filter((e) => e.kind === "track")
+        .map((e) => e.href);
+      buttons[0].click();
+      return verified(
+        () =>
+          !players[0].paused &&
+          trackHrefs.includes(this.context.inspect()?.current?.href),
+        "Playing a track from the current collection.",
+      );
     }
     if (op.kind === "media")
       return this.media(op.command, request, scope, valid);

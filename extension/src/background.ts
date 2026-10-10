@@ -612,7 +612,7 @@ async function voicePlan(steps: string[], snapshot: SiteSnapshot) {
       let next: SiteSnapshot | null=null;
       while(valid() && Date.now()<deadline) {
         const candidate:SiteSnapshot|null=await page({type:'GET_SITE_CONTEXT'});
-        if(candidate?.site===snapshot.site && candidate.documentId!==snapshot.documentId && candidate.url===planDestination) {next=candidate;break;}
+        if(candidate?.site===snapshot.site && (candidate.documentId!==snapshot.documentId || snapshot.url!==planDestination && candidate.revision>snapshot.revision) && candidate.url===planDestination) {next=candidate;break;}
         await new Promise(resolve=>setTimeout(resolve,60));
       }
       planDestination=null;
@@ -633,6 +633,14 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
   if (revision !== pageRevision || !state.running || state.paused) return;
   await publish({ lastHeard: text, interimTranscript: "" });
   if (revision !== pageRevision || !state.running || state.paused) return;
+  const conversation: SiteSnapshot | null = await page({type:"GET_SITE_CONTEXT"});
+  if (revision !== pageRevision || !state.running || state.paused) return;
+  if (conversation?.site === "meet" && conversation.meetingActive) {
+    if (!/^(?:hey )?handsfree[, ]+/i.test(text.trim())) {
+      await publish({feedback:"During a Meet call, begin each command or dictation segment with Handsfree. Use headphones to keep participant audio out of the microphone."}); return;
+    }
+    if (state.dictating || /^handsfree[, ]+/i.test(text.trim())) {text=text.trim().replace(/^(?:hey )?handsfree[, ]+/i, "");parsed=parseIntent(text);}
+  }
   if (state.dictating && parsed.type !== "stop-typing") {
     const literal = text.toLowerCase().startsWith("literal ") ? text.slice(8) : text;
     const result = await page({ type: "DICTATE", text: literal });
@@ -656,7 +664,7 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
   if (/^refresh (?:this|the) page$|^reload$/i.test(text.trim())) {
     if(state.targetTabId!==null&&current())await chrome.tabs.reload(state.targetTabId); return;
   }
-  const site: SiteSnapshot | null = await page({type:"GET_SITE_CONTEXT"});
+  const site: SiteSnapshot | null = conversation;
   if(!current())return;
   if(site?.site) {
     const steps=text.split(/\s+(?:and then|then)\s+|,\s*(?=(?:filter|sort|show|open|add|choose)\b)/i);

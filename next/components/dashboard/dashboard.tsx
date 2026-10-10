@@ -22,6 +22,7 @@ import {
 } from "@phosphor-icons/react";
 import {
   defaults,
+  normalizeControlSettings,
   initialState,
   type SessionState,
   type Settings,
@@ -761,17 +762,22 @@ export function HandsfreeDashboard() {
                     <Button variant="outline" disabled={locked} onClick={() => void safe(async () => { setSiteSupport(await request<SiteSnapshot | null>({type:"GET_SITE_CONTEXT"})); setSupportLoaded(true); })}>Check current page commands</Button>
                     <div aria-live="polite">
                       {supportLoaded && !siteSupport && <p>The selected tab has no dedicated site adapter. Generic browser commands remain available.</p>}
-                      {siteSupport && <><p>Selected page: {siteSupport.site}. Say "what can I do here?" or "list results".</p><ul>{siteSupport.capabilities.filter(item => item.state !== "not-implemented").slice(0,8).map(item => <li key={item.id}>{item.description} · {item.state.replaceAll("-", " ")}</li>)}</ul></>}
+                      {siteSupport && <><p>Selected page: {siteSupport.site}. {siteSupport.current?.identity && <>Chat ID: {siteSupport.current.identity}. </>}Say "what can I do here?" or "list results".</p><ul>{siteSupport.capabilities.filter(item => item.state !== "not-implemented").slice(0,8).map(item => <li key={item.id}>{item.description} · {item.state.replaceAll("-", " ")}</li>)}</ul></>}
                     </div>
                   </div>
                   <SettingSwitch id="voice-only" label="Voice-only session" hint="Keep the camera off. Select named items and numbered results by speaking." checked={settings.voiceOnly} disabled={locked} onChange={(checked) => save({ voiceOnly: checked, ...(checked ? { dwellEnabled: false, edgeScroll: false } : {}) })} />
                   <SettingSwitch id="spoken-feedback" label="Speak feedback" hint="Read choices and results aloud. Listening pauses during each response to prevent the assistant from hearing itself, then resumes." checked={settings.spokenFeedback} disabled={locked} onChange={(checked) => save({ spokenFeedback: checked })} />
                   <Field>
                     <FieldLabel htmlFor="test-message-recipients">Owned test recipients</FieldLabel>
-                    <FieldDescription>Sending requires an exact recipient here and a separate voice confirmation. Use gmail:you@example.com, whatsapp:exact chat name, or meet:abc-defg-hij. Only add recipients and private meetings you own or have permission to test.</FieldDescription>
-                    <Input id="test-message-recipients" value={messageRecipients} disabled={locked} onChange={event => setMessageRecipients(event.target.value)} />
+                    <FieldDescription id="test-recipients-help">Sending requires an exact recipient here and a separate voice confirmation. Use gmail:you@example.com, whatsapp:exact chat ID, or meet:abc-defg-hij. Only add recipients and private meetings you own or have permission to test.</FieldDescription>
+                    <Input id="test-message-recipients" aria-describedby="test-recipients-help" value={messageRecipients} disabled={locked} onChange={event => setMessageRecipients(event.target.value)} />
                   </Field>
-                  <Button variant="outline" disabled={locked} onClick={() => save({testMessageRecipients:messageRecipients.split(",").map(value=>value.trim()).filter(Boolean)})}>Save test recipients</Button>
+                  <Button variant="outline" disabled={locked} onClick={() => {
+                      const entries=messageRecipients.split(",").map(value=>value.trim().toLowerCase()).filter(Boolean);
+                      const next=normalizeControlSettings({...settings,testMessageRecipients:entries}).testMessageRecipients;
+                      if(next.length !== new Set(entries).size) {setError("Use a Gmail address, an exact WhatsApp chat ID, or a private Meet code with the shown prefix. Limit the list to 20 recipients.");return;}
+                      setMessageRecipients(next.join(", "));save({testMessageRecipients:next});
+                    }}>Save test recipients</Button>
                   <Field>
                     <FieldLabel htmlFor="pause-phrase">Pause keyword or phrase</FieldLabel>
                     <Input id="pause-phrase" value={pausePhrase} maxLength={80} disabled={locked} onChange={event => setPausePhrase(event.target.value)} />

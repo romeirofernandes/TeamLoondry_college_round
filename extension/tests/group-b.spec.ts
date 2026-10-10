@@ -89,7 +89,7 @@ test.beforeAll(async () => {
       voiceOnly: true,
       testWriteTargets: [],
       testMessageRecipients: [
-        "whatsapp:mira",
+        "whatsapp:owned-chat",
         "gmail:owned@example.test",
         "meet:abc-defg-hij",
       ],
@@ -220,7 +220,7 @@ test("IRCTC confirmed search verifies station pair and keeps booking blocked", a
 test("Maps route mode, map zoom and confirmed endpoint navigation", async () => {
   await open("maps");
   await heard("switch to walking");
-  await expect(page.locator('[role="radio"]')).toHaveAttribute(
+  await expect(page.getByRole("radio", { name: "Walking" })).toHaveAttribute(
     "aria-checked",
     "true",
   );
@@ -230,11 +230,59 @@ test("Maps route mode, map zoom and confirmed endpoint navigation", async () => 
     "11",
   );
   await heard("get directions from Bengaluru Palace to Bengaluru airport");
-  expect((await message({ type: "GET_STATE" })).feedback).toContain(
-    "Say confirm",
-  );
-  await heard("confirm");
   await expect(page).toHaveURL(
     /origin=bengaluru\+palace.*destination=bengaluru\+airport/,
   );
+  await heard("review directions");
+  expect((await message({ type: "GET_STATE" })).feedback).toContain(
+    "Confirm displayed directions",
+  );
+  await heard("confirm");
+  expect((await message({ type: "GET_STATE" })).feedback).toContain(
+    "Confirmed the displayed route",
+  );
+});
+
+test("Gmail same-document search plans reach the next step", async () => {
+  await open("gmail");
+  await page.locator('[role="main"]').evaluate((e) => {
+    e.insertAdjacentHTML(
+      "beforeend",
+      '<table><tr class="zA"><td><span class="bog">Invoice</span></td></tr></table>',
+    );
+    const row = e.querySelector("tr")!;
+    (row as HTMLElement).onclick = () => row.remove();
+  });
+  await heard("search Gmail for invoice then open the first result");
+  expect((await message({ type: "GET_STATE" })).feedback).toContain(
+    "list results first",
+  );
+  await expect(page).toHaveURL(/#search\/invoice/);
+});
+test("Meet in-call conversation requires explicit addressing", async () => {
+  await open("meet");
+  await heard("join this meeting");
+  await heard("confirm");
+  const mic = page.locator('button[aria-label="Turn off microphone"]');
+  await heard("mute my meeting microphone");
+  await expect(mic).toHaveCount(1);
+  expect((await message({ type: "GET_STATE" })).feedback).toContain(
+    "begin each command",
+  );
+  await heard("Handsfree mute my meeting microphone");
+  await expect(
+    page.locator('button[aria-label="Turn on microphone"]'),
+  ).toHaveCount(1);
+});
+
+test("Meet accepts both addressing forms when ending dictation", async () => {
+  await open("meet");
+  await heard("join this meeting");
+  await heard("confirm");
+  await heard("Handsfree write a chat message");
+  expect((await message({ type: "GET_STATE" })).dictating).toBe(true);
+  await heard("Handsfree hello");
+  await heard("hey handsfree finish dictation");
+  expect((await message({ type: "GET_STATE" })).dictating).toBe(false);
+  await expect(page.locator("textarea")).toHaveValue("hello");
 });

@@ -44,6 +44,7 @@ export interface Entity {
   kind: EntityKind;
   label: string;
   detail: string;
+  identity?: string;
   href?: string;
 }
 export interface SiteSnapshot {
@@ -52,6 +53,7 @@ export interface SiteSnapshot {
   documentId: string;
   url: string;
   pageType: string;
+  meetingActive?: boolean;
   entities: Entity[];
   current: Entity | null;
   selected?: Entity;
@@ -143,6 +145,7 @@ export interface ActionSpec {
   pattern: RegExp;
   operation: Operation;
   write?: boolean;
+  guardNames?: string[];
   extract?: "query" | "number" | "ordinal" | "mode";
 }
 export interface Adapter {

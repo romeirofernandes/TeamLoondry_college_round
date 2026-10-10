@@ -46,6 +46,7 @@ export const linkedin: Adapter = {
     },
     {
       id: "LI06",
+      guardNames: ["Save", "Saved", "Unsave"],
       pattern: /^(save|unsave) (?:this|the) job$/,
       extract: "mode",
       write: true,

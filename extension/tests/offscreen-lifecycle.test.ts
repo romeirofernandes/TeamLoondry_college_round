@@ -87,3 +87,10 @@ it("suspends recognition during feedback and ignores echo before resuming", asyn
  mocks.speech[1].heard("choose two");await flush();expect(send).toHaveBeenCalledWith({type:"HEARD",text:"choose two"});
  dispatch("stop");vi.useRealTimers();
 });
+
+it.each([true,false])("preserves pause when voice-only changes to %s",async voiceOnly=>{
+ mocks.fail=false;dispatch("start",{...defaults,voiceOnly:!voiceOnly});await flush();dispatch("pause");await flush();
+ const count=mocks.trackers.length;dispatch("settings",{...defaults,voiceOnly});await flush();expect(mocks.trackers.length).toBe(count);
+ const send=vi.mocked(chrome.runtime.sendMessage);send.mockClear();mocks.speech.at(-1).heard("scroll down");await flush();expect(send).not.toHaveBeenCalledWith(expect.objectContaining({type:"TRANSCRIPT"}));
+ dispatch("resume");await flush();expect(mocks.trackers.length).toBe(count+(voiceOnly ? 0 : 1));
+});

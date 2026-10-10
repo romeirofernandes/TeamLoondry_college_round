@@ -33,11 +33,48 @@ export class SiteContext {
           : node.querySelector<HTMLAnchorElement>(
               'a[href*="/status/"],a[href*="/comments/"],a[href*="/track/"]',
             ) || node.querySelector<HTMLAnchorElement>("a[href]");
-      const href = ['section','reference'].includes(kind) && node.id ? new URL('#'+node.id,url).href : link
-        ? new URL(link.getAttribute("href")!, url).href
-        : undefined;
+      const href =
+        ["section", "reference"].includes(kind) && node.id
+          ? new URL("#" + node.id, url).href
+          : link
+            ? new URL(link.getAttribute("href")!, url).href
+            : undefined;
+      const chatIds =
+        site === "whatsapp" && kind === "chat"
+          ? [
+              ...new Set(
+                [
+                  elements("#main[data-chat-id],#main [data-chat-id]").map(
+                    (e) => e.getAttribute("data-chat-id") || "",
+                  ),
+                  elements("#main [data-id]").map(
+                    (e) =>
+                      /^(?:true|false)_([^_]+)_[^]+$/.exec(
+                        e.getAttribute("data-id") || "",
+                      )?.[1] || "",
+                  ),
+                ]
+                  .flat()
+                  .filter(Boolean),
+              ),
+            ]
+          : [];
+      const identity =
+        chatIds.length === 1 && !node.closest("#pane-side")
+          ? chatIds[0]
+          : undefined;
       const title =
         node.getAttribute("post-title") ||
+        (site === "whatsapp" && kind === "chat" && node.closest("#pane-side")
+          ? node
+              .querySelector<HTMLElement>(
+                '[data-testid="cell-frame-title"] [title],span[title]',
+              )
+              ?.getAttribute("title")
+          : undefined) ||
+        (site === "gmail" && kind === "thread"
+          ? node.querySelector<HTMLElement>(".bog")?.textContent
+          : undefined) ||
         node.querySelector<HTMLElement>(
           'h1,h2,h3,[data-testid="tweetText"],[data-testid="track-name"]',
         )?.textContent ||
@@ -48,6 +85,7 @@ export class SiteContext {
         title,
         node.getAttribute("data-asin"),
         node.getAttribute("post-id"),
+        identity,
         node.getAttribute("data-id"),
         node.getAttribute("data-job-id"),
         node.getAttribute("data-train-number"),
@@ -64,6 +102,7 @@ export class SiteContext {
         id,
         kind,
         label: title.trim().slice(0, 180),
+        ...(identity ? { identity } : {}),
         detail: (
           label(node) +
           (href && ["file", "folder", "repository"].includes(kind)
@@ -77,12 +116,17 @@ export class SiteContext {
       const seen = new Set<string>();
       let kindCount = 0;
       for (const node of elements(selector!)) {
-        if(site==='wikipedia' && node.closest('.navbox,.sidebar,.vertical-navbox,[role="navigation"]'))continue;
+        if (
+          site === "wikipedia" &&
+          node.closest('.navbox,.sidebar,.vertical-navbox,[role="navigation"]')
+        )
+          continue;
         const entity = make(node, kind as EntityKind);
         const key = entity.href || entity.id;
         if (entity.label && !seen.has(key)) {
           seen.add(key);
-          entities.push(entity); kindCount++;
+          entities.push(entity);
+          kindCount++;
         }
         if (kindCount >= 40) break;
       }
@@ -92,17 +136,18 @@ export class SiteContext {
       currentNodes.length === 1
         ? make(
             currentNodes[0],
-            adapter.currentKind || (site === "spotify"
-              ? "track"
-              : site === "github"
-                ? "repository"
-                : site === "amazon"
-                  ? "product"
-                  : site === "wikipedia"
-                    ? "article"
-                    : site === "netflix"
-                      ? "title"
-                      : "post"),
+            adapter.currentKind ||
+              (site === "spotify"
+                ? "track"
+                : site === "github"
+                  ? "repository"
+                  : site === "amazon"
+                    ? "product"
+                    : site === "wikipedia"
+                      ? "article"
+                      : site === "netflix"
+                        ? "title"
+                        : "post"),
           )
         : null;
     if (
@@ -135,7 +180,10 @@ export class SiteContext {
       current,
       controlSignature,
       drafts,
-      elements("[email],[data-email]").map(e => [e.getAttribute("email"), e.getAttribute("data-email")]),
+      elements("[email],[data-email]").map((e) => [
+        e.getAttribute("email"),
+        e.getAttribute("data-email"),
+      ]),
     ]);
     if (this.signature && signature !== this.signature) this.revision++;
     this.signature = signature;
@@ -145,6 +193,9 @@ export class SiteContext {
       documentId: this.documentId,
       revision: this.revision,
       pageType: new URL(url).pathname,
+      ...(site === "meet"
+        ? { meetingActive: controls(["Leave call"]).length === 1 }
+        : {}),
       entities,
       current,
       capabilities: catalogue
@@ -159,6 +210,42 @@ export class SiteContext {
                 : "available";
           if (spec && spec.operation.kind !== "unsupported") {
             const op = spec.operation;
+            if (op.kind === "group-b") {
+              const roots = elements(op.scope || adapter.scope);
+              if (!roots.length) state = "unavailable";
+              if (op.scope && roots.length > 1) state = "needs-choice";
+              const names: Record<string, string[]> = {
+                ME01: ["Join now", "Ask to join"],
+                ME02: [
+                  "Turn off microphone",
+                  "Turn on microphone",
+                  "Turn off microphone (ctrl + d)",
+                  "Turn on microphone (ctrl + d)",
+                ],
+                ME03: [
+                  "Turn off camera",
+                  "Turn on camera",
+                  "Turn off camera (ctrl + e)",
+                  "Turn on camera (ctrl + e)",
+                ],
+                ME04: ["Turn off captions", "Turn on captions"],
+                ME05: ["Raise hand", "Lower hand"],
+                ME06: ["Show everyone", "People", "Chat with everyone", "Chat"],
+                ME10: ["Leave call"],
+                IR05: ["Search", "Search trains"],
+                IR08: ["Swap", "Swap stations"],
+                MAP07: ["Zoom in", "Zoom out"],
+              };
+              if (names[spec.id] && !controls(names[spec.id]).length)
+                state = "unavailable";
+              if (
+                ["WA03", "WA04", "WA05", "WA07", "MAP03", "LI05"].includes(
+                  spec.id,
+                ) &&
+                !current
+              )
+                state = "unavailable";
+            }
             if (
               op.kind === "entities" &&
               !entities.some((e) => e.kind === op.entity)

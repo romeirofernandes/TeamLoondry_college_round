@@ -117,6 +117,7 @@ function argsFor(
   if (spec.id === "W08" && /^(?:find|select)/.test(text)) args.mode = "select";
   if (spec.extract === "query") {
     if (spec.id === "MAP04") {
+      if (text === "review directions") return {mode:"review"};
       if (!match[1]?.trim() || !match[2]?.trim() || match[1].length > 300 || match[2].length > 100) return null;
       return {query:match[1].trim(),mode:match[2].trim()};
     }
@@ -201,8 +202,8 @@ export function parseSite(
   // Broad named-entity patterns are considered after specific commands.
   const ordered = [...adapters[snapshot.site].actions].sort(
     (a, b) =>
-      Number(["G03", "A02", "S03", "W04", "A08", "G01", "R01"].includes(a.id)) -
-      Number(["G03", "A02", "S03", "W04", "A08", "G01", "R01"].includes(b.id)),
+      Number(["G03", "A02", "S03", "W04", "A08", "G01", "R01", "WA01", "GM01", "LI01", "MAP01"].includes(a.id)) -
+      Number(["G03", "A02", "S03", "W04", "A08", "G01", "R01", "WA01", "GM01", "LI01", "MAP01"].includes(b.id)),
   );
   for (const spec of ordered) {
     const match = spec.pattern.exec(normalized);

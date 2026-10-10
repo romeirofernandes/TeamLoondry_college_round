@@ -8,6 +8,7 @@ export const meet: Adapter = {
   actions: [
     {
       id: "ME01",
+      guardNames: ["Join now", "Ask to join"],
       pattern: /^(?:join this meeting|open my test meeting)$/,
       write: true,
       operation: { kind: "group-b" },
@@ -53,6 +54,7 @@ export const meet: Adapter = {
     },
     {
       id: "ME08",
+      guardNames: ["Send a message", "Send"],
       pattern: /^send (?:this|the)(?: message)? to the meeting$/,
       write: true,
       operation: {
@@ -71,6 +73,7 @@ export const meet: Adapter = {
     },
     {
       id: "ME10",
+      guardNames: ["Leave call"],
       pattern: /^leave (?:the|this) meeting$/,
       write: true,
       operation: { kind: "group-b" },

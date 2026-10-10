@@ -1,6 +1,6 @@
 # Group B voice-first website support plan
 
-Prepared 2026-10-10. This document specifies proposed implementation and testing. It does not claim that these commands already work or that live websites have passed tests.
+Prepared 2026-10-10. This document specifies the implementation and qualification targets. See [Group B implementation and verification](group-b-support.md) for the current command scope, automated checks and remaining live qualification.
 
 ## 1. Outcome and scope
 

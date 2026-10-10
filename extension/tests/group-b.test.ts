@@ -26,7 +26,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 const bodies = {
   whatsapp:
-    '<aside id="pane-side"><div role="row">Mira</div><div role="row">Sam</div><button aria-pressed="false">Unread</button></aside><main id="main"><header><span title="Mira">Mira</span></header><div role="log" data-testid="conversation-panel-messages"><div class="message-in">First message</div><div class="message-in">Latest message</div></div><footer><textarea aria-label="Message"></textarea><button>Send</button></footer></main>',
+    '<aside id="pane-side"><input aria-label="Search chats"><div role="row">Mira</div><div role="row">Sam</div><button aria-pressed="false">Unread</button></aside><main id="main" data-chat-id="owned-chat"><header><span title="Mira">Mira</span></header><div role="log" data-testid="conversation-panel-messages"><div class="message-in">First message</div><div class="message-in">Latest message</div></div><footer><textarea aria-label="Message"></textarea><button>Send</button></footer></main>',
   gmail:
     '<div role="main"><h2 class="hP">Project update</h2><button>Reply</button><button>Archive</button><button>Mark as unread</button></div><div role="dialog" aria-label="New message"><span email="owned@example.test">Owned account</span><input name="to" aria-label="To"><input name="subjectbox" aria-label="Subject"><div contenteditable="true" aria-label="Message Body" role="textbox"></div><button>Send</button><button>Discard draft</button></div>',
   meet: '<main><h1 data-meeting-title>Test meeting</h1><button aria-label="Turn off microphone">Mic</button><button aria-label="Turn off camera">Camera</button><button aria-label="Turn on captions">Captions</button><button aria-label="Raise hand">Hand</button><button>Join now</button><aside data-panel-id="chat"><textarea aria-label="Send a message to everyone"></textarea><button>Send</button></aside></main>',
@@ -34,7 +34,7 @@ const bodies = {
     '<main><div class="jobs-details"><h1 class="job-details-jobs-unified-top-card__job-title">Data analyst at Test company</h1><button aria-label="Save" aria-pressed="false">Save</button><div class="jobs-description__content">Owned test job details</div></div><a class="job-card-list__title--link" href="/jobs/view/123">Data analyst at Test company</a><button aria-checked="false">Remote</button></main>',
   irctc:
     '<app-train-search><p-autocomplete id="origin"><input aria-label="From" value="Chennai Central - MAS" aria-controls="from-options"><ul id="from-options" role="listbox"></ul></p-autocomplete><p-autocomplete id="destination"><input aria-label="To" value="Bengaluru City - SBC"></p-autocomplete><div id="jDate"><input aria-label="Journey date" value="18/11/2026"></div><select id="journeyClass"><option value="3A">AC 3 Tier (3A)</option><option value="SL">Sleeper (SL)</option></select><select id="journeyQuota"><option>GENERAL</option><option>TATKAL</option></select><button>Search</button><button>Swap stations</button><button>Book ticket</button></app-train-search><app-train-list></app-train-list>',
-  maps: '<main role="main"><h1>Bengaluru Palace</h1><button data-item-id="address">Vasanth Nagar, Bengaluru</button><button data-item-id="oh">Open 10 AM to 5 PM</button><a class="hfpxzc" aria-label="Bengaluru Palace" href="/maps/place/Palace">Bengaluru Palace</a><div id="directions-searchbox-0"><input value="Bengaluru Palace"></div><div id="directions-searchbox-1"><input value="Bengaluru airport"></div><button role="radio" aria-checked="false">Walking</button><button aria-label="Zoom in">+</button><div aria-label="Map" data-map-zoom="10"></div><div data-trip-index="0" aria-selected="false">Driving, 50 minutes</div></main>',
+  maps: '<main role="main"><h1>Bengaluru Palace</h1><button data-item-id="address">Vasanth Nagar, Bengaluru</button><button data-item-id="oh">Open 10 AM to 5 PM</button><a class="hfpxzc" aria-label="Bengaluru Palace" href="/maps/place/Palace">Bengaluru Palace</a><div id="directions-searchbox-0"><input value="Bengaluru Palace"></div><div id="directions-searchbox-1"><input value="Bengaluru airport"></div><button role="radio" aria-checked="true">Driving</button><button role="radio" aria-checked="false">Walking</button><button aria-label="Zoom in">+</button><div aria-label="Map" data-map-zoom="10"></div><div data-trip-index="0" aria-selected="false">Driving, 50 minutes</div></main>',
 };
 type BSite = keyof typeof bodies;
 const urls = { ...siteHomes, meet: "https://meet.google.com/abc-defg-hij" };
@@ -51,7 +51,7 @@ function fixture(site: BSite, allowed = false) {
         (r) =>
           (
             ({
-              whatsapp: "mira",
+              whatsapp: "owned-chat",
               gmail: "owned@example.test",
               meet: "abc-defg-hij",
             }) as Record<string, string>
@@ -428,7 +428,7 @@ describe("LinkedIn, IRCTC and Maps", () => {
     )!;
     button.onclick = () => {
       document.querySelector("app-train-list")!.innerHTML =
-        '<div data-journey-summary>MAS SBC 18/11/2026</div><article data-train-number="12627">Train 12627</article>';
+        '<div data-journey-summary>MAS SBC 18/11/2026 AC 3 Tier (3A) GENERAL</div><article data-train-number="12627">Train 12627</article>';
     };
     await engine.run(req(engine, "search trains"));
     expect((await engine.dialogue("confirm"))?.state).toBe("available");
@@ -447,10 +447,15 @@ describe("LinkedIn, IRCTC and Maps", () => {
     const preview = await engine.run(
       req(engine, "get directions from Bengaluru Palace to Bengaluru airport"),
     );
-    expect(preview.state).toBe("needs-confirmation");
-    const response = await engine.dialogue("confirm");
-    expect(response?.navigate?.url).toContain(
+    expect(preview.state).toBe("available");
+    expect(preview.navigate?.url).toContain(
       "origin=bengaluru+palace&destination=bengaluru+airport",
+    );
+    expect((await engine.run(req(engine, "review directions"))).state).toBe(
+      "needs-confirmation",
+    );
+    expect((await engine.dialogue("confirm"))?.evidence).toBe(
+      "resolved-route-endpoints",
     );
     expect(
       (await engine.run(req(engine, "get directions from home to the airport")))
@@ -459,9 +464,14 @@ describe("LinkedIn, IRCTC and Maps", () => {
   });
   it("verifies route mode against unchanged endpoints and a fresh route summary", async () => {
     const engine = fixture("maps");
-    const button = document.querySelector<HTMLButtonElement>('[role="radio"]')!;
+    const button = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="radio"]'),
+    ].find((e) => e.textContent === "Walking")!;
     button.onclick = () => {
       button.setAttribute("aria-checked", "true");
+      [...document.querySelectorAll('[role="radio"]')]
+        .filter((e) => e !== button)
+        .forEach((e) => e.setAttribute("aria-checked", "false"));
       document.querySelector("[data-trip-index]")!.textContent =
         "Walking, 4 hours";
     };
@@ -490,4 +500,204 @@ describe("LinkedIn, IRCTC and Maps", () => {
       );
     },
   );
+});
+
+it("same-name chat replacement invalidates approval by stable recipient ID", async () => {
+  const engine = fixture("whatsapp", true),
+    { click } = hookSend("whatsapp");
+  await engine.run(req(engine, "send this message"));
+  document
+    .querySelector("#main")!
+    .setAttribute("data-chat-id", "different-chat");
+  await engine.dialogue("confirm");
+  expect(click).not.toHaveBeenCalled();
+});
+it("a display name cannot authorize sending when stable chat identity is unavailable", async () => {
+  const engine = fixture("whatsapp", true),
+    { click } = hookSend("whatsapp");
+  document.querySelector("#main")!.removeAttribute("data-chat-id");
+  expect((await engine.run(req(engine, "send this message"))).state).toBe(
+    "not-implemented",
+  );
+  expect(click).not.toHaveBeenCalled();
+});
+it("WhatsApp searches chats absent from the rendered list before opening", async () => {
+  const engine = fixture("whatsapp");
+  document.querySelector<HTMLInputElement>(
+    '[aria-label="Search chats"]',
+  )!.oninput = () => {
+    const row = document.createElement("div");
+    row.setAttribute("role", "row");
+    row.textContent = "Unrendered contact";
+    row.onclick = () =>
+      (document.querySelector("header span")!.textContent = row.textContent);
+    document.querySelector("#pane-side")!.append(row);
+  };
+  expect(
+    (await engine.run(req(engine, "open my chat with Unrendered contact")))
+      .state,
+  ).toBe("available");
+});
+it("Gmail selected draft binds field focus across multiple compose windows", async () => {
+  const engine = fixture("gmail", true);
+  document
+    .querySelector('[role="dialog"]')!
+    .insertAdjacentHTML(
+      "afterend",
+      document
+        .querySelector('[role="dialog"]')!
+        .outerHTML.replace("New message", "Second message"),
+    );
+  expect(
+    (await engine.run(req(engine, "switch to the other draft"))).state,
+  ).toBe("needs-choice");
+  await engine.dialogue("choose two");
+  expect((await engine.run(req(engine, "write the body"))).focusField).toBe(
+    true,
+  );
+  expect(
+    document
+      .querySelectorAll('[role="dialog"]')[1]
+      .contains(document.activeElement),
+  ).toBe(true);
+});
+it("Gmail guarded sending accepts an explicitly bound inline reply editor", async () => {
+  const engine = fixture("gmail", true);
+  const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+  dialog.removeAttribute("role");
+  dialog.setAttribute("data-reply-editor", "");
+  document.querySelector('[role="main"]')!.append(dialog);
+  const editor = dialog.querySelector<HTMLElement>("[contenteditable]")!;
+  editor.textContent = "Owned reply";
+  const button = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+    (e) => e.textContent === "Send",
+  )!;
+  const click = vi.fn(() => {
+    const alert = document.createElement("div");
+    alert.setAttribute("role", "alert");
+    alert.textContent = "Message sent";
+    document.body.append(alert);
+    editor.textContent = "";
+  });
+  button.onclick = click;
+  expect((await engine.run(req(engine, "send this email"))).state).toBe(
+    "needs-confirmation",
+  );
+  expect((await engine.dialogue("confirm"))?.state).toBe("available");
+  expect(click).toHaveBeenCalledTimes(1);
+});
+
+it("searches even when a matching chat is already rendered and clarifies hidden duplicates", async () => {
+  const engine = fixture("whatsapp");
+  const opened = vi.fn();
+  document
+    .querySelectorAll<HTMLElement>('[role="row"]')
+    .forEach((row) => (row.onclick = opened));
+  document.querySelector<HTMLInputElement>(
+    '[aria-label="Search chats"]',
+  )!.oninput = () => {
+    setTimeout(
+      () =>
+        document
+          .querySelector("#pane-side")!
+          .insertAdjacentHTML("beforeend", '<div role="row">Mira</div>'),
+      80,
+    );
+  };
+  expect((await engine.run(req(engine, "open my chat with Mira"))).state).toBe(
+    "needs-choice",
+  );
+  expect(opened).not.toHaveBeenCalled();
+});
+it.each(["linkedin", "irctc"] as const)(
+  "cancellation prevents selecting a newly opened %s option",
+  async (site) => {
+    const engine = fixture(site);
+    const clicked = vi.fn();
+    if (site === "linkedin")
+      document.querySelector("main")!.innerHTML =
+        "<button>On-site/Remote</button>";
+    else
+      document.querySelector("#journeyQuota")!.outerHTML =
+        '<div id="journeyQuota" role="combobox">GENERAL</div>';
+    const opener =
+      site === "linkedin"
+        ? document.querySelector("main button")!
+        : document.querySelector("#journeyQuota")!;
+    (opener as HTMLElement).onclick = () => {
+      const option = document.createElement("button");
+      option.textContent = site === "linkedin" ? "Remote" : "TATKAL";
+      option.onclick = clicked;
+      document.body.append(option);
+      engine.cancel();
+    };
+    expect(
+      (
+        await engine.run(
+          req(
+            engine,
+            site === "linkedin" ? "filter for remote jobs" : "choose Tatkal",
+          ),
+        )
+      ).state,
+    ).toBe("failed");
+    expect(clicked).not.toHaveBeenCalled();
+  },
+);
+it("does not verify train results with a different class or quota", async () => {
+  const engine = fixture("irctc");
+  document.querySelector<HTMLButtonElement>(
+    "app-train-search button",
+  )!.onclick = () => {
+    document.querySelector("app-train-list")!.innerHTML =
+      '<div data-journey-summary>MAS SBC 18/11/2026 Sleeper (SL) TATKAL</div><article data-train-number="12627">Train</article>';
+  };
+  await engine.run(req(engine, "search trains"));
+  expect((await engine.dialogue("confirm"))?.state).toBe("failed");
+});
+
+it("cancellation prevents typing into a newly opened WhatsApp message search", async () => {
+  const engine = fixture("whatsapp");
+  const main = document.querySelector("#main")!;
+  main.insertAdjacentHTML("beforeend", "<button>Search messages</button>");
+  (main.lastElementChild as HTMLElement).onclick = () => {
+    main.insertAdjacentHTML(
+      "beforeend",
+      '<input aria-label="Search messages">',
+    );
+    engine.cancel();
+  };
+  const request = req(engine, "search this chat for secret");
+  expect(request.action).toBe("WA08");
+  expect((await engine.run(request)).state).toBe("failed");
+  expect(document.querySelector<HTMLInputElement>("#main input")!.value).toBe(
+    "",
+  );
+});
+it("cancellation prevents focusing a newly opened Gmail reply", async () => {
+  const engine = fixture("gmail");
+  const main = document.querySelector('[role="main"]')!;
+  (main.querySelector("button") as HTMLElement).onclick = () => {
+    main.insertAdjacentHTML(
+      "beforeend",
+      '<div contenteditable="true" aria-label="Message Body" role="textbox"></div>',
+    );
+    engine.cancel();
+  };
+  expect((await engine.run(req(engine, "reply to this email"))).state).toBe(
+    "failed",
+  );
+  expect(document.activeElement).not.toBe(
+    main.querySelector("[contenteditable]"),
+  );
+});
+
+it.each(
+  catalogue.filter((action) => Object.keys(bodies).includes(action.site)),
+)("routes $id catalogue examples to their specific action", (action) => {
+  const engine = fixture(action.site as BSite);
+  for (const phrase of action.examples)
+    expect(parseSite(phrase, engine.snapshot()!)?.action, phrase).toBe(
+      action.id,
+    );
 });
