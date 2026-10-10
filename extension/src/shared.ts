@@ -233,6 +233,9 @@ export interface PermissionState {
 }
 export type PermissionStateValue = "granted" | "denied" | "prompt" | "unknown";
 export type Message =
+  | { type: "UI_VOICE"; enabled: boolean }
+  | { type: "UI_HEARD"; text: string }
+  | { type: "UI_SPEAK"; text: string }
   | { type: "GET_SITE_CONTEXT" }
   | { type: "SITE_DIALOGUE"; text: string }
   | { type: "SPEAK_FEEDBACK"; text: string; enabled: boolean }
@@ -247,13 +250,13 @@ export type Message =
   | { type: "GET_PROVIDER_STATUS" }
   | { type: "SAVE_PROVIDERS"; groqKeys?: string[]; jevKey?: string; jevKeys?: string[] }
   | { type: "SET_DASHBOARD_URL"; url: string }
-  | { type: "GRANT_PERMISSIONS"; kind: "pages" | "tabs" | "provider" }
+  | { type: "GRANT_PERMISSIONS"; kind: "pages" | "tabs" | "provider" | "devices"; camera?: boolean; microphone?: boolean; returnHash?: string }
   | { type: "INSTALL_SPEECH_PACK" }
   | { type: "TRANSCRIPT"; text: string; final: boolean }
   | { type: "TRANSCRIBE_AUDIO"; audio: number[]; mime: string; language: string }
   | { type: "GET_CALIBRATION"; mode: PointerMode }
   | { type: "SAVE_CALIBRATION"; mode: PointerMode; calibration: Calibration }
-  | { type: "OFFSCREEN_COMMAND"; command: "start" | "pause" | "resume" | "stop" | "calibrate" | "settings" | "install-speech"; settings?: Settings }
+  | { type: "OFFSCREEN_COMMAND"; command: "start" | "pause" | "resume" | "stop" | "calibrate" | "settings" | "install-speech" | "ui-start" | "ui-stop" | "narration-start" | "narration-end"; settings?: Settings }
   | { type: "SAVE_SETTINGS"; settings: Settings }
   | { type: "OPEN_CONTROLLER"; tabId?: number }
   | { type: "START"; tabId?: number }

@@ -51,6 +51,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
     tabs: {
       get: vi.fn(async (id: number) => ({
         id,
+        active: true,
         windowId: 1,
         index: id - 1,
         url: "https://example.test/",
@@ -92,6 +93,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
     },
     windows: {
       create: vi.fn(async () => ({ tabs: [{ id: 99 }] })),
+      get: vi.fn(async () => ({focused:true})),
       update: vi.fn(async () => ({})),
     },
     commands: { onCommand: event() },
@@ -121,6 +123,31 @@ afterEach(() => {
 });
 
 describe("background command and permission boundary", () => {
+  it("keeps setup speech in the active trusted dashboard and drops it after navigation", async () => {
+    const {browser,send}=await setup();
+    await send({type:"STOP"});await send({type:"OPEN_DASHBOARD"});
+    browser.tabs.get.mockImplementation(async(id)=>({id,windowId:1,index:0,url:id===3?defaults.dashboardUrl:"https://example.test/",title:"Dashboard",active:true}));
+    const dashboardSender={id:"handsfree-test",tab:{id:3} as chrome.tabs.Tab,url:defaults.dashboardUrl};
+    expect(await send({type:"UI_VOICE",enabled:true},dashboardSender)).toMatchObject({ok:false});
+    await send({type:"MEDIA_PERMISSIONS",camera:"prompt",microphone:"granted"});
+    expect(await send({type:"UI_VOICE",enabled:true},dashboardSender)).toMatchObject({ok:true});
+    browser.tabs.sendMessage.mockClear();
+    await send({type:"UI_HEARD",text:"choose voice"});
+    expect(browser.tabs.sendMessage).toHaveBeenCalledExactlyOnceWith(3,{type:"UI_HEARD",text:"choose voice"});
+    expect(await send({type:"GET_STATE"})).toMatchObject({running:false});
+    browser.tabs.get.mockResolvedValue({id:3,windowId:1,index:0,url:"https://example.test/",title:"Other page",active:true});
+    browser.tabs.sendMessage.mockClear();await send({type:"UI_HEARD",text:"new tab"});
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+  it("reuses a permission window and passes only the chosen devices",async()=>{
+    const {browser,send}=await setup({settings:{voiceOnly:true}});
+    await send({type:"GRANT_PERMISSIONS",kind:"devices",camera:false,microphone:true,returnHash:"#setup"});
+    expect(browser.windows.create).toHaveBeenCalledWith(expect.objectContaining({url:expect.stringContaining("camera=false&microphone=true")}));
+    browser.tabs.query.mockResolvedValue([{id:99,windowId:9,index:0,url:"chrome-extension://handsfree-test/permissions.html?kind=devices",title:"Browser access"}]);
+    await send({type:"GRANT_PERMISSIONS",kind:"tabs"});
+    expect(browser.windows.create).toHaveBeenCalledTimes(1);
+    expect(browser.tabs.update).toHaveBeenCalledWith(99,expect.objectContaining({url:expect.stringContaining("kind=tabs")}));
+  });
   it("switches only to a selected pointer without resuming a paused session", async () => {
     const { send } = await setup({ settings: { enabledInputs: ["voice", "face", "hand"] } });
     await send({ type: "PAUSE" });

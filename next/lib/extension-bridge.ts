@@ -4,6 +4,7 @@ type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => vo
 const pending = new Map<string, Pending>();
 const subscribers = new Set<(state: SessionState) => void>();
 const readySubscribers = new Set<() => void>();
+const voiceSubscribers = new Set<(text: string) => void>();
 let listening = false;
 function listen() {
   if (listening || typeof window === "undefined") return;
@@ -16,6 +17,9 @@ function listen() {
     if (event.data?.channel === "handsfree-dashboard-state") {
       for (const callback of subscribers) callback(event.data.state);
     }
+    if (event.data?.channel === "handsfree-dashboard-heard" && typeof event.data.text === "string") {
+      for (const callback of voiceSubscribers) callback(event.data.text);
+    }
     if (event.data?.channel === "handsfree-dashboard-response") {
       const entry = pending.get(event.data.id);
       if (!entry) return;
@@ -27,6 +31,10 @@ function listen() {
     }
   });
 }
+export function subscribeVoice(callback: (text: string) => void) {
+  listen(); voiceSubscribers.add(callback);
+  return () => { voiceSubscribers.delete(callback); };
+}
 export function request<T = unknown>(message: Message): Promise<T> {
   listen();
   return new Promise((resolve, reject) => {
@@ -34,7 +42,7 @@ export function request<T = unknown>(message: Message): Promise<T> {
     const timer = setTimeout(() => {
       pending.delete(id);
       reject(new Error("Open this dashboard from the Handsfree popup to connect the extension."));
-    }, message.type === "HEARD" ? 25000 : 8000);
+    }, message.type === "HEARD" || message.type === "UI_SPEAK" ? 25000 : 8000);
     pending.set(id, { resolve: value => resolve(value as T), reject, timer });
     window.postMessage({ channel: "handsfree-dashboard-request", id, message }, location.origin);
   });

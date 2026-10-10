@@ -86,6 +86,18 @@ it("releases speech when voice is deselected and starts it when selected again",
  const send=vi.mocked(chrome.runtime.sendMessage);send.mockClear();old.heard("new tab");await flush();expect(send).not.toHaveBeenCalledWith(expect.objectContaining({type:"HEARD"}));
  dispatch("settings",{...defaults,enabledInputs:["voice","face"]});await flush();expect(mocks.speech).toHaveLength(2);
 });
+it("routes setup speech without starting tracking or sending page transcripts",async()=>{
+ mocks.fail=false;dispatch("ui-start");await flush();
+ expect(mocks.trackers).toHaveLength(0);const send=vi.mocked(chrome.runtime.sendMessage);send.mockClear();
+ mocks.speech[0].heard("choose voice");await flush();expect(send).toHaveBeenCalledWith({type:"UI_HEARD",text:"choose voice"});
+ expect(send).not.toHaveBeenCalledWith(expect.objectContaining({type:"TRANSCRIPT"}));
+ dispatch("ui-stop");send.mockClear();mocks.speech[0].heard("new tab");await flush();expect(send).not.toHaveBeenCalled();
+});
+it("releases a setup microphone when its dashboard lease expires",async()=>{
+ vi.useFakeTimers();mocks.fail=false;dispatch("ui-start");await flush();const speech=mocks.speech[0];
+ await vi.advanceTimersByTimeAsync(15001);expect(speech.stop).toHaveBeenCalled();
+ const send=vi.mocked(chrome.runtime.sendMessage);send.mockClear();speech.heard("next");await flush();expect(send).not.toHaveBeenCalled();vi.useRealTimers();
+});
 it("suspends recognition during feedback and ignores echo before resuming", async () => {
  vi.useFakeTimers();mocks.fail=false;
  let utterance:any;

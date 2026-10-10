@@ -16,6 +16,8 @@ const video = document.querySelector("#camera") as HTMLVideoElement;
 let lastStatus = 0;
 let feedbackGeneration = 0;
 let feedbackSpeaking = false;
+let uiListening = false;
+let uiLease: ReturnType<typeof setTimeout> | undefined;
 function status(patch: Record<string, unknown>) {
   const telemetry = Object.keys(patch).every(key => ["confidence", "fps", "latencyMs"].includes(key));
   if (telemetry && performance.now() - lastStatus < 500) return;
@@ -23,7 +25,9 @@ function status(patch: Record<string, unknown>) {
   void send({ type: "SET_STATE", patch }).catch(() => {});
 }
 function heard(text: string) {
-  if (desired === "stopped" || feedbackSpeaking) return;
+  if (feedbackSpeaking) return;
+  if (uiListening) { void send({ type: "UI_HEARD", text }).catch(() => {}); return; }
+  if (desired === "stopped") return;
   if (desired === "running") void send({ type: "TRANSCRIPT", text, final: true }).catch(() => {});
   void send({ type: "HEARD", text }).catch(() => {});
 }
@@ -35,10 +39,10 @@ function stopVoice() {
 }
 async function beginVoice(token: number) {
   stopVoice();
-  if (!settings || !voiceEnabled(settings)) { status({ voice: "Off, voice input not selected" }); return; }
+  if (!settings || (!uiListening && !voiceEnabled(settings))) { status({ voice: "Off, voice input not selected" }); return; }
   const voiceToken = voiceGeneration;
   const voiceSettings = { ...settings };
-  const current = () => token === generation && voiceToken === voiceGeneration && desired !== "stopped";
+  const current = () => token === generation && voiceToken === voiceGeneration && (desired !== "stopped" || uiListening) && !feedbackSpeaking;
   if (!current()) return;
   let fallbackStarting = false;
   const beginFallback = async () => {
@@ -112,6 +116,7 @@ function resume() {
   void beginVoice(generation);
 }
 function stop() {
+  uiListening = false; clearTimeout(uiLease);
   desired = "stopped"; ++generation; ++feedbackGeneration;
   feedbackSpeaking = false; if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
   tracker?.stop(); tracker = null;
@@ -127,7 +132,7 @@ async function calibrate() {
     status({ feedback: "Calibration saved. Return to your webpage and browse.", calibrationProgress: null, calibrationStage: "Ready" });
   } catch (error) { if (current()) status({ feedback: error instanceof Error ? error.message : "Calibration failed. Keep yourself in view and retry.", calibrationProgress: null }); }
 }
-function voiceActive() { return desired !== "stopped"; }
+function voiceActive() { return desired !== "stopped" || uiListening; }
 async function speakFeedback(text: string) {
  if (!settings?.spokenFeedback || desired === "stopped" || !text.trim() || typeof speechSynthesis === "undefined") return;
  const token = ++feedbackGeneration;
@@ -148,6 +153,24 @@ async function speakFeedback(text: string) {
 chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
   if (message.type === "SPEAK_FEEDBACK") { if(message.enabled) void speakFeedback(message.text); respond({ok:true});return; }
   if (message.type !== "OFFSCREEN_COMMAND") return;
+  if (message.command === "ui-start" && message.settings) {
+    const wasListening = uiListening;
+    uiListening = true; settings = message.settings;
+    clearTimeout(uiLease);
+    // A closed dashboard must never leave a setup microphone running.
+    uiLease = setTimeout(() => { uiListening = false; stopVoice(); if (desired !== "stopped") void beginVoice(generation); else status({voice:"Off"}); }, 15000);
+    if (!wasListening && !feedbackSpeaking) void beginVoice(generation);
+  }
+  if (message.command === "ui-stop") {
+    uiListening = false; clearTimeout(uiLease); stopVoice();
+    if (desired !== "stopped" && !feedbackSpeaking) void beginVoice(generation);
+    else status({voice:"Off"});
+  }
+  if (message.command === "narration-start") {
+    ++feedbackGeneration; if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
+    stopVoice(); feedbackSpeaking = true;
+  }
+  if (message.command === "narration-end") { feedbackSpeaking = false; if (voiceActive()) void beginVoice(generation); }
   if (message.command === "start" && message.settings) void start(message.settings);
   if (message.command === "stop") stop();
   if (message.command === "pause") pause();

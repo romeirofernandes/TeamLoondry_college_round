@@ -1,36 +1,56 @@
 import { installLocalSpeech } from "./speech";
 import { send, type PermissionState, type Settings } from "./shared";
+
 const root = document.querySelector("#permissions")!;
-root.innerHTML = `<section class="permission-setup"><img src="brand/handsfree-symbol.svg" width="36" height="36" alt="Handsfree"><h1>Browser access</h1><p>These states come from Chrome. Grant only the access you want to use.</p>
-<div class="permission-row"><div><label for="pages">Webpage control</label><p>Point, click and control embedded players.</p></div><input type="checkbox" role="switch" id="pages"><span id="pages-state">Checking</span></div>
-<div class="permission-row"><div><label for="tabs">Tab commands</label><p>Switch tabs and choose tabs by title.</p></div><input type="checkbox" role="switch" id="tabs"><span id="tabs-state">Checking</span></div>
-<div class="permission-row"><div><label for="camera">Camera</label><p>Face and hand tracking.</p></div><input type="checkbox" role="switch" id="camera" disabled aria-describedby="device-help"><span id="camera-state">Checking</span></div>
-<div class="permission-row"><div><label for="microphone">Microphone</label><p>Commands, dictation and spoken resume.</p></div><input type="checkbox" role="switch" id="microphone" disabled aria-describedby="device-help"><span id="microphone-state">Checking</span></div>
-<p id="device-help">Device switches show Chrome's grant. Enable below; revoke camera or microphone in Chrome's site settings.</p>
-<div class="permission-actions"><button id="media">Enable camera and microphone</button><button id="providers">Enable Jev access</button><button id="speech">Install local speech</button></div>
-<p id="status" role="status" aria-live="polite"></p></section>`;
+const query = new URLSearchParams(location.search);
+const kind = query.get("kind") || "devices";
+const selectedCamera = query.get("camera") !== "false";
+const selectedMicrophone = query.get("microphone") !== "false";
+root.innerHTML = `<main class="permission-setup">
+<img src="brand/handsfree-symbol.svg" width="36" height="36" alt="Handsfree">
+<p class="permission-eyebrow">A little setup, at your pace</p><h1>Browser access</h1>
+<p>Choose the access you need. Your place in setup is saved.</p>
+<div class="permission-row" data-kind="pages"><div><label for="pages">Webpage control</label><p>Use Handsfree on websites you visit.</p></div><input type="checkbox" role="switch" id="pages"><span id="pages-state">Checking</span></div>
+<div class="permission-row" data-kind="tabs"><div><label for="tabs">Tab commands</label><p>Find and switch tabs by speaking.</p></div><input type="checkbox" role="switch" id="tabs"><span id="tabs-state">Checking</span></div>
+<section class="permission-device" data-kind="camera"><h2>Camera</h2><p>Needed for head or hand movement.</p><p id="camera-state">Checking</p><button id="camera">Allow camera</button></section>
+<section class="permission-device" data-kind="microphone"><h2>Microphone</h2><p>Needed for voice commands.</p><p id="microphone-state">Checking</p><button id="microphone">Allow microphone</button></section>
+<section class="permission-device" data-kind="provider"><h2>Natural language commands</h2><p>Optional access for interpreting commands. Fixed commands work without it.</p><p id="provider-state">Checking</p><button id="providers">Allow command service</button></section>
+<section class="permission-device" data-kind="speech"><h2>On-device speech</h2><p>Download your selected language for speech recognition that stays on this device.</p><button id="speech">Install local speech</button></section>
+<p class="permission-device-help">Chrome stores device permissions. To revoke access, use Chrome's site settings for this extension.</p>
+<p id="status" role="status"></p>
+<div class="permission-actions"><button id="read">Read this step aloud</button><button id="quiet">Stop reading</button><button id="return" class="permission-primary">Return to Handsfree</button></div>
+</main>`;
 const status = root.querySelector("#status")!;
 const devices: Partial<Record<"camera" | "microphone", PermissionStatus>> = {};
 let updating = false;
-function render(id: string, enabled: boolean, label: string) {
-  (root.querySelector(`#${id}`) as HTMLInputElement).checked = enabled;
-  root.querySelector(`#${id}-state`)!.textContent = label;
+for (const section of root.querySelectorAll<HTMLElement>("[data-kind]")) {
+  const row = section.dataset.kind;
+  section.hidden = kind === "devices" ? !(row === "camera" && selectedCamera || row === "microphone" && selectedMicrophone)
+    : row !== kind;
+}
+function permissionLabel(value: string) {
+  return value === "granted" ? "Allowed" : value === "denied" ? "Blocked. Update access in Chrome, then retry." : value === "prompt" ? "Not requested" : "Permission unknown. Choose Allow to check.";
 }
 async function refresh() {
   const state = await send<PermissionState>({ type: "GET_PERMISSIONS" });
-  for (const id of ["pages", "tabs"] as const) render(id, state[id], state[id] ? "Enabled" : "Not enabled");
+  for (const id of ["pages", "tabs"] as const) {
+    (root.querySelector(`#${id}`) as HTMLInputElement).checked = state[id];
+    root.querySelector(`#${id}-state`)!.textContent = state[id] ? "Allowed" : "Not allowed";
+  }
   for (const id of ["camera", "microphone"] as const) {
     const value = devices[id]?.state ?? "unknown";
-    render(id, value === "granted", value === "granted" ? "Enabled" : value === "denied" ? "Blocked" : value === "prompt" ? "Not enabled" : "Check in Chrome");
+    root.querySelector(`#${id}-state`)!.textContent = permissionLabel(value);
+    (root.querySelector(`#${id}`) as HTMLButtonElement).hidden = value === "granted";
   }
-  (root.querySelector("#providers") as HTMLButtonElement).textContent = state.provider ? "Jev access enabled" : "Enable Jev access";
+  root.querySelector("#provider-state")!.textContent = state.provider ? "Allowed" : "Not allowed";
+  (root.querySelector("#providers") as HTMLButtonElement).hidden = state.provider;
   await send({ type: "MEDIA_PERMISSIONS", camera: devices.camera?.state ?? "unknown", microphone: devices.microphone?.state ?? "unknown" });
 }
 function button(id: string, action: () => Promise<string>) {
   const element = root.querySelector(`#${id}`) as HTMLButtonElement;
   element.addEventListener("click", () => {
     element.disabled = true;
-    void action().then(text => { status.textContent = text; }, error => { status.textContent = error instanceof Error ? error.message : "Permission failed. Retry." })
+    void action().then(text => { status.textContent = text; }, error => { status.textContent = error instanceof Error ? error.message : "Access could not be updated. Retry." })
       .finally(async () => { element.disabled = false; await refresh().catch(() => {}); });
   });
 }
@@ -45,18 +65,22 @@ for (const id of ["pages", "tabs"] as const) {
       .finally(async () => { await refresh().catch(() => {}); updating = false; toggle.disabled = false; });
   });
 }
-button("media", async () => {
-  const results = await Promise.allSettled(["video", "audio"].map(kind => navigator.mediaDevices.getUserMedia({ [kind]: true }).then(stream => stream.getTracks().forEach(track => track.stop()))));
-  return results.every(result => result.status === "fulfilled") ? "Camera and microphone enabled. Return to the dashboard and start." : "A device was blocked. Allow it in Chrome's site settings, then retry.";
+for (const id of ["camera", "microphone"] as const) button(id, async () => {
+  const stream = await navigator.mediaDevices.getUserMedia(id === "camera" ? {video:true} : {audio:true});
+  stream.getTracks().forEach(track => track.stop());
+  return `${id === "camera" ? "Camera" : "Microphone"} allowed. Return to Handsfree when you're ready.`;
 });
-button("providers", async () => await chrome.permissions.request({ origins: ["https://api.typesafe.ai/*", "https://openrouter.ai/*"] }) ? "Jev access enabled." : "Jev access denied. Local commands still work.");
-button("speech", async () => { const settings = await send<Settings>({ type: "GET_SETTINGS" }); await installLocalSpeech(settings.language); return "Local language pack ready. Restart the session."; });
+button("providers", async () => await chrome.permissions.request({ origins: ["https://api.typesafe.ai/*", "https://openrouter.ai/*"] }) ? "Command service allowed." : "Access was not granted. Fixed commands are still available.");
+button("speech", async () => { const settings = await send<Settings>({ type: "GET_SETTINGS" }); await installLocalSpeech(settings.language); return "Language ready. Return to Handsfree to start listening."; });
+button("read", async () => { await send({type:"UI_SPEAK",text:root.querySelector("h1")!.textContent + ". " + [...root.querySelectorAll<HTMLElement>("[data-kind]")].filter(row=>!row.hidden).map(row=>row.innerText).join(". ") + ". Choose Return to Handsfree when ready."}); return "Reading finished."; });
+button("quiet", async () => { await send({type:"UI_SPEAK",text:""}); return "Reading stopped."; });
+button("return", async () => { await send({type:"UI_SPEAK",text:""}); await send({ type: "OPEN_DASHBOARD", hash: query.get("return") === "#setup" ? "#setup" : "#preferences" }); window.close(); return "Returning to Handsfree."; });
 void Promise.all(["camera", "microphone"].map(async name => {
   try {
     const permission = await navigator.permissions.query({ name: name as PermissionName });
     devices[name as "camera" | "microphone"] = permission;
     permission.addEventListener("change", () => void refresh().catch(() => {}));
-  } catch { /* Chrome may not expose device permission queries. */ }
+  } catch { /* A user can still choose Allow when Chrome cannot expose this state. */ }
 })).then(refresh).catch(() => { status.textContent = "Could not read Chrome permissions. Reload the extension and retry."; });
 chrome.permissions.onAdded.addListener(() => void refresh().catch(() => {}));
 chrome.permissions.onRemoved.addListener(() => void refresh().catch(() => {}));
