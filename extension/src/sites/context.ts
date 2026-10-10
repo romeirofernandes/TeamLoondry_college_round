@@ -11,6 +11,7 @@ export class SiteContext {
   private nodes = new Map<string, HTMLElement>();
   private counter = 0;
   private dirty = true;
+  private observer: MutationObserver | null = null;
   private lastInspectedUrl = "";
   private cachedSnapshot: SiteSnapshot | null = null;
   private readonly markDirty = () => {
@@ -20,7 +21,7 @@ export class SiteContext {
     if (typeof document === "undefined" || typeof window === "undefined")
       return;
     if (document.documentElement && typeof MutationObserver !== "undefined") {
-      const observer = new MutationObserver(this.markDirty);
+      const observer = this.observer = new MutationObserver(this.markDirty);
       observer.observe(document.documentElement, {
         childList: true,
         subtree: true,
@@ -65,6 +66,7 @@ export class SiteContext {
     this.dirty = true;
   }
   inspect(): SiteSnapshot | null {
+    if (this.observer?.takeRecords().length) this.dirty = true;
     const url = this.url(),
       site = siteForUrl(url);
     if (!this.dirty && this.lastInspectedUrl === url)

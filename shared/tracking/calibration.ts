@@ -15,16 +15,36 @@ export function calibrationFromPoses(poses: Record<CalibrationStage, RawPoint[]>
   const neutralX = median(poses.center.map(p => p.x)), neutralY = median(poses.center.map(p => p.y));
   const noiseX = noise(poses.center.map(p => Math.abs(p.x - neutralX)));
   const noiseY = noise(poses.center.map(p => Math.abs(p.y - neutralY)));
-  // Camera coordinates are mirrored horizontally for the pointer.
-  const left = median(poses.left.map(p => p.x)) - neutralX;
-  const right = neutralX - median(poses.right.map(p => p.x));
-  const up = neutralY - median(poses.up.map(p => p.y));
-  const down = median(poses.down.map(p => p.y)) - neutralY;
-  for (const [direction, amount, jitter] of [["left", left, noiseX], ["right", right, noiseX], ["up", up, noiseY], ["down", down, noiseY]] as const) {
+  const leftDelta = median(poses.left.map(p => p.x)) - neutralX;
+  const rightDelta = median(poses.right.map(p => p.x)) - neutralX;
+  const upDelta = median(poses.up.map(p => p.y)) - neutralY;
+  const downDelta = median(poses.down.map(p => p.y)) - neutralY;
+  const measurements = [
+    ["left", Math.abs(leftDelta), noiseX],
+    ["right", Math.abs(rightDelta), noiseX],
+    ["up", Math.abs(upDelta), noiseY],
+    ["down", Math.abs(downDelta), noiseY],
+  ] as const;
+  for (const [direction, amount, jitter] of measurements) {
     if (amount < 0.008 || amount <= jitter * 3)
       throw new Error(`The ${direction} pose was too close to center or unsteady. Use a small comfortable ${mode === "face" ? "head movement" : "palm movement"} in the shown direction and retry.`);
   }
-  return { neutralX, neutralY, rangeX: (left + right) / 2, rangeY: (up + down) / 2,
-    left: Math.max(left, noiseX * 12), right: Math.max(right, noiseX * 12),
-    up: Math.max(up, noiseY * 12), down: Math.max(down, noiseY * 12) };
+  if (Math.sign(leftDelta) === Math.sign(rightDelta) || Math.sign(upDelta) === Math.sign(downDelta))
+    throw new Error("The directional captures did not move consistently. Follow each direction prompt and retry.");
+  const left = Math.abs(leftDelta), right = Math.abs(rightDelta);
+  const up = Math.abs(upDelta), down = Math.abs(downDelta);
+  // Store per-camera-side ranges. A mirrored preview/model path can reverse
+  // either axis, so keep the intended movement direction separately.
+  return {
+    neutralX,
+    neutralY,
+    rangeX: (left + right) / 2,
+    rangeY: (up + down) / 2,
+    left: Math.max(leftDelta > 0 ? left : right, noiseX * 12),
+    right: Math.max(leftDelta < 0 ? left : right, noiseX * 12),
+    up: Math.max(downDelta < 0 ? down : up, noiseY * 12),
+    down: Math.max(downDelta > 0 ? down : up, noiseY * 12),
+    invertX: leftDelta < 0,
+    invertY: downDelta < 0,
+  };
 }

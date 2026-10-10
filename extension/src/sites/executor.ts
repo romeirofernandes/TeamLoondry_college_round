@@ -852,11 +852,16 @@ export class SiteExecutor {
         getSelection()?.addRange(range);
         insertText(input, a.query);
       }
+      let signature = "", stableSince = performance.now();
+      const started = stableSince;
       const settled = await until(() => {
         const chats =
           this.context.inspect()?.entities.filter((e) => e.kind === "chat") ||
           [];
+        const next = chats.map(e => e.id + ":" + e.label).join("|");
+        if(next !== signature){signature=next;stableSince=performance.now();}
         return (
+          performance.now()-started >= 400 && performance.now()-stableSince >= 200 &&
           !elements('#side [aria-busy="true"],#pane-side [aria-busy="true"]')
             .length &&
           chats.some((e) => norm(e.label).includes(norm(a.query!)))

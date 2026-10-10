@@ -80,7 +80,7 @@ describe("site contract", () => {
       "https://evil.test/?site=netflix.com",
       "http://github.com/",
       "https://www.amazon.com/",
-      "https://youtube.com/",
+      "https://youtube.com.evil.test/",
     ])
       expect(siteForUrl(url)).toBeNull();
   });

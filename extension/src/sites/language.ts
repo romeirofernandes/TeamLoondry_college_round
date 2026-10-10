@@ -122,6 +122,7 @@ function argsFor(
   text: string,
 ): SiteArgs | null {
   const args: SiteArgs = {};
+  if(spec.id === "CH07" && text === "list conversations") return {mode:"list"};
   if (spec.id === "W08" && /^(?:find|select)/.test(text)) args.mode = "select";
   if (spec.extract === "query") {
     if (spec.id === "MAP04") {

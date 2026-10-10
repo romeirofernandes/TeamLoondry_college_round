@@ -2,7 +2,7 @@ import type { Adapter } from "./types";
 export const whatsapp: Adapter = {
   site: "whatsapp",
   scope: "#main",
-  current: '#main header [data-testid="conversation-info-header-chat-title"]',
+  current: '#main header [data-testid="conversation-info-header-chat-title"],#main header [title]:not([data-testid="conversation-info-header-chat-title"]):not([data-testid="conversation-info-header-chat-title"] *)',
   currentKind: "chat",
   entities: {
     chat: '#pane-side [role="row"]',

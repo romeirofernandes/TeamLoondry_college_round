@@ -68,7 +68,7 @@ export const chatgpt: Adapter = {
     },
     {
       id: "CH07",
-      pattern: /^open conversation (.+)$/,
+      pattern: /^(?:list conversations|open conversation (.+))$/,
       extract: "query",
       operation: { kind: "entities", entity: "chat" },
     },
