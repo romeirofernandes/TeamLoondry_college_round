@@ -70,6 +70,7 @@ beforeEach(async () => {
 afterEach(() => {
   runtime.destroy();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function find(id: string) {
@@ -257,11 +258,15 @@ describe("page interactions", () => {
     time = 1000;
     await runtime.handle(edgePointer());
     expect(window.scrollBy).toHaveBeenCalledTimes(1);
+    expect((window.scrollBy as ReturnType<typeof vi.fn>).mock.calls[0][0].top).toBeLessThan(60);
+    time = 1016;
+    runtime.tick();
+    expect(window.scrollBy).toHaveBeenCalledTimes(2);
     time = 1700;
     const lost = edgePointer();
     lost.sample.confidence = 0;
     await runtime.handle(lost);
-    expect(window.scrollBy).toHaveBeenCalledTimes(1);
+    expect(window.scrollBy).toHaveBeenCalledTimes(2);
   });
   it("dictates literal command phrases, preserves edits, and stops on focus changes", async () => {
     const field = document.getElementById("text") as HTMLInputElement;
@@ -505,5 +510,173 @@ describe('literal ranking boundaries', () => {
     for (const id of ['later-word', 'substring-only', 'private-label']) document.getElementById(id)!.addEventListener('click', () => clicked.push(id));
     await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'click-target', query: 'support' } });
     expect(clicked).toEqual(['later-word']);
+  });
+});
+
+describe("thumbnail and title snapping", () => {
+  function card() {
+    document.body.insertAdjacentHTML("beforeend", '<ytd-rich-item-renderer id="video-card"><ytd-thumbnail id="thumb-wrap"><a id="thumb" href="/watch?v=one"><img id="preview"></a></ytd-thumbnail><a id="title" href="/watch?v=one">Video title</a><a id="channel" href="/channel/other">Channel</a></ytd-rich-item-renderer>');
+    const thumb = document.getElementById("thumb")!;
+    const title = document.getElementById("title")!;
+    const channel = document.getElementById("channel")!;
+    thumb.getBoundingClientRect = () => ({ ...rect(100, 400), width: 300, height: 180, right: 700, bottom: 280 });
+    title.getBoundingClientRect = () => rect(285, 400);
+    channel.getBoundingClientRect = () => rect(330, 400);
+    return { thumb, title, channel };
+  }
+  it("resolves an exposed thumbnail wrapper to its actual descendant link", () => {
+    const { thumb } = card();
+    const hit = document.elementFromPoint as ReturnType<typeof vi.fn>;
+    hit.mockReturnValue(document.getElementById("thumb-wrap"));
+    expect(new PageTargets().snap(600, 200)).toBe(thumb);
+  });
+  it("keeps equivalent thumbnail/title links stable within one card and preserves unrelated controls", () => {
+    const { thumb, title, channel } = card();
+    const targets = new PageTargets();
+    const hit = document.elementFromPoint as ReturnType<typeof vi.fn>;
+    hit.mockImplementation((_x: number, y: number) => y < 280 ? thumb : y < 325 ? title : channel);
+    const selected = targets.snap(500, 200);
+    expect(selected).toBe(thumb);
+    expect(targets.snap(500, 300, selected)).toBe(thumb);
+    expect(targets.snap(500, 340, selected)).toBe(channel);
+  });
+  it("blocks a covered thumbnail before the visibility index has delivered entries", () => {
+    const { thumb, title } = card();
+    const cover = document.createElement("div");
+    document.body.append(cover);
+    vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() {} });
+    Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: vi.fn(() => [cover, thumb, document.body]) });
+    const hit = document.elementFromPoint as ReturnType<typeof vi.fn>;
+    hit.mockImplementation((_x: number, y: number) => y < 280 ? cover : title);
+    const targets = new PageTargets();
+    const selected = targets.snap(500, 270);
+    targets.destroy();
+    delete (document as unknown as Record<string, unknown>).elementsFromPoint;
+    expect(selected).toBeNull();
+  });
+  it("retains one dwell timer and activation latch when crossing thumbnail and title", async () => {
+    const { thumb, title } = card();
+    const clicked = vi.fn((event: Event) => event.preventDefault());
+    thumb.addEventListener("click", clicked);
+    title.addEventListener("click", clicked);
+    const hit = document.elementFromPoint as ReturnType<typeof vi.fn>;
+    hit.mockImplementation((_x: number, y: number) => y < 280 ? thumb : title);
+    const point = (y: number) => ({ type: "POINTER", sample: { ...(pointer() as Extract<Message, { type: "POINTER" }>).sample, x: 500 / innerWidth, y: y / innerHeight } } as Message);
+    await runtime.handle(point(200));
+    time = 400;
+    await runtime.handle(point(300));
+    expect(clicked).not.toHaveBeenCalled();
+    time = 800;
+    await runtime.handle(point(200));
+    expect(clicked).toHaveBeenCalledOnce();
+    time = 1200;
+    await runtime.handle(point(300));
+    expect(clicked).toHaveBeenCalledOnce();
+  });
+  it("does not select covered thumbnail links or reuse an occluded equivalent target", () => {
+    const { thumb, title } = card();
+    const cover = document.createElement("div");
+    document.body.append(cover);
+    const hit = document.elementFromPoint as ReturnType<typeof vi.fn>;
+    hit.mockImplementation((_x: number, y: number) => y < 280 ? cover : title);
+    const targets = new PageTargets();
+    expect(targets.snap(500, 270)).toBeNull();
+    expect(targets.snap(500, 300, thumb)).toBe(title);
+  });
+});
+
+describe("smooth scrolling", () => {
+  const scroll = () => runtime.handle({ type: "PAGE_ACTION", intent: { type: "scroll", direction: "down" } });
+  const distance = () => (window.scrollBy as ReturnType<typeof vi.fn>).mock.calls.reduce((sum, call) => sum + call[0].top, 0);
+  it("animates voice scrolling without any calibrated or confident pointer in small frame increments", async () => {
+    await scroll();
+    expect(distance()).toBe(0);
+    for (time = 16; time <= 480; time += 16) runtime.tick();
+    expect(distance()).toBeCloseTo(Math.max(200, innerHeight * 0.65));
+    const calls = (window.scrollBy as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.length).toBeGreaterThan(15);
+    expect(calls.every(call => call[0].top > 0 && call[0].top < 80)).toBe(true);
+  });
+  it("lets an explicit opposite voice scroll take priority over a held edge", async () => {
+    const edge = () => ({ type: "POINTER", sample: { ...(pointer() as Extract<Message, { type: "POINTER" }>).sample, y: 0.999 } } as Message);
+    await runtime.handle(edge());
+    time = 500;
+    await runtime.handle(edge());
+    time = 1000;
+    await runtime.handle(edge());
+    const before = distance();
+    await runtime.handle({ type: "PAGE_ACTION", intent: { type: "scroll", direction: "up" } });
+    for (time = 1016; time < 1400; time += 16) runtime.tick();
+    expect(distance()).toBeLessThan(before);
+  });
+  it("scales voice distance with scrollSensitivity and uses immediate scrolling for reduced motion", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    await runtime.handle({ type: "PAGE_STATE", running: true, paused: false, dictating: false, settings: { ...defaults, scrollSensitivity: 2 } });
+    await scroll();
+    expect(distance()).toBeCloseTo(Math.max(200, innerHeight * 0.65) * 2);
+    time = 100;
+    runtime.tick();
+    expect(window.scrollBy).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+  it("continues an intentional voice scroll through tracking loss and cancels it on pause", async () => {
+    await runtime.handle(pointer());
+    await scroll();
+    time = 16;
+    runtime.tick();
+    const moved = distance();
+    await runtime.handle(pointer(0));
+    time = 100;
+    runtime.tick();
+    expect(distance()).toBeGreaterThan(moved);
+    const afterLoss = distance();
+    await scroll();
+    await runtime.handle({ type: "PAGE_STATE", running: true, paused: true, dictating: false, settings: { ...defaults } });
+    time = 200;
+    runtime.tick();
+    expect(distance()).toBe(afterLoss);
+  });
+  it("scrolls the nearest available container and falls back to the page at its boundary", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    const pane = document.createElement("section");
+    pane.style.overflowY = "auto";
+    const button = document.getElementById("button")!;
+    pane.append(button);
+    document.body.append(pane);
+    Object.defineProperties(pane, { scrollHeight: { value: 2000 }, clientHeight: { value: 300 } });
+    pane.scrollBy = vi.fn();
+    await runtime.handle(pointer());
+    await scroll();
+    expect(pane.scrollBy).toHaveBeenCalledWith(expect.objectContaining({ top: Math.max(200, innerHeight * 0.65) }));
+    expect(window.scrollBy).not.toHaveBeenCalled();
+    pane.scrollTop = 1700;
+    await scroll();
+    expect(window.scrollBy).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+  it("stops continuous edge motion after leaving the edge or pausing", async () => {
+    const edge = () => ({ type: "POINTER", sample: { ...(pointer() as Extract<Message, { type: "POINTER" }>).sample, y: 0.999 } } as Message);
+    await runtime.handle(edge());
+    time = 500;
+    await runtime.handle(edge());
+    time = 1000;
+    await runtime.handle(edge());
+    const moved = distance();
+    expect(moved).toBeGreaterThan(0);
+    time = 1016;
+    await runtime.handle(pointer());
+    time = 1032;
+    runtime.tick();
+    expect(distance()).toBe(moved);
+    await runtime.handle(edge());
+    time = 1500;
+    await runtime.handle(edge());
+    time = 2000;
+    await runtime.handle(edge());
+    await runtime.handle({ type: "PAGE_STATE", running: true, paused: true, dictating: false, settings: { ...defaults } });
+    const pausedDistance = distance();
+    time = 2100;
+    runtime.tick();
+    expect(distance()).toBe(pausedDistance);
   });
 });

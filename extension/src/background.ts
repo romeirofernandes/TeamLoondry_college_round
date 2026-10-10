@@ -1,5 +1,6 @@
 import {
   defaults,
+  normalizeControlSettings,
   initialState,
   type Message,
   type SessionState,
@@ -45,7 +46,7 @@ const ready = (async () => {
     accessLevel: "TRUSTED_CONTEXTS",
   });
   const local = await chrome.storage.local.get(["settings", "logs", "providers", "speechPreferenceVersion"]);
-  settings = { ...defaults, ...((local.settings as Partial<Settings>) ?? {}) };
+  settings = normalizeControlSettings((local.settings as Partial<Settings>) ?? {});
   if (local.speechPreferenceVersion !== 2) settings.speechMode = "browser";
   settings.groqModel = "qwen/qwen3.8-27b";
   providers = local.providers ?? {};
@@ -585,21 +586,12 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     case "SAVE_SETTINGS": {
       const next = message.settings;
       settings = {
-        ...defaults,
-        ...next,
+        ...normalizeControlSettings(next),
         llmKey: "",
         groqModel: "qwen/qwen3.8-27b",
         jevProvider: next.jevProvider === "typesafe" ? "typesafe" : "openrouter",
         language: next.language === "auto" || /^[a-z]{2,3}(?:-[A-Za-z]{2,4})?$/.test(next.language) ? next.language : "en-US",
         dashboardUrl: settings.dashboardUrl,
-        sensitivity: Math.max(0.2, Math.min(3, Number(next.sensitivity) || 1)),
-        dwellMs: Math.max(400, Math.min(2500, Number(next.dwellMs) || 800)),
-        confidenceThreshold: Math.max(
-          0.5,
-          Math.min(0.95, Number(next.confidenceThreshold) || 0.7),
-        ),
-        speechMode: next.speechMode === "browser" ? "browser" : "local",
-        pointerMode: next.pointerMode === "hand" ? "hand" : "face",
         llmModel: String(next.llmModel || defaults.llmModel).slice(0, 80),
       };
       await chrome.storage.local.set({ settings, speechPreferenceVersion: 2 });

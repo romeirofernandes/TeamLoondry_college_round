@@ -16,7 +16,7 @@ const pageSender = (id: number): chrome.runtime.MessageSender => ({
   url: "https://example.test/",
 });
 
-async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: string } = {}) {
+async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: string; settings?: Record<string, unknown> } = {}) {
   let listener: Listener | undefined;
   let pageDictating = false;
   const event = () => ({ addListener: vi.fn() });
@@ -25,7 +25,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
       local: {
         setAccessLevel: vi.fn(async () => {}),
         get: vi.fn(async () => ({
-          settings: { ...defaults },
+          settings: { ...defaults, ...options.settings },
           providers: { groqKeys: options.key ? [options.key] : [], jevKey: options.jevKey ?? "" },
           logs: [],
         })),
@@ -789,5 +789,25 @@ describe('user tab activation supersedes controlled switching', () => {
     expect(state.targetTabId).toBe(1);
     expect(state.feedback).not.toBe('Switched tab.');
     expect(browser.tabs.sendMessage.mock.calls.some(([id, message]) => id === 2 && message.type === 'PAGE_STATE')).toBe(false);
+  });
+});
+
+describe("comfortable control settings", () => {
+  it("normalizes invalid persisted settings and fills old missing fields", async () => {
+    const { send } = await setup({ settings: { sensitivity: "invalid", dwellMs: Infinity, scrollSensitivity: -100, cursorStyle: "unknown", edgeScroll: "false", dwellEnabled: null } });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ sensitivity: 1, dwellMs: 800, scrollSensitivity: 0.2, cursorStyle: "circle", edgeScroll: true, dwellEnabled: true });
+  });
+  it("persists expanded upper bounds and valid cursor styles", async () => {
+    const { send, browser } = await setup();
+    await send({ type: "SAVE_SETTINGS", settings: { ...defaults, sensitivity: 6, dwellMs: 5000, scrollSensitivity: 3, cursorStyle: "crosshair" } });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ sensitivity: 6, dwellMs: 5000, scrollSensitivity: 3, cursorStyle: "crosshair" });
+    expect(browser.storage.local.set).toHaveBeenCalledWith(expect.objectContaining({ settings: expect.objectContaining({ scrollSensitivity: 3, cursorStyle: "crosshair" }) }));
+    await send({ type: "SAVE_SETTINGS", settings: { ...defaults, sensitivity: 0.2, dwellMs: 400, scrollSensitivity: 0.2, cursorStyle: "spark" } });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ sensitivity: 0.2, dwellMs: 400, scrollSensitivity: 0.2, cursorStyle: "spark" });
+  });
+  it("clamps finite outliers and rejects nonfinite settings on save", async () => {
+    const { send } = await setup();
+    await send({ type: "SAVE_SETTINGS", settings: { ...defaults, sensitivity: 100, dwellMs: -1, scrollSensitivity: NaN, cursorStyle: "bad" } as unknown as typeof defaults });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ sensitivity: 6, dwellMs: 400, scrollSensitivity: 1, cursorStyle: "circle" });
   });
 });

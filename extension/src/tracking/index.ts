@@ -41,13 +41,15 @@ function trackProcessor(): TrackProcessorConstructor | undefined {
     }
   ).MediaStreamTrackProcessor;
 }
-const validCalibration = (value: unknown): value is Calibration => {
+const validCalibration = (value: unknown, mode: PointerMode): value is Calibration => {
   const c = value as Calibration | undefined;
   return (
     !!c &&
     [c.neutralX, c.neutralY, c.rangeX, c.rangeY].every(Number.isFinite) &&
-    c.rangeX > 0.01 &&
-    c.rangeY > 0.01
+    c.neutralX >= 0 && c.neutralX <= 1 &&
+    c.neutralY >= 0 && c.neutralY <= 1 &&
+    (mode === "face" ? c.rangeX >= 0.008 : c.rangeX > 0.01) && c.rangeX <= 1 &&
+    (mode === "face" ? c.rangeY >= 0.008 : c.rangeY > 0.01) && c.rangeY <= 1
   );
 };
 const median = (numbers: number[]) => {
@@ -107,8 +109,8 @@ export class Tracker {
         settings.pointerMode,
       );
       if (token !== this.generation) return;
-      this.calibrated = validCalibration(calibration);
-      if (validCalibration(calibration))
+      this.calibrated = validCalibration(calibration, settings.pointerMode);
+      if (validCalibration(calibration, settings.pointerMode))
         this.filter.setCalibration(calibration);
       else this.filter.reset();
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -430,7 +432,8 @@ export class Tracker {
       if (time - run.start < 2500) run.neutral.push(point);
       else run.range.push(point);
     }
-    const position = this.filter.update(point, time, this.settings);
+    // Calibration and uncalibrated frames must not integrate hidden travel.
+    const position = this.filter.update(run || !this.calibrated ? null : point, time, this.settings);
     this.previous = { x: position.x, y: position.y };
     const sample = {
       ...position,
@@ -468,6 +471,12 @@ export class Tracker {
     this.cancelCalibration("Calibration restarted");
     this.loss();
     const token = this.generation;
+    const neutralInstruction = this.settings.pointerMode === "face"
+      ? "Hold your comfortable neutral position."
+      : "Keep your palm comfortably in frame and hold it still.";
+    const rangeInstruction = this.settings.pointerMode === "face"
+      ? "Make small comfortable turns left, right, up and down. Do not stretch."
+      : "Move your palm left, right, up and down while keeping it in frame.";
     return new Promise((resolve, reject) => {
       const start = performance.now();
       const run: CalibrationRun = {
@@ -481,8 +490,8 @@ export class Tracker {
           onProgress?.(
             Math.min(1, elapsed / 8000),
             elapsed < 2500
-              ? "Hold your comfortable neutral position."
-              : "Move comfortably left, right, up and down.",
+              ? neutralInstruction
+              : rangeInstruction,
           );
           if (elapsed < 8000) return;
           clearInterval(run.timer);
@@ -502,7 +511,7 @@ export class Tracker {
           }
           const neutralX = median(run.neutral.map((p) => p.x)),
             neutralY = median(run.neutral.map((p) => p.y));
-          const rangeX = quantile(
+          let rangeX = quantile(
               run.range.map((p) => Math.abs(p.x - neutralX)),
               0.95,
             ),
@@ -510,13 +519,28 @@ export class Tracker {
               run.range.map((p) => Math.abs(p.y - neutralY)),
               0.95,
             );
-          if (rangeX < 0.025 || rangeY < 0.025) {
+          const minimumRange = this.settings.pointerMode === "face" ? 0.008 : 0.025;
+          if (rangeX < minimumRange || rangeY < minimumRange) {
             reject(
               new Error(
-                "Move a little farther horizontally and vertically, then recalibrate.",
+                this.settings.pointerMode === "face"
+                  ? "Tracking could not distinguish your small turns. Improve lighting and try comfortable turns again."
+                  : "Move your palm horizontally and vertically in frame, then recalibrate.",
               ),
             );
             return;
+          }
+          if (this.settings.pointerMode === "face") {
+            const noiseX = quantile(run.neutral.map(p => Math.abs(p.x - neutralX)), 0.95);
+            const noiseY = quantile(run.neutral.map(p => Math.abs(p.y - neutralY)), 0.95);
+            if (rangeX <= noiseX * 3 || rangeY <= noiseY * 3) {
+              reject(new Error("Neutral tracking was unsteady. Improve lighting, hold still, and retry comfortable small turns."));
+              return;
+            }
+            // Keep measured neutral noise inside the face quiet band without
+            // asking for larger turns or adding another calibration schema.
+            rangeX = Math.max(rangeX, noiseX * 12);
+            rangeY = Math.max(rangeY, noiseY * 12);
           }
           const calibration = { neutralX, neutralY, rangeX, rangeY };
           this.filter.setCalibration(calibration);
@@ -535,7 +559,7 @@ export class Tracker {
         }, 100),
       };
       this.calibrationRun = run;
-      onProgress?.(0, "Hold your comfortable neutral position.");
+      onProgress?.(0, neutralInstruction);
     });
   }
   private cancelCalibration(message: string) {

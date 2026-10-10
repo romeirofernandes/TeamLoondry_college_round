@@ -294,11 +294,50 @@ export class PageTargets {
     const best = Math.max(0, ...ranked.map(target => target.score));
     return best ? ranked.filter(target => target.score === best).map(target => target.id).slice(0, 10) : [];
   }
-  snap(x: number, y: number): HTMLElement | null {
-    const direct = document
-      .elementFromPoint(x, y)
-      ?.closest(interactiveSelector);
-    if (direct && usable(direct)) return direct;
+  // Only semantically bounded cards share target identity; channel links and
+  // buttons inside the same card retain their own activation target.
+  private stable(candidate: HTMLElement, previous: HTMLElement | null): HTMLElement {
+    const cardSelector = "ytd-rich-item-renderer,ytd-video-renderer,ytd-grid-video-renderer,ytd-compact-video-renderer,article,li,[role=article]";
+    if (candidate instanceof HTMLAnchorElement && previous instanceof HTMLAnchorElement &&
+        candidate.href === previous.href && previous.isConnected && usable(previous)) {
+      const card = candidate.closest(cardSelector);
+      if (card && card === previous.closest(cardSelector)) {
+        const box = previous.getBoundingClientRect();
+        const x = Math.max(0, box.left) + (Math.min(innerWidth, box.right) - Math.max(0, box.left)) / 2;
+        const y = Math.max(0, box.top) + (Math.min(innerHeight, box.bottom) - Math.max(0, box.top)) / 2;
+        const hit = document.elementFromPoint(x, y);
+        if (box.right > 0 && box.left < innerWidth && box.bottom > 0 && box.top < innerHeight &&
+            hit && (previous.contains(hit) || this.thumbnailContains(hit, previous))) return previous;
+      }
+    }
+    return candidate;
+  }
+  private thumbnailContains(hit: Element, link: Element): boolean {
+    return hit.matches("ytd-thumbnail,figure,[data-thumbnail]") && hit.contains(link);
+  }
+  snap(x: number, y: number, previous: HTMLElement | null = null): HTMLElement | null {
+    const hit = document.elementFromPoint(x, y);
+    const direct = hit?.closest(interactiveSelector);
+    if (direct && usable(direct)) return this.stable(direct, previous);
+    // Some thumbnail components expose their wrapper in hit testing. Resolve
+    // only real links inside that exposed wrapper and under this point.
+    if (hit?.matches("ytd-thumbnail,figure,[data-thumbnail]")) {
+      for (const link of hit.querySelectorAll("a[href]")) {
+        if (!usable(link)) continue;
+        const box = link.getBoundingClientRect();
+        if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom)
+          return this.stable(link, previous);
+      }
+    }
+    // The intersection index may not have delivered its first entries yet.
+    // Browser hit stacks still identify a covered control directly under this
+    // point, preventing nearby-title snapping through a newly opened layer.
+    if (hit && document.elementsFromPoint?.(x, y).some(layer => {
+      const candidate = layer.closest(interactiveSelector);
+      if (!candidate || !usable(candidate) || candidate.contains(hit)) return false;
+      const box = candidate.getBoundingClientRect();
+      return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+    })) return null;
     let winner: HTMLElement | null = null;
     let distance = 42;
     if ((this.intersection ? this.dirty : true) && performance.now() - this.refreshedAt > 250) {
@@ -350,12 +389,17 @@ export class PageTargets {
         const hitY = Math.max(top + insetY, Math.min(bottom - insetY, y));
         const hit = document.elementFromPoint(hitX, hitY);
         // Geometry alone must not select a control behind a modal or another page layer.
-        if (!hit || (hit !== candidate && !candidate.contains(hit))) continue;
+        if (!hit || (hit !== candidate && !candidate.contains(hit))) {
+          // A covered control under the pointer must not redirect activation to
+          // a nearby exposed title or unrelated control.
+          if (gap === 0) return null;
+          continue;
+        }
         winner = candidate;
         distance = gap;
       }
     }
-    return winner;
+    return winner ? this.stable(winner, previous) : null;
   }
   destroy() {
     this.intersection?.disconnect();

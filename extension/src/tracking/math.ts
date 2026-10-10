@@ -106,7 +106,7 @@ export class PointerFilter {
   private lastRaw: RawPoint | null = null;
   private holdAnchor: RawPoint | null = null;
   private driftSince = 0;
-  private lastTime = 0;
+  private lastTime: number | null = null;
   setCalibration(calibration: Calibration) {
     this.calibration = { ...calibration };
     this.reset();
@@ -117,9 +117,10 @@ export class PointerFilter {
     this.lastRaw = null;
     this.holdAnchor = null;
     this.driftSince = 0;
+    this.lastTime = null;
   }
   update(raw: RawPoint | null, time: number, settings: Settings) {
-    const dt = Math.min(100, Math.max(0, time - this.lastTime));
+    const dt = this.lastTime === null ? 0 : clamp(time - this.lastTime, 0, 100);
     this.lastTime = time;
     if (!raw || raw.confidence < settings.confidenceThreshold) {
       this.reset();
@@ -142,11 +143,14 @@ export class PointerFilter {
     const c = this.calibration;
     let dx = (raw.x - c.neutralX) / c.rangeX,
       dy = (raw.y - c.neutralY) / c.rangeY;
+    // Face rate control needs a quiet neutral band: small landmark noise must
+    // not accumulate travel indefinitely. Hand pointing keeps its original band.
+    const deadZone = settings.pointerMode === "face" ? Math.max(0.12, settings.deadZone) : settings.deadZone;
     const dead = (n: number) =>
-      Math.abs(n) <= settings.deadZone
+      Math.abs(n) <= deadZone
         ? 0
-        : (Math.sign(n) * (Math.abs(n) - settings.deadZone)) /
-          (1 - settings.deadZone);
+        : (Math.sign(n) * (Math.abs(n) - deadZone)) /
+          (1 - deadZone);
     const still = Math.abs(dx) < 0.15 && Math.abs(dy) < 0.15;
     if (still) {
       if (!this.driftSince) this.driftSince = time;
@@ -156,7 +160,20 @@ export class PointerFilter {
         c.neutralY += (raw.y - c.neutralY) * rate;
       }
     } else this.driftSince = 0;
-    this.current = {
+    if (settings.pointerMode === "face") {
+      // Filter direction/speed, then integrate: held turns keep moving and neutral
+      // stops at the current position. Timing is cleared on loss/pause.
+      const velocity = (offset: number, axis: OneEuro) => {
+        const desired = dead(clamp(offset, -1, 1));
+        if (desired === 0) { axis.reset(); return 0; }
+        return axis.update(desired, time);
+      };
+      const speed = 0.65 * settings.sensitivity * dt / 1000;
+      this.current = {
+        x: clamp(this.current.x - velocity(dx, this.horizontal) * speed),
+        y: clamp(this.current.y + velocity(dy, this.vertical) * speed),
+      };
+    } else this.current = {
       x: clamp(
         this.horizontal.update(
           0.5 - dead(dx) * settings.sensitivity * 0.5,
