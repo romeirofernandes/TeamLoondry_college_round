@@ -87,6 +87,7 @@ function Popup() {
     }
   }
   async function start() {
+    const capture=await send<{ok:boolean;error?:string}>({type:"PREPARE_BROWSER_CAPTURE"});if(!capture?.ok)throw new Error(capture?.error||"Desktop handoff failed; capture stayed off.");
     // These prompts belong to this extension origin. A denied camera must not block microphone access.
     const denied: string[] = [];
     for (const kind of ["camera", "microphone"] as const) {
@@ -113,6 +114,7 @@ function Popup() {
 
   return (
     <main className="popup">
+      <div className="desktop-connection"><button onClick={()=>void send<{ok:boolean;error?:string}>({type:"DESKTOP_CONNECT"}).then(r=>setNotice(r?.ok?"Desktop connected. Browser Start will hide its panel.":r?.error||"Connection failed.")).catch(e=>setNotice(String(e)))}>Connect desktop</button><button onClick={()=>void send({type:"DESKTOP_DISCONNECT"}).then(()=>setNotice("Desktop disconnected. Browser can run independently."))}>Disconnect</button></div>
       <header>
         <a
           className="brand"

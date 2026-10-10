@@ -1,0 +1,142 @@
+name: Desktop macOS build, installation and release
+on:
+  push:
+    branches: ["feat/macos-desktop", "main"]
+    paths: ["desktop/**", "shared/**", "extension/**", ".github/workflows/desktop-macos.yml"]
+  pull_request:
+    paths: ["desktop/**", "shared/**", "extension/**", ".github/workflows/desktop-macos.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: handsfree-macos-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  tag-candidate:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bind candidate tag to the source before long-running checks
+        run: |
+          tag="v0.2.0-preview.${{ github.run_number }}"
+          existing=$(git ls-remote origin "refs/tags/$tag" | cut -f1)
+          if [ -n "$existing" ]; then
+            test "$existing" = "$GITHUB_SHA"
+          else
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          fi
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
+      CARGO_TERM_COLOR: always
+      HANDSFREE_RELEASE: "1"
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            extension/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Verify native platform and release versions
+        run: |
+          test "$(uname -m)" = arm64
+          sw_vers
+          node -e 'const fs=require("fs"); const v=require("./package.json").version; if(v!==require("./package-lock.json").version||v!==require("./src-tauri/tauri.conf.json").version||!fs.readFileSync("src-tauri/Cargo.toml","utf8").includes(`version = "${v}"`))throw Error("Release versions differ")'
+      - run: npm ci
+      - run: npx playwright install chromium
+      - run: npm run check
+      - name: Native Rust policy, framing and geometry checks
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: Extension type, transaction, lifecycle and browser checks
+        working-directory: extension
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+          CHROMIUM_PATH=$(node --input-type=module -e 'import {chromium} from "@playwright/test"; console.log(chromium.executablePath())') npm run test:e2e
+      - name: Build the real ARM64 app and DMG
+        run: npm run tauri build -- --target aarch64-apple-darwin --bundles app,dmg
+      - name: Prepare exact candidate and credential-free extension
+        run: |
+          mkdir -p release
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg release/
+          cp scripts/install-app.sh scripts/update-app.sh release/
+          cd ../extension/dist
+          zip -qr ../../desktop/release/handsfree-extension.zip .
+          cd ../../desktop/release
+          shasum -a 256 *.dmg *.sh *.zip > SHA256SUMS
+      - name: Install, update, native bridge, capture handoff and installed WKWebView
+        run: python3 scripts/macos-smoke.py release/Handsfree_0.2.0_aarch64.dmg release/macos-validation.json
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-evidence
+          path: |
+            extension/test-results/
+            desktop/test-results/
+            desktop/release/*.log
+            desktop/release/*.png
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: handsfree-macos-preview
+          path: desktop/release/
+          if-no-files-found: error
+  publish:
+    needs: [macos, tag-candidate]
+    if: github.event_name != 'pull_request'
+    runs-on: macos-26
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: handsfree-macos-preview
+          path: candidate
+      - name: Validate candidate and publish tested preview
+        run: |
+          cd candidate
+          shasum -a 256 -c SHA256SUMS
+          python3 -c 'import json; r=json.load(open("macos-validation.json")); assert all(c["status"]=="passed" for c in r["checks"]); assert len(r["checks"])>=12'
+          tag="v0.2.0-preview.${{ github.run_number }}"
+          gh release create "$tag" --verify-tag --repo "$GITHUB_REPOSITORY" --target '${{ github.sha }}' --draft --prerelease --title "Handsfree $tag · macOS 26 ARM64" --notes-file ../desktop/RELEASE_NOTES.md ./*.dmg ./*.sh ./*.zip ./SHA256SUMS ./macos-validation.json ./*.png
+          asset_id=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | select(.name == "install-app.sh") | .apiUrl | split("/")[-1]')
+          curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" -o "$RUNNER_TEMP/install-handsfree.sh"
+          HANDSFREE_ALLOW_UNSIGNED_MAC=1 HANDSFREE_NO_LAUNCH=1 HANDSFREE_VERSION="$tag" HANDSFREE_INSTALL_DIR="$RUNNER_TEMP/Handsfree network install/Applications" bash "$RUNNER_TEMP/install-handsfree.sh"
+          "$RUNNER_TEMP/Handsfree network install/Applications/Handsfree.app/Contents/MacOS/handsfree-desktop" --diagnostics
+          HANDSFREE_ALLOW_UNSIGNED_MAC=1 HANDSFREE_NO_LAUNCH=1 HANDSFREE_VERSION="$tag" HANDSFREE_INSTALL_DIR="$RUNNER_TEMP/Handsfree network install/Applications" bash "$RUNNER_TEMP/install-handsfree.sh"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          cd ..
+          git fetch origin '${{ github.ref_name }}'
+          if [ "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]; then
+            echo "A newer source revision is queued; its release will update the README."
+            exit 0
+          fi
+          git checkout -B release-readme FETCH_HEAD
+          python3 desktop/scripts/release-readme.py "$tag" "$asset_id"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add README.md desktop/release-info.json
+          git commit -m "docs(release): install and update commands for $tag [skip ci]"
+          git push origin "HEAD:${{ github.ref_name }}"

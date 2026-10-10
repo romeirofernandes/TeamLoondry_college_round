@@ -6,6 +6,7 @@ const root = path.resolve(import.meta.dirname, "..");
 const dist = path.join(root, "dist");
 let providerConfig = { groqKeys: [], jevKey: "", jevKeys: [] };
 try {
+  if(process.env.HANDSFREE_RELEASE==="1")throw Object.assign(new Error("Release excludes local credentials"),{code:"ENOENT"});
   providerConfig = JSON.parse(await readFile(path.join(root, "config/providers.local.json"), "utf8"));
   if (!Array.isArray(providerConfig.groqKeys) || providerConfig.groqKeys.length > 4 || providerConfig.groqKeys.some(key => typeof key !== "string")) throw new Error("Expected at most four Groq keys.");
   if (providerConfig.jevKey !== undefined && typeof providerConfig.jevKey !== "string" || providerConfig.jevKeys !== undefined && (!Array.isArray(providerConfig.jevKeys) || providerConfig.jevKeys.some(key => typeof key !== "string"))) throw new Error("Invalid Jev configuration.");
@@ -19,6 +20,7 @@ await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 const common = {
   bundle: true,
+  alias:{"@mediapipe/tasks-vision":path.join(root,"node_modules/@mediapipe/tasks-vision/vision_bundle.mjs")},
   platform: "browser",
   target: "chrome120",
   logLevel: "info",

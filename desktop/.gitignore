@@ -1,0 +1,8 @@
+/public/assets/
+/src-tauri/target/
+/src-tauri/gen/
+/test-results/
+/playwright-report/
+/scripts/__pycache__/
+/src-tauri/resources/handsfree-speech
+/release/

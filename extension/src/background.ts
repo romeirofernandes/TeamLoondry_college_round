@@ -1,3 +1,5 @@
+import {claimDesktop,releaseDesktop,connectDesktop,disconnectDesktop,paired,onDesktopLost} from "./desktop";
+import {uploadFile} from "./file-upload";
 import { parseSite, siteCandidates, unsafeSpeech, isCancellation } from "./sites/language";
 import { siteHomes } from "./sites/catalogue";
 import type { SiteResult, SiteSnapshot } from "./sites/types";
@@ -200,8 +202,14 @@ async function ensureOffscreen() {
   if (!creatingOffscreen) creatingOffscreen = chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.AUDIO_PLAYBACK], justification: "Keep camera tracking and microphone recognition responsive while browsing other tabs." }).finally(() => { creatingOffscreen = null; });
   await creatingOffscreen;
 }
+let captureRevision=0;
 async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>["command"], options: { gesture?: import("./shared").HandGesture; presets?: GesturePreset[] } = {}) {
-  if (command === "start" || command === "ui-start") await ensureOffscreen();
+  if (command === "start" || command === "ui-start") {
+    const revision=captureRevision;await claimDesktop();
+    if(revision!==captureRevision||command==="start"&&!state.running)throw new Error("Capture start cancelled");
+    await ensureOffscreen();
+    if(revision!==captureRevision||command==="start"&&!state.running){const contexts=await chrome.runtime.getContexts({contextTypes:[chrome.runtime.ContextType.OFFSCREEN_DOCUMENT]});if(contexts.length&&!state.running)await chrome.offscreen.closeDocument();throw new Error("Capture start cancelled");}
+  }
   if (command !== "start" && command !== "ui-start") {
     const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
     if (!contexts.length) return;
@@ -209,6 +217,7 @@ async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>
   await chrome.runtime.sendMessage({ type: "OFFSCREEN_COMMAND", command, settings: pageSettings(), ...options }).catch(() => {});
 }
 async function stop() {
+  captureRevision++;
   uiVoiceTab = null; uiVoiceUntil = 0; ++narrationToken; chrome.tts?.stop();
   ++planToken; planDestination=null;
   wakeUntil = 0;
@@ -238,6 +247,7 @@ async function stop() {
   await controller("stop");
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
   if (contexts.length) await chrome.offscreen.closeDocument();
+  await releaseDesktop();
   await chrome.storage.local.set({ logs });
 }
 async function pause() {
@@ -567,6 +577,7 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     return;
   }
   if (!state.running || state.paused) return;
+  if(intent.type==="upload-file"){if(state.targetTabId===null)return;const tab=state.targetTabId,revision=pageRevision;try{const result=await uploadFile(tab,()=>current()&&state.running&&!state.paused&&state.targetTabId===tab&&pageRevision===revision);await publish({feedback:result});}catch(e){await publish({feedback:e instanceof Error?e.message:String(e)});}return;}
   record(intent.type === "unknown" ? "command-unknown" : "command-recognized");
   record("command-" + intent.type);
   if (intent.type === "unknown") {
@@ -889,6 +900,10 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       error: "This message is reserved for extension controls.",
     };
   switch (message.type) {
+    case "DESKTOP_CONNECT": return connectDesktop();
+    case "DESKTOP_DISCONNECT": await stop();await disconnectDesktop();return {ok:true};
+    case "DESKTOP_STATUS":return {paired:await paired()};
+    case "PREPARE_BROWSER_CAPTURE":await claimDesktop();return {ok:true};
     case "UI_VOICE": {
       if (!dashboard || sender.tab?.id === undefined) return {ok:false,error:"Open the connected dashboard to use setup voice."};
       if (!message.enabled) {
@@ -1037,7 +1052,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     case "SET_DASHBOARD_URL": {
       const url = new URL(message.url);
       if (!(url.protocol === "https:" || url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) return { ok: false, error: "Use an HTTPS dashboard URL or localhost for development." };
-      const permitted = await chrome.permissions.contains({ origins: [url.origin + "/*"] });
+      const permitted = await chrome.permissions.contains({ origins: [url.protocol + "//" + url.hostname + "/*"] });
       if (!permitted) return { ok: false, error: "Enable webpage access in permission setup before using this dashboard URL." };
       if (settings.dashboardUrl !== url.href) dashboardTabs.clear();
       settings.dashboardUrl = url.href;
@@ -1086,7 +1101,8 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return openController(message.tabId);
     case "OPEN_DASHBOARD":
       return openController(message.tabId, message.hash);
-    case "START":
+    case "START": {
+      const revision=++captureRevision;await claimDesktop();if(revision!==captureRevision)return {ok:false,error:"Start cancelled"};
       activeProvider?.abort();
       pageRevision++;
       if (message.tabId !== undefined && !isDashboard((await chrome.tabs.get(message.tabId)).url)) await target(message.tabId);
@@ -1095,6 +1111,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
         const selected = tabs.find(tab => supported(tab.url) && !isDashboard(tab.url));
         if (selected?.id !== undefined) await target(selected.id);
       }
+      if(revision!==captureRevision)return {ok:false,error:"Start cancelled"};
       if (!state.running) record("run-start");
       await publish({
         running: true,
@@ -1105,9 +1122,11 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       });
       await pageState();
       if (state.targetTabId !== null) await attach(state.targetTabId);
+      if(revision!==captureRevision)return {ok:false,error:"Start cancelled"};
       try { await controller("start"); }
-      catch { await stop(); return { ok: false, error: "Capture could not start. Reload the extension, allow camera and microphone, and retry." }; }
+      catch { if(revision===captureRevision)await stop(); return { ok: false, error: "Capture could not start. Reload the extension, allow camera and microphone, and retry." }; }
       return { ok: true };
+    }
     case "PAUSE":
       await pause();
       return { ok: true };
@@ -1223,10 +1242,10 @@ chrome.runtime.onMessage.addListener((message: Message, sender, respond) => {
     return;
   void handle(message, sender)
     .then(respond)
-    .catch(() =>
+    .catch((error) =>
       respond({
         ok: false,
-        error: "The action failed. Check permissions and retry.",
+        error: error instanceof Error?error.message:"The action failed. Check permissions and retry.",
       }),
     );
   return true;
@@ -1295,3 +1314,5 @@ chrome.permissions.onRemoved?.addListener(() => {
     if (state.running) await pause();
   });
 });
+
+onDesktopLost(()=>{void stop().then(()=>publish({feedback:"Desktop disconnected. Browser capture stopped. Open Handsfree and reconnect."}));});

@@ -1,0 +1,35 @@
+{
+  "name": "handsfree-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "preview": "vite preview",
+    "assets": "node scripts/assets.mjs",
+    "build": "node scripts/native.mjs && npm run assets && tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "tauri": "tauri",
+    "doctor": "node scripts/doctor.mjs",
+    "check": "npm run typecheck && npm test && npm run build && npm run test:ui",
+    "test:ui": "playwright test"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "0.10.32",
+    "@tauri-apps/api": "^2.0.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "typescript": "~5.9.2",
+    "vite": "^6.4.1",
+    "vitest": "^4.1.11"
+  }
+}

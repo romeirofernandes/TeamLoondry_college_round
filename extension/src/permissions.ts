@@ -66,6 +66,7 @@ for (const id of ["pages", "tabs"] as const) {
   });
 }
 for (const id of ["camera", "microphone"] as const) button(id, async () => {
+  const handoff=await send<{ok:boolean;error?:string}>({type:"PREPARE_BROWSER_CAPTURE"});if(!handoff?.ok)throw new Error(handoff?.error||"Desktop handoff failed. Capture stayed off.");
   const stream = await navigator.mediaDevices.getUserMedia(id === "camera" ? {video:true} : {audio:true});
   stream.getTracks().forEach(track => track.stop());
   return `${id === "camera" ? "Camera" : "Microphone"} allowed. Return to Handsfree when you're ready.`;

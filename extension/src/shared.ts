@@ -193,6 +193,7 @@ export const initialState: SessionState = {
 };
 export type LinkDisposition = "new-tab" | "background";
 export type Intent =
+  | {type:"upload-file"}
   | { type: "switch-pointer"; mode: PointerMode }
   | SiteRequest
   | { type: "scroll"; direction: "up" | "down" | "top" | "bottom" }
@@ -268,6 +269,7 @@ export type Message =
   | { type: "GET_PERMISSIONS" }
   | { type: "REVOKE_PERMISSION"; kind: "pages" | "tabs" }
   | { type: "MEDIA_PERMISSIONS"; camera: PermissionStateValue; microphone: PermissionStateValue }
+  | {type:"DESKTOP_CONNECT"|"DESKTOP_DISCONNECT"|"DESKTOP_STATUS"|"PREPARE_BROWSER_CAPTURE"}
   | { type: "GET_STATE" }
   | { type: "GET_SETTINGS" }
   | { type: "OPEN_DASHBOARD"; tabId?: number; hash?: string }
