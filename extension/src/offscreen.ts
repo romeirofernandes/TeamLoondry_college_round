@@ -156,8 +156,15 @@ async function start(next: Settings) {
     if (token === generation) {
       starting = false;
       if (desired === "running" && tracker && !next.voiceOnly) {
-        const stored = await chrome.storage.local.get("gesturePresets");
-        setGesturePresets(normalizeGesturePresets(stored.gesturePresets));
+        // Storage is owned by the service worker. Offscreen documents do not
+        // rely on the storage API being exposed in every supported context.
+        try {
+          const presets = await send<GesturePreset[]>({ type: "GET_GESTURE_PRESETS" });
+          setGesturePresets(normalizeGesturePresets(presets));
+        } catch (error) {
+          setGesturePresets([]);
+          status({ feedback: `Gesture presets could not be loaded: ${error instanceof Error ? error.message : String(error)}` });
+        }
       }
     }
   }

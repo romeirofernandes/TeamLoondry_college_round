@@ -143,6 +143,8 @@ export class PointerFilter {
     const c = this.calibration;
     let dx = (raw.x - c.neutralX) / (raw.x >= c.neutralX ? c.left ?? c.rangeX : c.right ?? c.rangeX),
       dy = (raw.y - c.neutralY) / (raw.y >= c.neutralY ? c.down ?? c.rangeY : c.up ?? c.rangeY);
+    if (c.invertX) dx = -dx;
+    if (c.invertY) dy = -dy;
     // Face rate control needs a quiet neutral band: small landmark noise must
     // not accumulate travel indefinitely. Hand pointing keeps its original band.
     const deadZone = settings.pointerMode === "face" ? Math.max(0.12, settings.deadZone) : settings.deadZone;

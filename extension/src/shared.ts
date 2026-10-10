@@ -116,6 +116,9 @@ export interface Calibration {
   right?: number;
   up?: number;
   down?: number;
+  /** Direction of the camera coordinates can differ across mirrored camera paths. */
+  invertX?: boolean;
+  invertY?: boolean;
 }
 export type HandGesture = "index" | "two-fingers" | "three-fingers" | "fist" | "thumbs-up";
 export type GestureCalibration = { threshold: number; calibratedAt: number };
