@@ -64,6 +64,9 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as tem
         ui = json.loads(ready.read_text())
         assert ui["frontendReady"] is True
         record("installed native WKWebView renders React and invokes Rust")
+        running_update=subprocess.run(update,env=env,capture_output=True,text=True)
+        assert running_update.returncode!=0 and hashlib.sha256(binary.read_bytes()).hexdigest()==before
+        record("updater refuses replacing a running installed app")
         extension_id="abcdefghijklmnopabcdefghijklmnop"
         run([str(binary),"--register-extension",extension_id],env=ui_env)
         manifest=json.loads((bridge_home / "Library/Application Support/Google/Chrome/NativeMessagingHosts/com.handsfree.desktop.json").read_text())

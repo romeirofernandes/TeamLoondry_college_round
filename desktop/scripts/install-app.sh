@@ -41,7 +41,7 @@ expected=$(awk -v name="$asset" '$2==name {print $1}' "$work_dir/SHA256SUMS")
 [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo 'Exactly one package checksum is required.' >&2; exit 1; }
 actual=$(shasum -a 256 "$work_dir/$asset" | awk '{print $1}')
 [[ "$expected" == "$actual" ]] || { echo 'Package checksum mismatch. Existing installation preserved.' >&2; exit 1; }
-if pgrep -x handsfree-desktop >/dev/null; then echo 'Quit Handsfree before installing or updating. The installed app was not changed.' >&2; exit 1; fi
+if pgrep -f '/Handsfree[.]app/Contents/MacOS/handsfree-desktop([[:space:]]|$)' >/dev/null; then echo 'Quit Handsfree before installing or updating. The installed app was not changed.' >&2; exit 1; fi
 mkdir -p "$install_dir"
 [[ ! -L "$destination" ]] || { echo 'Refusing to replace a symlink installation.' >&2; exit 1; }
 mount_dir="$work_dir/mount"
