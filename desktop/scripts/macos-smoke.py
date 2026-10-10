@@ -81,10 +81,20 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as tem
         record("native host rejects an unpaired browser origin")
         def screenshot_window(file):
             swift='import Foundation; import CoreGraphics; let windows=CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID)!; let data=try! JSONSerialization.data(withJSONObject:windows); print(String(data:data,encoding:.utf8)!)'
-            windows=json.loads(run(["xcrun","swift","-e",swift]).stdout)
-            candidates=[w for w in windows if w.get("kCGWindowOwnerPID")==process.pid and w.get("kCGWindowBounds",{}).get("Width",0)>=300 and w.get("kCGWindowBounds",{}).get("Height",0)>=240]
-            assert candidates, "Installed app window missing from WindowServer"
-            run(["screencapture","-x","-l",str(candidates[0]["kCGWindowNumber"]),str(file)])
+            # Layout acknowledgement can precede WindowServer's first painted frame.
+            # Check the original capture; do not edit the screenshot to conceal a blank renderer.
+            pixel_check='import AppKit; let bitmap=NSBitmapImageRep(data:try! Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[1])))!; var low=1.0, high=0.0; for y in stride(from:0,to:bitmap.pixelsHigh,by:max(1,bitmap.pixelsHigh/32)){for x in stride(from:0,to:bitmap.pixelsWide,by:max(1,bitmap.pixelsWide/32)){if let c=bitmap.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB){let v=Double((c.redComponent+c.greenComponent+c.blueComponent)*c.alphaComponent/3);low=min(low,v);high=max(high,v)}}}; exit(high>0.2 && high-low>0.15 ? 0:1)'
+            deadline=time.monotonic()+20
+            while time.monotonic()<deadline:
+                windows=json.loads(run(["xcrun","swift","-e",swift]).stdout)
+                candidates=[w for w in windows if w.get("kCGWindowOwnerPID")==process.pid and w.get("kCGWindowBounds",{}).get("Width",0)>=300 and w.get("kCGWindowBounds",{}).get("Height",0)>=240]
+                if candidates:
+                    run(["screencapture","-x","-l",str(candidates[0]["kCGWindowNumber"]),str(file)])
+                    pixels=subprocess.run(["xcrun","swift","-e",pixel_check,str(file)],capture_output=True,text=True)
+                    if pixels.returncode==0:return
+                    assert pixels.returncode==1, pixels.stderr
+                time.sleep(.5)
+            raise AssertionError("Installed app window has no visibly rendered content")
         hosts=[]
         def host():
             child=subprocess.Popen([manifest["path"],f"chrome-extension://{extension_id}/"],env=ui_env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
