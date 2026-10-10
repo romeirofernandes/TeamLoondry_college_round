@@ -46,6 +46,7 @@ beforeEach(async () => {
       return rect(this.id === "button" ? 100 : 500, 100);
     },
   );
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function(this: HTMLElement) { return [this.getBoundingClientRect()] as unknown as DOMRectList; });
   HTMLElement.prototype.scrollIntoView = vi.fn();
   Object.defineProperty(document, "elementFromPoint", {
     configurable: true,

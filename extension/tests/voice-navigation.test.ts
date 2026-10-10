@@ -21,13 +21,14 @@ beforeEach(async () => {
   document.body.innerHTML = '<nav><a id="nav" href="/menu">Menu</a></nav><main><input type="search" id="search" aria-label="Search"><article><a id="first" href="/first"><h2>ChatGPT</h2></a><a id="duplicate" href="/first"><h3>More about ChatGPT</h3></a></article><article><h2><a id="second" href="/second">Second guide</a></h2></article><a href="/hidden" hidden><h2>Hidden</h2></a><a href="/private" data-private><h2>Private</h2></a><input id="password" type="password" aria-label="Password"></main>';
   sent = []; clicked = []; hit = null;
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 10, y: 10, top: 10, left: 10, right: 150, bottom: 50, width: 140, height: 40, toJSON() {} });
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function(this: HTMLElement) { return [this.getBoundingClientRect()] as unknown as DOMRectList; });
   HTMLElement.prototype.scrollIntoView = function() { hit = this; };
   Object.defineProperty(document, "elementFromPoint", { configurable: true, value: vi.fn(() => hit) });
   document.querySelectorAll("a").forEach(a => a.addEventListener("click", e => { e.preventDefault(); clicked.push(a.id); }));
   runtime = new ContentRuntime(async m => { sent.push(m); }, () => 0, false);
   await runtime.handle({ type: "PAGE_STATE", running: true, paused: false, dictating: false, settings: defaults });
 });
-afterEach(() => { runtime.destroy(); vi.restoreAllMocks(); });
+afterEach(() => { runtime.destroy(); document.head.querySelectorAll("base").forEach(base => base.remove()); vi.restoreAllMocks(); });
 it("ranks main heading links in document order and deduplicates destinations", async () => {
   await run({ type: "click-link", index: 1 }); await run({ type: "click-link", index: 2 }); expect(clicked).toEqual(["first", "second"]);
 });
@@ -104,4 +105,23 @@ it("rechecks an explicitly selected submit control before confirmation", async (
 it("resolves ordinal links from the current DOM after removal", async () => {
   document.getElementById("first")!.remove(); document.getElementById("duplicate")!.remove();
   await run({ type: "click-link", index: 1 }); expect(clicked).toEqual(["second"]);
+});
+
+it("activates an exposed fragment of a multiline link when the union center is in a gap", async () => {
+  const first = document.getElementById("first")!;
+  const fragment = (top: number) => ({ x: 10, y: top, top, left: 10, right: 150, bottom: top + 17, width: 140, height: 17, toJSON() {} });
+  vi.spyOn(first, "getBoundingClientRect").mockReturnValue({ ...fragment(10), height: 57, bottom: 67 });
+  vi.spyOn(first, "getClientRects").mockReturnValue([fragment(10), fragment(50)] as unknown as DOMRectList);
+  vi.mocked(document.elementFromPoint).mockImplementation((_x, y) => y >= 50 && y <= 67 ? first : document.querySelector("main"));
+  expect(await run({ type: "click-link", index: 1 })).toMatchObject({ ok: true });
+  expect(clicked).toEqual(["first"]);
+});
+it.each(["choice", "selected"] as const)("rejects a %s link when base href changes its resolved destination", async stage => {
+  const base = document.createElement("base"); base.href = new URL("/original/", location.href).href; document.head.append(base);
+  document.getElementById("first")!.setAttribute("href", "destination");
+  await run({ type: "show-links" });
+  if (stage === "selected") await run({ type: "choose", index: 1 });
+  base.href = new URL("/replacement/", location.href).href;
+  expect(await run(stage === "selected" ? { type: "click" } : { type: "choose", index: 1 })).toMatchObject({ ok: false });
+  expect(clicked).toEqual([]);
 });

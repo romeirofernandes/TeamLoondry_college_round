@@ -499,3 +499,39 @@ test("final transcripts navigate generic result links and focus fields without p
     for (const tab of opened.reverse()) if (!tab.isClosed()) await tab.close();
   }
 });
+
+test("final transcripts activate real multiline fragments and reject changed base destinations", async () => {
+  await message({ type: "OFFSCREEN_COMMAND", command: "pause" });
+  const geometry = await page.evaluate(() => {
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "width:140px;font:16px/40px sans-serif";
+    wrapper.innerHTML = '<a id="wrapping-voice-link" href="/second" style="display:inline;margin:0">Wrapping inline navigation link</a>';
+    document.body.prepend(wrapper);
+    const link = wrapper.querySelector("a")!;
+    link.addEventListener("click", event => { event.preventDefault(); document.body.dataset.fragmentClicks = String(Number(document.body.dataset.fragmentClicks || 0) + 1); });
+    const box = link.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return { fragments: link.getClientRects().length, unionCenterExposed: hit === link || !!hit && link.contains(hit) };
+  });
+  expect(geometry.fragments).toBe(2);
+  expect(geometry.unionCenterExposed).toBe(false);
+  await heard("click Wrapping inline navigation link");
+  await expect(page.locator("body")).toHaveAttribute("data-fragment-clicks", "1");
+  await page.evaluate(() => {
+    const cover = document.createElement("div"); cover.id = "fragment-cover";
+    cover.style.cssText = "position:fixed;inset:0;z-index:999999;background:white"; document.body.append(cover);
+  });
+  await heard("click Wrapping inline navigation link");
+  await expect(page.locator("body")).toHaveAttribute("data-fragment-clicks", "1");
+  await page.evaluate(() => {
+    document.getElementById("fragment-cover")!.remove(); document.getElementById("wrapping-voice-link")!.remove();
+    const base = document.createElement("base"); base.href = "http://127.0.0.1:4177/original/"; document.head.append(base);
+    const main = document.createElement("main"); main.innerHTML = '<h2><a id="relative-voice-link" href="destination">Relative destination</a></h2>'; document.body.prepend(main);
+    main.querySelector("a")!.addEventListener("click", event => { event.preventDefault(); document.body.dataset.relativeActivated = "true"; });
+  });
+  await heard("show links"); await heard("choose one");
+  await page.evaluate(() => { document.querySelector("base")!.href = "http://127.0.0.1:4177/replacement/"; });
+  await heard("click this");
+  expect(await page.locator("body").getAttribute("data-relative-activated")).toBeNull();
+  await expect(page.locator("#handsfree-assist-overlay .feedback")).toContainText("changed");
+});

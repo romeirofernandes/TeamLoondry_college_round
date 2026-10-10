@@ -123,7 +123,12 @@ export class ContentRuntime {
     }).catch(() => {});
   }
   private selectionSignature(element: HTMLElement): string {
-    return [location.href, targetLabel(element), element.getAttribute("href"), element.getAttribute("role"), element.getAttribute("type")].join("|");
+    const href = element.getAttribute("href");
+    let destination: string | null = null;
+    if (href !== null) {
+      try { destination = new URL(href, document.baseURI).href; } catch { /* Invalid links retain their raw-href signature. */ }
+    }
+    return [location.href, targetLabel(element), href, destination, element.getAttribute("role"), element.getAttribute("type")].join("|");
   }
   private rememberChoices() {
     this.choiceSnapshots = new Map(this.choices.map(element => [element, this.selectionSignature(element)]));

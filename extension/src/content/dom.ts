@@ -152,12 +152,18 @@ export function voiceUsable(element: Element): element is HTMLElement {
 }
 export function voiceExposed(element: HTMLElement): boolean {
   if (!element.isConnected || !voiceUsable(element)) return false;
-  const box = element.getBoundingClientRect();
-  const left = Math.max(0, box.left), right = Math.min(innerWidth, box.right);
-  const top = Math.max(0, box.top), bottom = Math.min(innerHeight, box.bottom);
-  if (right <= left || bottom <= top) return false;
-  const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
-  return !!hit && (hit === element || element.contains(hit));
+  // Inline links can wrap around an empty union-rectangle center. Check their
+  // rendered fragments, with a bounded number of viewport hit tests.
+  let checked = 0;
+  for (const box of element.getClientRects()) {
+    const left = Math.max(0, box.left), right = Math.min(innerWidth, box.right);
+    const top = Math.max(0, box.top), bottom = Math.min(innerHeight, box.bottom);
+    if (right <= left || bottom <= top) continue;
+    const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+    if (hit && (hit === element || element.contains(hit))) return true;
+    if (++checked >= 32) break;
+  }
+  return false;
 }
 export function linkUrl(element: HTMLElement): string | null {
   const raw = element.getAttribute("href");
