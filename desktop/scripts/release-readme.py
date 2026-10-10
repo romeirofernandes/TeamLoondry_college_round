@@ -16,7 +16,14 @@ HANDSFREE_ALLOW_UNSIGNED_MAC=1 HANDSFREE_VERSION={tag} bash /tmp/install-handsfr
 open "$HOME/Applications/Handsfree.app"
 ```
 
-Run the same commands to update. The installer verifies the DMG checksum, stages replacement, preserves app data, and refreshes an existing browser registration. `GH_TOKEN` can supply an existing credential for automation. For a manual download, get the DMG, `SHA256SUMS`, and `install-app.sh` from the release page, keep them together, then run:
+To update using the separately published update entry point:
+
+```bash
+gh release download {tag} --repo {repo} --pattern update-app.sh --dir /tmp/handsfree-update --clobber
+HANDSFREE_ALLOW_UNSIGNED_MAC=1 HANDSFREE_VERSION={tag} bash /tmp/handsfree-update/update-app.sh
+```
+
+The installer verifies the DMG checksum, stages replacement, preserves app data, and refreshes an existing browser registration. `GH_TOKEN` can supply an existing credential for automation. For a manual download, get the DMG, `SHA256SUMS`, and `install-app.sh` from the release page, keep them together, then run:
 
 ```bash
 HANDSFREE_ALLOW_UNSIGNED_MAC=1 bash install-app.sh --local-package Handsfree_0.2.0_aarch64.dmg

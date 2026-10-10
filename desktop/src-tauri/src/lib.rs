@@ -33,7 +33,10 @@ fn start(display_id:u32,pointer_enabled:Option<bool>,core:State<Core>,app:tauri:
     if owner.is_some(){return Err("Browser control is active. Stop it first.".into());}
     if pointer_enabled.unwrap_or(true)&&!native::trusted(){return Err("Allow Handsfree to control your Mac in Privacy & Security settings first".into());}
     if pointer_enabled.unwrap_or(true)&&!native::displays()?.iter().any(|d|d.id==display_id){return Err("Select an available display".into());}
-    Ok(core.lock().map_err(|_|"Session lock failed")?.start(display_id,Instant::now()))
+    let mut session=core.lock().map_err(|_|"Session lock failed")?;
+    session.start(display_id,Instant::now());
+    if !pointer_enabled.unwrap_or(true){session.snapshot.reason="Voice controls enabled".into();}
+    Ok(session.snapshot.clone())
 }
 #[tauri::command]
 fn control(action:String,core:State<Core>,app:tauri::AppHandle)->Result<Snapshot,String>{

@@ -20,3 +20,13 @@ test("compact popup contains only camera and start, with a draggable camera area
  await expect(page.locator("main")).toHaveClass("compact");await expect(page.locator("main button")).toHaveCount(1);await expect(page.getByRole("button",{name:"Start",exact:true})).toBeEnabled();await expect(page.locator('[data-tauri-drag-region="true"]')).toHaveCount(1);await expect(page.getByRole("heading")).toHaveCount(0);await page.screenshot({path:`test-results/popup-${info.project.name}.png`});
 });
 test("setup fits narrow viewports and retains keyboard focus",async({page})=>{await page.goto("/");const size=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,client:document.documentElement.clientWidth}));expect(size.scroll).toBeLessThanOrEqual(size.client);await page.keyboard.press("Tab");await expect(page.locator(":focus-visible")).toHaveCount(1);});
+test("voice-only starts without requesting camera or native pointer access",async({page})=>{
+ await page.addInitScript(()=>{
+  localStorage.setItem("handsfree-desktop-v1",JSON.stringify({version:1,enabledInputs:["voice"],mode:"face",calibrations:{}}));
+  (window as any).isTauri=true;(window as any).calls=[];let session={phase:"stopped",epoch:0,reason:"Ready",displayId:0};
+  (window as any).__TAURI_INTERNALS__={transformCallback:()=>1,invoke:async(cmd:string,args:any)=>{(window as any).calls.push({cmd,args});if(cmd==="start")session={phase:"running",epoch:1,reason:"Voice controls enabled",displayId:0};if(cmd==="status")return {session,capabilities:{nativeControl:true,inputAccess:false,version:"test",displays:[]}};return cmd==="start"||cmd==="control"?session:null;}};
+  Object.defineProperty(navigator,"mediaDevices",{value:{getUserMedia:()=>{throw new Error("Camera requested during voice-only session");}}});
+ });
+ await page.goto("/");await expect(page.getByRole("button",{name:"Start",exact:true})).toBeEnabled();await page.getByRole("button",{name:"Start",exact:true}).click();await expect(page.getByRole("heading",{name:"Speak a command."})).toBeVisible();await expect(page.getByText("Your camera is off")).toBeVisible();
+ const calls=await page.evaluate(()=>(window as any).calls);expect(calls.find((c:any)=>c.cmd==="start").args.pointerEnabled).toBe(false);expect(calls.some((c:any)=>c.cmd==="voice_start")).toBe(true);expect(calls.some((c:any)=>c.cmd==="capture_allowed")).toBe(false);
+});
