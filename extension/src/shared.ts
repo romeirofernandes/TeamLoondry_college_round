@@ -1,5 +1,9 @@
+import type { SiteRequest, SiteSnapshot } from "./sites/types";
 export type PointerMode = "face" | "hand";
 export interface Settings {
+  voiceOnly: boolean;
+  spokenFeedback: boolean;
+  testWriteTargets: string[];
   sensitivity: number;
   handSensitivity: number;
   pausePhrase: string;
@@ -21,6 +25,9 @@ export interface Settings {
   jevProvider: "typesafe" | "openrouter";
 }
 export const defaults: Settings = {
+  voiceOnly: false,
+  spokenFeedback: false,
+  testWriteTargets: [],
   sensitivity: 1,
   handSensitivity: 1.6,
   pausePhrase: "pause handsfree",
@@ -54,6 +61,9 @@ export function normalizeControlSettings(value: Partial<Settings>): Settings {
   const resumePhrase = phrase(next.resumePhrase, defaults.resumePhrase);
   return {
     ...next,
+    testWriteTargets: Array.isArray(next.testWriteTargets) ? next.testWriteTargets.filter((value): value is string => typeof value === "string" && /^https:\/\/(?:github\.com\/[^/]+\/[^/?#]+|(?:www\.)?reddit\.com\/r\/[^/?#]+|x\.com\/[^/]+\/status\/\d+)\/?$/.test(value)).slice(0,5) : [],
+    voiceOnly: typeof next.voiceOnly === "boolean" ? next.voiceOnly : false,
+    spokenFeedback: typeof next.spokenFeedback === "boolean" ? next.spokenFeedback : false,
     sensitivity: bounded(next.sensitivity, 0.2, 6, defaults.sensitivity),
     handSensitivity: bounded(next.handSensitivity, 0.2, 6, defaults.handSensitivity),
     pausePhrase,
@@ -90,6 +100,7 @@ export interface PointerSample {
   latencyMs: number;
 }
 export interface SessionState {
+  voiceOnly: boolean;
   running: boolean;
   paused: boolean;
   dictating: boolean;
@@ -108,6 +119,7 @@ export interface SessionState {
   calibrationSnapshots: Record<string, string>;
 }
 export const initialState: SessionState = {
+  voiceOnly: false,
   running: false,
   paused: false,
   dictating: false,
@@ -127,6 +139,7 @@ export const initialState: SessionState = {
 };
 export type LinkDisposition = "new-tab" | "background";
 export type Intent =
+  | SiteRequest
   | { type: "scroll"; direction: "up" | "down" | "top" | "bottom" }
   | { type: "media-seek"; seconds: number }
   | {
@@ -189,6 +202,9 @@ export interface PermissionState {
 }
 export type PermissionStateValue = "granted" | "denied" | "prompt" | "unknown";
 export type Message =
+  | { type: "GET_SITE_CONTEXT" }
+  | { type: "SITE_DIALOGUE"; text: string }
+  | { type: "SPEAK_FEEDBACK"; text: string; enabled: boolean }
   | { type: "GET_PERMISSIONS" }
   | { type: "REVOKE_PERMISSION"; kind: "pages" | "tabs" }
   | { type: "MEDIA_PERMISSIONS"; camera: PermissionStateValue; microphone: PermissionStateValue }

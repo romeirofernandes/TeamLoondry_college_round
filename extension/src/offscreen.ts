@@ -14,6 +14,8 @@ let starting = false;
 let lastTelemetry = 0;
 const video = document.querySelector("#camera") as HTMLVideoElement;
 let lastStatus = 0;
+let feedbackGeneration = 0;
+let feedbackSpeaking = false;
 function status(patch: Record<string, unknown>) {
   const telemetry = Object.keys(patch).every(key => ["confidence", "fps", "latencyMs"].includes(key));
   if (telemetry && performance.now() - lastStatus < 500) return;
@@ -21,7 +23,7 @@ function status(patch: Record<string, unknown>) {
   void send({ type: "SET_STATE", patch }).catch(() => {});
 }
 function heard(text: string) {
-  if (desired === "stopped") return;
+  if (desired === "stopped" || feedbackSpeaking) return;
   if (desired === "running") void send({ type: "TRANSCRIPT", text, final: true }).catch(() => {});
   void send({ type: "HEARD", text }).catch(() => {});
 }
@@ -77,7 +79,7 @@ async function start(next: Settings) {
   desired = "running";
   const token = ++generation;
   starting = true;
-  tracker = new Tracker(video, sample => {
+  if (!next.voiceOnly) tracker = new Tracker(video, sample => {
     if (token !== generation || desired !== "running") return;
     void send({ type: "POINTER", sample }).catch(() => {});
     const now = performance.now();
@@ -91,11 +93,12 @@ async function start(next: Settings) {
   });
   // Voice starts independently: loading a vision model must not delay listening.
   void beginVoice(token);
-  try { await tracker.start(next); }
+  try { if (tracker) await tracker.start(next); else status({camera:"Off, voice-only session", trackingBackend:"Voice only", confidence:0, fps:0}); }
   catch (error) { if (token === generation) status({ feedback: error instanceof Error ? error.message : "Camera unavailable. Voice can still be used." }); }
   finally { if (token === generation) starting = false; }
 }
 function pause() {
+  ++feedbackGeneration; feedbackSpeaking=false; if(typeof speechSynthesis!=="undefined")speechSynthesis.cancel();
   desired = "paused";
   tracker?.pause(); stopVoice();
   status({ calibrationProgress: null, interimTranscript: "" });
@@ -107,7 +110,8 @@ function resume() {
   void beginVoice(generation);
 }
 function stop() {
-  desired = "stopped"; ++generation;
+  desired = "stopped"; ++generation; ++feedbackGeneration;
+  feedbackSpeaking = false; if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
   tracker?.stop(); tracker = null;
   stopVoice();
 }
@@ -121,7 +125,26 @@ async function calibrate() {
     status({ feedback: "Calibration saved. Return to your webpage and browse.", calibrationProgress: null, calibrationStage: "Ready" });
   } catch (error) { if (current()) status({ feedback: error instanceof Error ? error.message : "Calibration failed. Keep yourself in view and retry.", calibrationProgress: null }); }
 }
+function voiceActive() { return desired !== "stopped"; }
+async function speakFeedback(text: string) {
+ if (!settings?.spokenFeedback || desired === "stopped" || !text.trim() || typeof speechSynthesis === "undefined") return;
+ const token = ++feedbackGeneration;
+ stopVoice(); feedbackSpeaking = true; speechSynthesis.cancel();
+ const utterance = new SpeechSynthesisUtterance(text.slice(0,800));
+ utterance.lang = settings.language; utterance.rate = 1.15;
+ await new Promise<void>(resolve => {
+  const timer = setTimeout(() => { if(token===feedbackGeneration) speechSynthesis.cancel();resolve(); },12000);
+  utterance.onend = utterance.onerror = () => {clearTimeout(timer);resolve();};
+  speechSynthesis.speak(utterance);
+ });
+ if(token!==feedbackGeneration || !voiceActive()) return;
+ await new Promise(resolve => setTimeout(resolve,350));
+ if(token!==feedbackGeneration || !voiceActive()) return;
+ feedbackSpeaking = false;
+ void beginVoice(generation);
+}
 chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
+  if (message.type === "SPEAK_FEEDBACK") { if(message.enabled) void speakFeedback(message.text); respond({ok:true});return; }
   if (message.type !== "OFFSCREEN_COMMAND") return;
   if (message.command === "start" && message.settings) void start(message.settings);
   if (message.command === "stop") stop();
@@ -131,6 +154,7 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
   if (message.command === "settings" && message.settings) {
     const previous = settings;
     settings = message.settings;
+    if (desired !== "stopped" && previous?.voiceOnly !== settings.voiceOnly) { void start(settings); respond({ok:true}); return; }
     tracker?.updateSettings(settings);
     if (desired !== "stopped" && (settings.language !== previous?.language || settings.speechMode !== previous?.speechMode)) void beginVoice(generation);
   }

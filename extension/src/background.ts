@@ -1,3 +1,6 @@
+import { parseSite, siteCandidates, unsafeSpeech, isCancellation } from "./sites/language";
+import { siteHomes } from "./sites/catalogue";
+import type { SiteResult, SiteSnapshot } from "./sites/types";
 import {
   defaults,
   normalizeControlSettings,
@@ -20,6 +23,8 @@ import { appendMetric, summarizeMetrics } from "./core/metrics";
 let state: SessionState = { ...initialState };
 let settings: Settings = { ...defaults };
 let pageRevision = 0;
+let planToken = 0;
+let planDestination: string | null = null;
 let linkAuthorizationRevision = 0;
 let controllerTabId: number | null = null;
 let providers: { groqKeys?: string[]; jevKey?: string; jevKeys?: string[] } = {};
@@ -27,6 +32,7 @@ let dashboardTabs = new Set<number>();
 let creatingOffscreen: Promise<void> | null = null;
 let lastBroadcast = 0;
 const dashboardMessages = new Set(["GET_STATE", "GET_SETTINGS", "SAVE_SETTINGS", "START", "PAUSE", "RESUME", "STOP", "RECALIBRATE", "HEARD", "ACTION", "GET_LOGS", "CLEAR_LOGS", "METRIC", "GET_PROVIDER_STATUS", "SAVE_PROVIDERS", "SET_DASHBOARD_URL", "GRANT_PERMISSIONS", "INSTALL_SPEECH_PACK", "GET_TABS", "ACTIVATE_TAB"]);
+dashboardMessages.add("GET_SITE_CONTEXT");
 dashboardMessages.add("GET_PERMISSIONS");
 dashboardMessages.add("REVOKE_PERMISSION");
 let wakeUntil = 0;
@@ -82,7 +88,10 @@ function record(type: string, value?: number) {
     }, 250);
 }
 async function publish(patch: Partial<SessionState>, persist = true) {
+  const oldFeedback = state.feedback;
   state = { ...state, ...patch };
+  if (patch.feedback && patch.feedback !== oldFeedback && settings.spokenFeedback)
+    void chrome.runtime.sendMessage({ type: "SPEAK_FEEDBACK", text: patch.feedback.slice(0,1200), enabled: true }).catch(() => {});
   if (persist) await chrome.storage.session.set({ state: { ...state, calibrationSnapshots: {} }, dashboardTabs: [...dashboardTabs] });
   const now = Date.now();
   if (!persist && now - lastBroadcast < 250) return;
@@ -152,6 +161,7 @@ async function attach(tabId: number) {
   }
 }
 async function target(tabId: number) {
+  ++planToken; planDestination=null;
   wakeUntil = 0;
   activeProvider?.abort();
   pageRevision++;
@@ -171,7 +181,7 @@ async function target(tabId: number) {
 async function ensureOffscreen() {
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT], documentUrls: [chrome.runtime.getURL("offscreen.html")] });
   if (contexts.length) return;
-  if (!creatingOffscreen) creatingOffscreen = chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.WORKERS], justification: "Keep camera tracking and microphone recognition responsive while browsing other tabs." }).finally(() => { creatingOffscreen = null; });
+  if (!creatingOffscreen) creatingOffscreen = chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.AUDIO_PLAYBACK], justification: "Keep camera tracking and microphone recognition responsive while browsing other tabs." }).finally(() => { creatingOffscreen = null; });
   await creatingOffscreen;
 }
 async function controller(command: "start" | "stop" | "pause" | "resume" | "calibrate" | "settings") {
@@ -183,6 +193,7 @@ async function controller(command: "start" | "stop" | "pause" | "resume" | "cali
   await chrome.runtime.sendMessage({ type: "OFFSCREEN_COMMAND", command, settings: pageSettings() }).catch(() => {});
 }
 async function stop() {
+  ++planToken; planDestination=null;
   wakeUntil = 0;
   activeProvider?.abort();
   pageRevision++;
@@ -212,6 +223,7 @@ async function stop() {
   await chrome.storage.local.set({ logs });
 }
 async function pause() {
+  ++planToken; planDestination=null;
   wakeUntil = 0;
   activeProvider?.abort();
   pageRevision++;
@@ -391,7 +403,10 @@ async function arbitraryFind(query: string, signal?: AbortSignal) {
   await publish({ feedback: "Understanding your request with Groq…" });
   record("find-request");
   try {
-    const result = await resolveArbitrary(query, chosen, groqOptions(), signal, safeContext);
+    const snapshot: SiteSnapshot | null = await page({type:"GET_SITE_CONTEXT"});
+    if(!current())return;
+    const domainChoices = snapshot?.site ? siteCandidates(query,snapshot) : undefined;
+    const result = await resolveArbitrary(query, chosen, groqOptions(), signal, safeContext, domainChoices);
     if (!current()) return;
     if (result.answer) {
       const response = await page({ type: "ANSWER", text: result.answer });
@@ -421,6 +436,21 @@ async function arbitraryFind(query: string, signal?: AbortSignal) {
     record("find-error");
   }
 }
+async function siteResult(result: (SiteResult & {dictating?:boolean}) | null, current: () => boolean) {
+  if (!result || !current()) return;
+  if (typeof result.dictating === "boolean") await publish({dictating:result.dictating});
+  if (result.navigate) {
+    const url = new URL(result.navigate.url);
+    if (!['http:','https:'].includes(url.protocol)) { await publish({feedback:'The destination is unsupported.'}); return; }
+    if (result.navigate.newTab) {
+      if (await needTabs() || !current()) return;
+      await chrome.tabs.create({url:url.href});
+    } else if (state.targetTabId !== null && current()) {
+      await chrome.tabs.update(state.targetTabId,{url:url.href});
+    }
+  }
+  if (current()) await publish({feedback:result.feedback});
+}
 async function action(intent: Intent, current: () => boolean = () => true) {
   if (!current()) return;
   if (intent.type === "stop") {
@@ -446,6 +476,8 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     return;
   }
   if (intent.type === "cancel") {
+    ++planToken; planDestination=null;
+    await page({type:"SITE_DIALOGUE",text:"cancel"});
     linkAuthorizationRevision++;
     pendingClose = null;
     tabChoices = [];
@@ -516,6 +548,7 @@ async function action(intent: Intent, current: () => boolean = () => true) {
   const authorizationRevision = linkAuthorizationRevision;
   const stillCurrent = () => authorizationRevision === linkAuthorizationRevision && current() && state.running && !state.paused && !state.dictating && state.targetTabId === snapshotTab && pageRevision === revision;
   const result = await page({ type: "PAGE_ACTION", intent });
+  if (intent.type === "site-action") { record(`site-${intent.action}`); await siteResult(result, current); return; }
   const openDisposition = intent.type === "click-link" || intent.type === "click-target" ? intent.disposition : result?.disposition;
   if (openDisposition && result?.ok && result.link && snapshotTab !== null) {
     if (!stillCurrent() || await needTabs() || !stillCurrent()) return;
@@ -555,14 +588,89 @@ async function providerWork(work: (signal: AbortSignal) => Promise<void>) {
     if (activeProvider === controller) activeProvider = null;
   }
 }
+/** Bounded plans run one verified site step at a time, rebuilding context after navigation. */
+async function voicePlan(steps: string[], snapshot: SiteSnapshot) {
+  if(steps.length>3 || steps.some(step=>!step.trim())) { await publish({feedback:'Use at most three clear steps separated by then.'});return; }
+  const token=++planToken,tabId=state.targetTabId;
+  const valid=()=>planToken===token && state.running && !state.paused && state.targetTabId===tabId;
+  await publish({feedback:`I will run ${steps.length} steps and stop at any choice, confirmation or failure.`});
+  let completed=0;
+  for(const step of steps) {
+    if(!valid())return;
+    const request=parseSite(step.trim(),snapshot);
+    if(!request) { await publish({feedback:`Completed ${completed} steps. I could not resolve the next step. Say it separately.`});return; }
+    const response: SiteResult = await page({type:'PAGE_ACTION',intent:request});
+    if(!valid())return;
+    if(response?.state!=='available' && response?.state!=='already-satisfied') {
+      await publish({feedback:`Completed ${completed} steps. ${response?.feedback || 'The next step is unavailable.'}`});return;
+    }
+    if(response.navigate) {
+      if(response.navigate.newTab) { await publish({feedback:`Completed ${completed} steps. Opening a new tab is not supported inside a plan. Say it separately.`});return; }
+      planDestination=response.navigate.url;
+      await siteResult(response,valid);
+      const deadline=Date.now()+5000;
+      let next: SiteSnapshot | null=null;
+      while(valid() && Date.now()<deadline) {
+        const candidate:SiteSnapshot|null=await page({type:'GET_SITE_CONTEXT'});
+        if(candidate?.site===snapshot.site && candidate.documentId!==snapshot.documentId && candidate.url===planDestination) {next=candidate;break;}
+        await new Promise(resolve=>setTimeout(resolve,60));
+      }
+      planDestination=null;
+      if(!valid())return;
+      if(!next) {await publish({feedback:`Completed ${completed} steps. The destination was not verified; the remaining steps were cancelled.`});return;}
+      snapshot=next;
+    } else {
+      const next:SiteSnapshot|null=await page({type:'GET_SITE_CONTEXT'});
+      if(!valid())return;
+      if(!next || next.site!==snapshot.site) {await publish({feedback:'The site context changed. Remaining steps cancelled.'});return;}
+      snapshot=next;
+    }
+    completed++; record(`site-${request.action}`);
+  }
+  if(valid())await publish({feedback:`Completed ${completed} verified steps.`});
+}
 async function routeHeard(text: string, parsed: Intent, revision: number) {
   if (revision !== pageRevision || !state.running || state.paused) return;
   await publish({ lastHeard: text, interimTranscript: "" });
   if (revision !== pageRevision || !state.running || state.paused) return;
   if (state.dictating && parsed.type !== "stop-typing") {
-    const result = await page({ type: "DICTATE", text });
+    const literal = text.toLowerCase().startsWith("literal ") ? text.slice(8) : text;
+    const result = await page({ type: "DICTATE", text: literal });
     if (result?.error) await publish({ feedback: result.error });
     return;
+  }
+  const current = () => revision === pageRevision && state.running && !state.paused;
+  if(/^say that again[.!?]?$/i.test(text.trim())) {
+    if(settings.spokenFeedback) await chrome.runtime.sendMessage({type:"SPEAK_FEEDBACK",text:state.feedback,enabled:true}).catch(()=>{});
+    return;
+  }
+  if (isCancellation(text)) { await action({type:"cancel"},current); return; }
+  const openSite = /^(?:open|take me to) (wikipedia|github|reddit|amazon|spotify|netflix|x|twitter)$/i.exec(text.trim().replace(/[.!?]+$/,""));
+  if (openSite) {
+    const site = openSite[1].toLowerCase() === "twitter" ? "x" : openSite[1].toLowerCase() as keyof typeof siteHomes;
+    if (await needTabs() || !current()) return;
+    await chrome.tabs.create({url:siteHomes[site]});
+    if(current()) await publish({feedback:`Opening ${site}.`});
+    return;
+  }
+  if (/^refresh (?:this|the) page$|^reload$/i.test(text.trim())) {
+    if(state.targetTabId!==null&&current())await chrome.tabs.reload(state.targetTabId); return;
+  }
+  const site: SiteSnapshot | null = await page({type:"GET_SITE_CONTEXT"});
+  if(!current())return;
+  if(site?.site) {
+    const steps=text.split(/\s+(?:and then|then)\s+|,\s*(?=(?:filter|sort|show|open|add|choose)\b)/i);
+    if(steps.length>1) { await voicePlan(steps,site);return; }
+    const dialogue = await page({type:"SITE_DIALOGUE",text});
+    if(!current())return;
+    if(dialogue?.state) { await siteResult(dialogue,current); return; }
+    if((parsed.type==='pause'||parsed.type==='resume') && !['spotify','netflix'].includes(site.site) && !site.capabilities.some(c=>c.state==='available' && ['R24'].includes(c.id))) {await action(parsed,current);return;}
+    const explicitBrowser=["new-tab","next-tab","previous-tab","close-tab","history","downloads","settings","incognito","back","forward","scroll","click","stop-typing","start-typing"].includes(parsed.type) || parsed.type==='named-tab' && /\btab\b/i.test(text);
+    if(explicitBrowser) {await action(parsed,current);return;}
+    const request = parseSite(text,site);
+    if(request) { await action(request,current); return; }
+    if(unsafeSpeech(text)) { await publish({feedback:'This is a question, commentary, negation or an excluded account operation. No page action was taken.'}); return; }
+    if (/^(next|stop)$/i.test(text.trim())) { await publish({feedback:'Specify what to stop or advance, such as next episode or pause Handsfree.'}); return; }
   }
   const wake = wakeRequest(text);
   if (wake !== null) {
@@ -579,7 +687,7 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     return;
   }
   wakeUntil = 0;
-  if (parsed.type === "find") {
+  if (parsed.type === "find" && !site?.site) {
     const listed = await page({ type: "GET_TARGETS" });
     if (revision !== pageRevision || !state.running || state.paused) return;
     const matches = rankTargets(parsed.query, Array.isArray(listed) ? listed : []);
@@ -593,7 +701,7 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     if (revision !== pageRevision || !state.running || state.paused) return;
     classifyNamed = rankTargets(parsed.query, Array.isArray(listed) ? listed : []).kind === "none";
   }
-  if (parsed.type !== "unknown" && !classifyNamed) { await action(parsed); return; }
+  if (parsed.type !== "unknown" && !classifyNamed && (!site?.site || ["back","forward","scroll","new-tab","next-tab","previous-tab","named-tab","close-tab","choose","confirm","cancel","stop-typing","start-typing","click"].includes(parsed.type))) { await action(parsed); return; }
   await providerWork(async signal => {
     const options = jevOptions();
     let tabs: { id: number; title: string }[] = [];
@@ -605,7 +713,8 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
       if (Array.isArray(listed)) targets = listed.slice(0, 80);
     }
     if (signal.aborted) return;
-    const intent = await mapCommand(text, { ...options, tabs, targets, forceClassification: classifyNamed }, signal);
+    const domainCandidates = site?.site ? siteCandidates(text,site) : undefined;
+    const intent = await mapCommand(text, { ...options, tabs, targets, site:site?.site, siteCandidates:domainCandidates, forceClassification: classifyNamed || !!site?.site }, signal);
     if (signal.aborted || revision !== pageRevision || !state.running || state.paused) return;
     if (parsed.type === "click-target" && parsed.disposition && intent.type === "click-target")
       intent.disposition = parsed.disposition;
@@ -649,6 +758,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       if ([message.camera, message.microphone].every(value => ["granted", "denied", "prompt", "unknown"].includes(value)))
         mediaPermissions = { camera: message.camera, microphone: message.microphone };
       return { ok: true };
+    case "GET_SITE_CONTEXT": { const snapshot=await page({type:"GET_SITE_CONTEXT"});return snapshot?.site ? snapshot:null; }
     case "GET_STATE":
       return state;
     case "GET_SETTINGS":
@@ -719,6 +829,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
         llmModel: String(next.llmModel || defaults.llmModel).slice(0, 80),
       };
       await chrome.storage.local.set({ settings, speechPreferenceVersion: 2 });
+      await publish({voiceOnly:settings.voiceOnly});
       await pageState();
       await controller("settings");
       return { ok: true };
@@ -741,7 +852,8 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
         running: true,
         paused: false,
         dictating: false,
-        feedback: "Ready. Calibrate your pointer, or use voice.",
+        voiceOnly: settings.voiceOnly,
+        feedback: settings.voiceOnly ? "Ready for voice. The camera is off. Say what can I do here or list results." : "Ready. Calibrate your pointer, or use voice.",
       });
       await pageState();
       if (state.targetTabId !== null) await attach(state.targetTabId);
@@ -800,7 +912,15 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return { ok: true };
     case "HEARD": {
       if (!state.running) return { ok: true };
-      const session = sessionIntent(message.text, settings);
+      const normalized = message.text.trim().toLowerCase().replace(/[.!?,]+$/, "");
+      const mediaScoped = !state.paused && !state.dictating && ((normalized === "pause" && settings.pausePhrase !== "pause") || (normalized === "resume" && settings.resumePhrase !== "resume"));
+      const addressed = normalized === settings.pausePhrase || normalized === settings.resumePhrase || /^stop handsfree(?: and release (?:the )?microphone)?$/.test(normalized);
+      const session = mediaScoped || state.dictating && !addressed ? null : sessionIntent(message.text, settings);
+      if (/^stop handsfree and release (?:the )?microphone$/.test(normalized)) { await stop(); return {ok:true}; }
+      if (!state.dictating && isCancellation(message.text)) {
+        activeProvider?.abort(); pageRevision++;
+        await action({type:"cancel"}); return {ok:true};
+      }
       if (session) {
         await action(session);
         return { ok: true };
@@ -884,6 +1004,7 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
   void ready.then(async () => {
     if (change.status === "complete") await connectDashboard(tabId);
     if (tabId !== state.targetTabId) return;
+    if (change.url && planDestination && change.url !== planDestination) { ++planToken; planDestination=null; }
     if (change.status === "loading") {
       wakeUntil = 0;
       activeProvider?.abort();

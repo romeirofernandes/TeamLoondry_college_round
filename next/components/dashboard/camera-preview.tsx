@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { VideoCamera, VideoCameraSlash } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 
-export function CameraPreview({ running }: { running: boolean }) {
+export function CameraPreview({ running, voiceOnly = false }: { running: boolean; voiceOnly?: boolean }) {
   const video = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState("Start a session to see your camera.");
   const [retry, setRetry] = useState(0);
@@ -14,7 +14,7 @@ export function CameraPreview({ running }: { running: boolean }) {
     let stream: MediaStream | null = null;
     setReady(false);
     if (!running) {
-      setStatus("Start a session to see your camera.");
+      setStatus(voiceOnly ? "Camera off for this voice-only session." : "Start a session to see your camera.");
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -48,7 +48,7 @@ export function CameraPreview({ running }: { running: boolean }) {
       stream?.getTracks().forEach((track) => track.stop());
       if (video.current) video.current.srcObject = null;
     };
-  }, [running, retry]);
+  }, [running, voiceOnly, retry]);
   return (
     <div className="dashboard-camera">
       <video

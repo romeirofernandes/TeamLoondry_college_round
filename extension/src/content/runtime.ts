@@ -1,3 +1,4 @@
+import { SiteExecutor } from "../sites/executor";
 import { ActivationGate } from "../core/safety";
 import {
   defaults,
@@ -45,6 +46,7 @@ export class ContentRuntime {
   private running = false;
   private paused = false;
   private dictating = false;
+  private sites = new SiteExecutor(undefined, () => Date.now(), () => this.settings.testWriteTargets.some(prefix => location.href.replace(/\/$/, "") === prefix.replace(/\/$/, "") || location.href.startsWith(prefix.replace(/\/$/, "") + "/")));
   private typingTarget: HTMLElement | null = null;
   private target: HTMLElement | null = null;
   private pointerTarget = false;
@@ -137,6 +139,7 @@ export class ContentRuntime {
     this.choiceSnapshots = new Map(this.choices.map(element => [element, this.selectionSignature(element)]));
   }
   private pageChanged = () => {
+    this.sites.invalidate();
     this.scrollMotion.cancel();
     this.edge = null;
     this.cancelPending("The page changed. Submission cancelled.");
@@ -314,6 +317,13 @@ export class ContentRuntime {
   }
   async handle(message: Message): Promise<unknown> {
     switch (message.type) {
+      case "GET_SITE_CONTEXT": return this.sites.snapshot();
+      case "SITE_DIALOGUE": {
+        if (!this.running || this.paused || this.dictating) return null;
+        const result = await this.sites.dialogue(message.text);
+        if (result) this.feedback(result.feedback);
+        return result;
+      }
       case "PAGE_STATE": {
         const wasRunning = this.running;
         this.running = message.running;
@@ -330,6 +340,7 @@ export class ContentRuntime {
         this.settings = message.settings;
         this.overlay.style(this.settings.cursorStyle);
         if (!this.running || this.paused) {
+          this.sites.invalidate();
           this.cancelPending();
           this.stopTyping();
           this.edge = null;
@@ -441,6 +452,18 @@ export class ContentRuntime {
         return { ok: !!link && this.running && !this.paused && !this.dictating && message.id === link.id && message.url === link.url && message.pageUrl === location.href && message.pageUrl === link.pageUrl && !!this.target && this.targets.get(link.id) === this.target && this.selectedSnapshot === this.selectionSignature(this.target) && linkUrl(this.target) === message.url && voiceExposed(this.target) };
       }
       case "PAGE_ACTION": {
+        if (message.intent.type === "confirm" && this.running && !this.paused && !this.dictating) {
+          const result=await this.sites.dialogue("confirm");
+          if(result){this.feedback(result.feedback);return result;}
+        }
+        if (message.intent.type === "site-action") {
+          if (!this.running || this.paused || this.dictating) return { state: "unavailable", feedback: "Resume Handsfree before using page commands." };
+          const result = await this.sites.run(message.intent);
+          if (result.focusField) this.action({ type: "start-typing" });
+          this.feedback(result.feedback);
+          return { ...result, dictating: this.dictating };
+        }
+        if (message.intent.type === "cancel") this.sites.cancel();
         if (message.intent.type.startsWith("media-")) {
           if (!this.running || this.paused || this.dictating) return { ok: false };
           const result = await mediaControl(message.intent);
@@ -764,6 +787,9 @@ export class ContentRuntime {
       this.feedback("That target is unavailable or sensitive.");
       return false;
     }
+    const siteGuard = this.sites.guardActivation(element);
+    if (siteGuard === "blocked") { this.feedback("This account action requires a supported site command and explicit confirmation. It was not activated."); return false; }
+    if (siteGuard) { void this.sites.run(siteGuard).then(result => this.feedback(result.feedback)); return false; }
     if (submitControl(element)) {
       const form = formFor(element)!;
       this.pending = {
@@ -809,6 +835,7 @@ export class ContentRuntime {
     if (message) this.feedback(message);
   }
   destroy() {
+    this.sites.invalidate();
     this.scrollMotion.cancel();
     this.targets.destroy();
     this.destroyed = true;

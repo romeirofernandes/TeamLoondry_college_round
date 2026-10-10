@@ -424,6 +424,23 @@ describe("wake named control actions", () => {
   });
 });
 
+describe("finite site choices",()=>{
+ const intent={type:"site-action" as const,site:"spotify" as const,action:"S06" as const,args:{},revision:4,documentId:"fixture-document",requestId:"fixture-request"};
+ const candidates={"spotify.S06":{intent,description:"Pause the current song. Keep Handsfree running."}};
+ it("Jev chooses a supplied site request, never a generated slot object",async()=>{
+  request.mockResolvedValue({ok:true,json:async()=>({answers:{command:{type:"choice",choice:"spotify.S06",confidence:.98,probabilities:{"spotify.S06":.99}},direct:{type:"noul",noul:.99}}})});
+  expect(await mapCommand("hold the tune a moment",{jevKey:"fixture",language:"en-US",forceClassification:true,site:"spotify",siteCandidates:candidates})).toEqual(intent);
+  const body=JSON.parse(request.mock.calls[0][1].body);expect(body.questions.command.criteria["spotify.S06"]).toContain("Pause");expect(body.questions.direct.instructions).toContain("spotify.S06");expect(body.state.site).toBe("spotify");
+ });
+ it("does not bypass domain routing when Jev is unconfigured",async()=>{
+  expect((await mapCommand("find checkout",{jevKey:"",language:"en-US",forceClassification:true,siteCandidates:candidates})).type).toBe("unknown");expect(request).not.toHaveBeenCalled();
+ });
+ it("the broader route reconstructs only an app-supplied bound site choice",async()=>{
+  request.mockResolvedValue(completion({ids:[],intent:null,answer:null,siteChoice:"spotify.S06"}));
+  expect((await resolveArbitrary("pause my music",[],{groqKeys:keys},undefined,undefined,candidates)).intent).toEqual(intent);
+  request.mockResolvedValue(completion({ids:[],intent:null,answer:null,siteChoice:"spotify.purchase"}));await expect(resolveArbitrary("purchase",[],{groqKeys:keys},undefined,undefined,candidates)).rejects.toThrow(/site choice/);
+ });
+});
 describe("independent Jev rotation and bounded failover", () => {
   const output = { answers: { command: { type: "choice", choice: "scroll-down", confidence: 0.99, probabilities: { "scroll-down": 1 } }, direct: { type: "noul", noul: 0.99 } } };
   const ok = () => ({ ok: true, json: async () => output });

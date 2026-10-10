@@ -27,6 +27,7 @@ const fixed: Record<string, Intent> = {
   "open this": { type: "open" },
   "start typing": { type: "start-typing" },
   "stop typing": { type: "stop-typing" },
+  "finish dictation": { type: "stop-typing" },
   "submit form": { type: "submit" },
   submit: { type: "submit" },
   pause: { type: "pause" },

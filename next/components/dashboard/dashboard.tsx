@@ -28,6 +28,7 @@ import {
   type MetricEvent,
   type PermissionState,
 } from "../../../extension/src/shared";
+import type { SiteSnapshot } from "../../../extension/src/sites/types";
 import { cursorPaths } from "../../../extension/src/core/cursors";
 import { request, subscribe, subscribeReady } from "@/lib/extension-bridge";
 import BrandLogo from "@/components/brand-logo";
@@ -119,6 +120,8 @@ export function HandsfreeDashboard() {
   const [jevKey, setJevKey] = useState("");
   const [tabs, setTabs] = useState<BrowserTab[]>([]);
   const [tabsLoaded, setTabsLoaded] = useState(false);
+  const [siteSupport, setSiteSupport] = useState<SiteSnapshot | null>(null);
+  const [supportLoaded, setSupportLoaded] = useState(false);
   const [logs, setLogs] = useState<RunLog | null>(null);
   const generation = useRef(0);
   const connectedRef = useRef(false);
@@ -495,12 +498,12 @@ export function HandsfreeDashboard() {
                     </p>
                   </div>
                   <Badge variant="outline">
-                    {settings.pointerMode === "face"
+                    {settings.voiceOnly ? "Voice only" : settings.pointerMode === "face"
                       ? "Face pointer"
                       : "Hand pointer"}
                   </Badge>
                 </div>
-                <CameraPreview running={running} />
+                <CameraPreview running={running && !settings.voiceOnly} voiceOnly={settings.voiceOnly} />
                 <div className="dashboard-preview-footer">
                   <span>
                     {connected ? state.camera : "Camera not connected"}
@@ -710,12 +713,13 @@ export function HandsfreeDashboard() {
                   title="A quick calibration"
                   description="Five guided captures in 15 seconds. Each mode saves its own comfortable movement range."
                 />
-                <CameraPreview running={running} />
+                <CameraPreview running={running && !settings.voiceOnly} voiceOnly={settings.voiceOnly} />
                 <Calibration state={state} />
                 <Button
                   disabled={
                     locked ||
                     !running ||
+                    settings.voiceOnly ||
                     state.paused ||
                     state.calibrationProgress !== null
                   }
@@ -749,6 +753,16 @@ export function HandsfreeDashboard() {
                   description="Choose a language and where speech is processed."
                 />
                 <FieldGroup>
+                  <div>
+                    <p>Site commands cover Wikipedia, GitHub, Reddit, Amazon India, Spotify, Netflix and X. Availability depends on the current page and account. Live voice qualification is pending.</p>
+                    <Button variant="outline" disabled={locked} onClick={() => void safe(async () => { setSiteSupport(await request<SiteSnapshot | null>({type:"GET_SITE_CONTEXT"})); setSupportLoaded(true); })}>Check current page commands</Button>
+                    <div aria-live="polite">
+                      {supportLoaded && !siteSupport && <p>The selected tab has no dedicated site adapter. Generic browser commands remain available.</p>}
+                      {siteSupport && <><p>Selected page: {siteSupport.site}. Say "what can I do here?" or "list results".</p><ul>{siteSupport.capabilities.filter(item => item.state !== "not-implemented").slice(0,8).map(item => <li key={item.id}>{item.description} · {item.state.replaceAll("-", " ")}</li>)}</ul></>}
+                    </div>
+                  </div>
+                  <SettingSwitch id="voice-only" label="Voice-only session" hint="Keep the camera off. Select named items and numbered results by speaking." checked={settings.voiceOnly} disabled={locked} onChange={(checked) => save({ voiceOnly: checked, ...(checked ? { dwellEnabled: false, edgeScroll: false } : {}) })} />
+                  <SettingSwitch id="spoken-feedback" label="Speak feedback" hint="Read choices and results aloud. Listening pauses during each response to prevent the assistant from hearing itself, then resumes." checked={settings.spokenFeedback} disabled={locked} onChange={(checked) => save({ spokenFeedback: checked })} />
                   <Field>
                     <FieldLabel htmlFor="pause-phrase">Pause keyword or phrase</FieldLabel>
                     <Input id="pause-phrase" value={pausePhrase} maxLength={80} disabled={locked} onChange={event => setPausePhrase(event.target.value)} />

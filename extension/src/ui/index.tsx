@@ -41,7 +41,7 @@ function Popup() {
     let stream: MediaStream | null = null;
     setPreview(false);
     setPreviewError("");
-    if (!state.running) return;
+    if (!state.running || state.voiceOnly) return;
     void navigator.mediaDevices
       .getUserMedia({
         video: { width: { ideal: 480 }, height: { ideal: 300 } },
@@ -65,7 +65,7 @@ function Popup() {
       stream?.getTracks().forEach((track) => track.stop());
       if (video.current) video.current.srcObject = null;
     };
-  }, [state.running, retry]);
+  }, [state.running, state.voiceOnly, retry]);
 
   async function run(work: () => Promise<unknown>) {
     if (busy) return;
@@ -130,7 +130,7 @@ function Popup() {
           {state.running ? (state.paused ? "Paused" : "Running") : "Ready"}
         </span>
       </header>
-      {state.running && (
+      {state.running && !state.voiceOnly && (
         <div className="camera-preview">
           <video
             ref={video}
@@ -167,7 +167,7 @@ function Popup() {
               ? "Dictation is on."
               : state.paused
                 ? "Everything is paused."
-                : "Face, hands, and voice. Your pace."
+                : state.voiceOnly ? "Voice only. The camera is off." : "Face, hands, and voice. Your pace."
             : "Start on a webpage. Set up in the dashboard."}
         </p>
       </div>

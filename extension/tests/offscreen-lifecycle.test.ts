@@ -69,3 +69,21 @@ it("keeps final speech available for session controls while pointing is paused",
   expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "TRANSCRIPT" }));
   expect(mocks.trackers[0].pause).toHaveBeenCalled();
 });
+
+it("starts speech without opening the camera in voice-only mode", async () => {
+ mocks.fail=false;dispatch("start",{...defaults,voiceOnly:true});await flush();
+ expect(mocks.trackers).toHaveLength(0);expect(mocks.speech).toHaveLength(1);
+ expect(mocks.speech[0].start).toHaveBeenCalled();
+});
+it("suspends recognition during feedback and ignores echo before resuming", async () => {
+ vi.useFakeTimers();mocks.fail=false;
+ let utterance:any;
+ vi.stubGlobal("SpeechSynthesisUtterance",class {constructor(public text:string){} });
+ vi.stubGlobal("speechSynthesis",{cancel:vi.fn(),speak:vi.fn(u=>{utterance=u;})});
+ dispatch("start",{...defaults,voiceOnly:true,spokenFeedback:true});await flush();
+ const old=mocks.speech[0];command({type:"SPEAK_FEEDBACK",text:"Choose one or two",enabled:true},{},()=>{});await flush();
+ expect(old.stop).toHaveBeenCalled();const send=vi.mocked(chrome.runtime.sendMessage);send.mockClear();old.heard("like this");await flush();expect(send).not.toHaveBeenCalledWith(expect.objectContaining({type:"HEARD"}));
+ utterance.onend();await vi.advanceTimersByTimeAsync(400);await flush();expect(mocks.speech).toHaveLength(2);
+ mocks.speech[1].heard("choose two");await flush();expect(send).toHaveBeenCalledWith({type:"HEARD",text:"choose two"});
+ dispatch("stop");vi.useRealTimers();
+});

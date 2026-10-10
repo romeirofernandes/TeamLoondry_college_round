@@ -842,6 +842,12 @@ describe("legacy preference migration and wake named clicks", () => {
   });
 });
 
+it("keeps bare pause and cancel literal during dictation, reserving addressed session controls",async()=>{
+ const {browser,send}=await setup();await send({type:"HEARD",text:"start typing"});
+ await send({type:"HEARD",text:"pause"});await send({type:"HEARD",text:"cancel"});
+ expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1,{type:"DICTATE",text:"pause"});expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1,{type:"DICTATE",text:"cancel"});
+ expect((await send({type:"GET_STATE"})).paused).toBe(false);await send({type:"HEARD",text:"pause handsfree"});expect((await send({type:"GET_STATE"})).paused).toBe(true);
+});
 describe("trusted selected-link tab authorization", () => {
   async function selected(url = "https://example.test/second", valid = true) {
     const env = await setup();
