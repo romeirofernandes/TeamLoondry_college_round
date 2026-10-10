@@ -4,6 +4,7 @@ import type { SiteResult, SiteSnapshot } from "./sites/types";
 import {
   defaults,
   normalizeControlSettings,
+  inputMethods,
   initialState,
   type Message,
   type SessionState,
@@ -32,11 +33,15 @@ let controllerTabId: number | null = null;
 let providers: { groqKeys?: string[]; jevKey?: string; jevKeys?: string[] } = {};
 let dashboardTabs = new Set<number>();
 let creatingOffscreen: Promise<void> | null = null;
+let uiVoiceTab: number | null = null;
+let uiVoiceUntil = 0;
+let narrationToken = 0;
 let lastBroadcast = 0;
 const dashboardMessages = new Set(["GET_STATE", "GET_SETTINGS", "SAVE_SETTINGS", "START", "PAUSE", "RESUME", "STOP", "RECALIBRATE", "HEARD", "ACTION", "GET_LOGS", "CLEAR_LOGS", "METRIC", "GET_PROVIDER_STATUS", "SAVE_PROVIDERS", "SET_DASHBOARD_URL", "GRANT_PERMISSIONS", "INSTALL_SPEECH_PACK", "GET_TABS", "ACTIVATE_TAB"]);
 dashboardMessages.add("GET_SITE_CONTEXT");
 dashboardMessages.add("GET_PERMISSIONS");
 dashboardMessages.add("REVOKE_PERMISSION");
+for (const type of ["UI_VOICE", "UI_SPEAK"]) dashboardMessages.add(type);
 dashboardMessages.add("GET_GESTURE_PRESETS");
 dashboardMessages.add("SAVE_GESTURE_PRESETS");
 dashboardMessages.add("GET_GESTURE_DESTINATIONS");
@@ -195,15 +200,16 @@ async function ensureOffscreen() {
   if (!creatingOffscreen) creatingOffscreen = chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.AUDIO_PLAYBACK], justification: "Keep camera tracking and microphone recognition responsive while browsing other tabs." }).finally(() => { creatingOffscreen = null; });
   await creatingOffscreen;
 }
-async function controller(command: "start" | "stop" | "pause" | "resume" | "calibrate" | "settings" | "gesture-calibrate" | "gesture-cancel-calibration" | "gesture-presets", options: { gesture?: import("./shared").HandGesture; presets?: GesturePreset[] } = {}) {
-  if (command === "start") await ensureOffscreen();
-  if (command !== "start") {
+async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>["command"], options: { gesture?: import("./shared").HandGesture; presets?: GesturePreset[] } = {}) {
+  if (command === "start" || command === "ui-start") await ensureOffscreen();
+  if (command !== "start" && command !== "ui-start") {
     const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
     if (!contexts.length) return;
   }
   await chrome.runtime.sendMessage({ type: "OFFSCREEN_COMMAND", command, settings: pageSettings(), ...options }).catch(() => {});
 }
 async function stop() {
+  uiVoiceTab = null; uiVoiceUntil = 0; ++narrationToken; chrome.tts?.stop();
   ++planToken; planDestination=null;
   wakeUntil = 0;
   activeProvider?.abort();
@@ -289,9 +295,46 @@ async function openController(tabId?: number, hash = "#overview") {
   }
   return { ok: true };
 }
-async function openPermissions() {
-  await chrome.windows.create({ url: chrome.runtime.getURL("permissions.html"), type: "popup", width: 490, height: 620 });
+async function openPermissions(options?: Extract<Message, {type: "GRANT_PERMISSIONS"}>, speech = false) {
+  const url = new URL(chrome.runtime.getURL("permissions.html"));
+  url.searchParams.set("kind", speech ? "speech" : options?.kind ?? "devices");
+  url.searchParams.set("camera", String(options?.camera ?? !settings.voiceOnly));
+  url.searchParams.set("microphone", String(options?.microphone ?? inputMethods(settings).includes("voice")));
+  url.searchParams.set("return", options?.returnHash === "#setup" ? "#setup" : "#preferences");
+  const existing = (await chrome.tabs.query({})).find(tab => tab.url?.startsWith(chrome.runtime.getURL("permissions.html")));
+  if (existing?.id !== undefined) {
+    await chrome.tabs.update(existing.id, { url: url.href, active: true });
+    await chrome.windows.update(existing.windowId, { focused: true });
+  } else await chrome.windows.create({ url: url.href, type: "popup", width: 540, height: 740 });
   return { ok: true, opened: true };
+}
+async function activeDashboard(id: number): Promise<boolean> {
+  try {
+    const tab = await chrome.tabs.get(id);
+    return !!tab.active && isDashboard(tab.url) && (await chrome.windows.get(tab.windowId)).focused;
+  } catch { return false; }
+}
+async function speakUI(text: string) {
+  const token = ++narrationToken;
+  chrome.tts.stop();
+  if (!text.trim()) { await controller("narration-end"); return {ok:true}; }
+  await controller("narration-start");
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { if (token === narrationToken) chrome.tts.stop(); resolve(); }, 18000);
+      chrome.tts.speak(text.slice(0, 1200), {
+        lang: settings.language === "auto" ? "en-US" : settings.language, rate: 1,
+        onEvent(event) {
+          if (["end", "interrupted", "cancelled", "error"].includes(event.type)) {
+            clearTimeout(timer);
+            if (event.type === "error") reject(new Error("Spoken guidance is unavailable. Use your screen reader or choose Read aloud to retry."));
+            else resolve();
+          }
+        },
+      }, () => { if (chrome.runtime.lastError) { clearTimeout(timer); reject(new Error("Spoken guidance is unavailable. Use your screen reader or retry.")); } });
+    });
+  } finally { if (token === narrationToken) await controller("narration-end"); }
+  return {ok:true};
 }
 async function needTabs() {
   if (await chrome.permissions.contains({ permissions: ["tabs"] }))
@@ -508,6 +551,19 @@ async function action(intent: Intent, current: () => boolean = () => true) {
   }
   if (intent.type === "resume") {
     await resume();
+    return;
+  }
+  if (intent.type === "switch-pointer") {
+    if (!inputMethods(settings).includes(intent.mode)) {
+      await publish({ feedback: "Select this input in Profile and preferences first." });
+      return;
+    }
+    if (intent.mode === settings.pointerMode) return;
+    activeProvider?.abort(); pageRevision++; linkAuthorizationRevision++;
+    settings = normalizeControlSettings({ ...settings, pointerMode: intent.mode });
+    await chrome.storage.local.set({ settings });
+    await publish({ confidence: 0, calibrationProgress: null, calibrationSnapshots: {}, feedback: `${intent.mode === "face" ? "Head" : "Hand"} pointer selected. Your saved calibration will be used.` });
+    await pageState(); await controller("settings");
     return;
   }
   if (!state.running || state.paused) return;
@@ -833,6 +889,26 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       error: "This message is reserved for extension controls.",
     };
   switch (message.type) {
+    case "UI_VOICE": {
+      if (!dashboard || sender.tab?.id === undefined) return {ok:false,error:"Open the connected dashboard to use setup voice."};
+      if (!message.enabled) {
+        if (uiVoiceTab === sender.tab.id) { uiVoiceTab = null; uiVoiceUntil = 0; await controller("ui-stop"); }
+        return {ok:true};
+      }
+      if (!await activeDashboard(sender.tab.id)) return {ok:false,error:"Return to the dashboard to use setup voice."};
+      if (mediaPermissions.microphone !== "granted") return {ok:false,error:"Allow microphone access in Browser access, then choose Listen for setup commands."};
+      uiVoiceTab = sender.tab.id; uiVoiceUntil = Date.now() + 15000;
+      await controller("ui-start"); return {ok:true};
+    }
+    case "UI_HEARD": {
+      if (!internal || uiVoiceTab === null) return {ok:false};
+      if (Date.now() > uiVoiceUntil || !await activeDashboard(uiVoiceTab)) {
+        uiVoiceTab = null; uiVoiceUntil = 0; await controller("ui-stop"); return {ok:true};
+      }
+      await chrome.tabs.sendMessage(uiVoiceTab, {type:"UI_HEARD",text:String(message.text).slice(0,500)});
+      return {ok:true};
+    }
+    case "UI_SPEAK": return speakUI(typeof message.text === "string" ? message.text : "");
     case "GET_PERMISSIONS": {
       const [pages, tabs, provider] = await Promise.all([
         chrome.permissions.contains({ origins: ["http://*/*", "https://*/*"] }),
@@ -933,11 +1009,13 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       await chrome.storage.local.set({ [`calibration-${message.mode}`]: message.calibration });
       return { ok: true };
     case "TRANSCRIBE_AUDIO": {
-      if (!state.running || settings.speechMode !== "browser") return { ok: false, error: "Voice session is stopped." };
+      const uiTab = uiVoiceTab;
+      const setupActive = uiTab !== null && Date.now() <= uiVoiceUntil && await activeDashboard(uiTab);
+      if ((!state.running && !setupActive) || settings.speechMode !== "browser") return { ok: false, error: "Voice session is stopped." };
       if (!Array.isArray(message.audio) || message.audio.length > 2000000 || !/^audio\/(webm|ogg|mp4)/.test(message.mime)) return { ok: false, error: "Invalid microphone recording." };
       const revision = pageRevision;
       const text = await transcribeAudio(new Blob([new Uint8Array(message.audio)], { type: message.mime }), { ...groqOptions(), language: settings.language }, AbortSignal.timeout(12000));
-      return { text: revision === pageRevision && state.running ? text : "" };
+      return { text: revision === pageRevision && (state.running || setupActive && uiVoiceTab === uiTab && Date.now() <= uiVoiceUntil && await activeDashboard(uiTab!)) ? text : "" };
     }
     case "TRANSCRIPT":
       if (state.running && !state.paused) {
@@ -953,8 +1031,9 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       await activateTab(message.id);
       return { ok: true };
     case "GRANT_PERMISSIONS":
+      return openPermissions(message);
     case "INSTALL_SPEECH_PACK":
-      return openPermissions();
+      return openPermissions({ type: "GRANT_PERMISSIONS", kind: "devices", returnHash: message.returnHash }, true);
     case "SET_DASHBOARD_URL": {
       const url = new URL(message.url);
       if (!(url.protocol === "https:" || url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) return { ok: false, error: "Use an HTTPS dashboard URL or localhost for development." };
@@ -966,7 +1045,16 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return { ok: true };
     }
     case "SAVE_SETTINGS": {
-      const next = message.settings;
+      const previous = settings;
+      let next = message.settings;
+      // Older dashboard tabs still update voiceOnly or pointerMode directly.
+      // Translate those edits only when independent input selection is unchanged.
+      const unchangedInputs = Array.isArray(next.enabledInputs) && next.enabledInputs.length === inputMethods(previous).length && next.enabledInputs.every(input => inputMethods(previous).includes(input));
+      if (unchangedInputs && next.voiceOnly !== previous.voiceOnly) {
+        next = { ...next, enabledInputs: next.voiceOnly ? ["voice"] : ["voice", next.pointerMode] };
+      } else if (unchangedInputs && next.pointerMode !== previous.pointerMode && !inputMethods(next).includes(next.pointerMode) && !next.voiceOnly) {
+        next = { ...next, enabledInputs: inputMethods(next).map(input => input === previous.pointerMode ? next.pointerMode : input) };
+      }
       settings = {
         ...normalizeControlSettings(next),
         llmKey: "",
@@ -976,6 +1064,18 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
         dashboardUrl: settings.dashboardUrl,
         llmModel: String(next.llmModel || defaults.llmModel).slice(0, 80),
       };
+      const inputsChanged = settings.pointerMode !== previous.pointerMode || inputMethods(settings).length !== inputMethods(previous).length || inputMethods(settings).some(input => !inputMethods(previous).includes(input));
+      if (inputsChanged) {
+        activeProvider?.abort();
+        pageRevision++;
+        linkAuthorizationRevision++;
+        ++planToken;
+        planDestination = null;
+        wakeUntil = 0;
+        pendingClose = null;
+        tabChoices = [];
+        await publish({ confidence: 0, calibrationProgress: null, calibrationStage: "", calibrationSnapshots: {}, ...(!inputMethods(settings).includes("voice") ? { dictating: false, interimTranscript: "" } : {}) });
+      }
       await chrome.storage.local.set({ settings, speechPreferenceVersion: 2 });
       await publish({voiceOnly:settings.voiceOnly});
       await pageState();
@@ -1038,7 +1138,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return { ok: true };
     }
     case "POINTER":
-      if (state.running && !state.paused) {
+      if (state.running && !state.paused && !settings.voiceOnly && message.sample.source === settings.pointerMode) {
         const sample = message.sample;
         if (sample.confidence === 0 && hadTracking) record("tracking-loss");
         hadTracking = sample.confidence > 0;

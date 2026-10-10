@@ -18,7 +18,7 @@ beforeEach(async () => {
   vi.resetModules(); mocks.speech = []; mocks.fallback = []; mocks.trackers = []; mocks.fail = true;
   providerStatus = async () => ({ groqKeyCount: 5 });
   vi.stubGlobal("document", { querySelector: () => ({}) });
-  vi.stubGlobal("chrome", { runtime: {
+  vi.stubGlobal("chrome", { storage: { local: { get: vi.fn(async () => ({})) } }, runtime: {
     onMessage: { addListener: (listener: any) => { command = listener; } },
     sendMessage: vi.fn(async (message: any) => message.type === "GET_PROVIDER_STATUS" ? providerStatus() : { ok: true }),
   } });
@@ -74,6 +74,29 @@ it("starts speech without opening the camera in voice-only mode", async () => {
  mocks.fail=false;dispatch("start",{...defaults,voiceOnly:true});await flush();
  expect(mocks.trackers).toHaveLength(0);expect(mocks.speech).toHaveLength(1);
  expect(mocks.speech[0].start).toHaveBeenCalled();
+});
+it("never opens a microphone for head and hand control without voice", async () => {
+ mocks.fail=false;dispatch("start",{...defaults,enabledInputs:["face","hand"]});await flush();
+ dispatch("pause");dispatch("resume");await flush();
+ expect(mocks.trackers).toHaveLength(1);expect(mocks.speech).toHaveLength(0);expect(mocks.fallback).toHaveLength(0);
+});
+it("releases speech when voice is deselected and starts it when selected again",async()=>{
+ mocks.fail=false;dispatch("start");await flush();const old=mocks.speech[0];
+ dispatch("settings",{...defaults,enabledInputs:["face"]});await flush();expect(old.stop).toHaveBeenCalled();
+ const send=vi.mocked(chrome.runtime.sendMessage);send.mockClear();old.heard("new tab");await flush();expect(send).not.toHaveBeenCalledWith(expect.objectContaining({type:"HEARD"}));
+ dispatch("settings",{...defaults,enabledInputs:["voice","face"]});await flush();expect(mocks.speech).toHaveLength(2);
+});
+it("routes setup speech without starting tracking or sending page transcripts",async()=>{
+ mocks.fail=false;dispatch("ui-start");await flush();
+ expect(mocks.trackers).toHaveLength(0);const send=vi.mocked(chrome.runtime.sendMessage);send.mockClear();
+ mocks.speech[0].heard("choose voice");await flush();expect(send).toHaveBeenCalledWith({type:"UI_HEARD",text:"choose voice"});
+ expect(send).not.toHaveBeenCalledWith(expect.objectContaining({type:"TRANSCRIPT"}));
+ dispatch("ui-stop");send.mockClear();mocks.speech[0].heard("new tab");await flush();expect(send).not.toHaveBeenCalled();
+});
+it("releases a setup microphone when its dashboard lease expires",async()=>{
+ vi.useFakeTimers();mocks.fail=false;dispatch("ui-start");await flush();const speech=mocks.speech[0];
+ await vi.advanceTimersByTimeAsync(15001);expect(speech.stop).toHaveBeenCalled();
+ const send=vi.mocked(chrome.runtime.sendMessage);send.mockClear();speech.heard("next");await flush();expect(send).not.toHaveBeenCalled();vi.useRealTimers();
 });
 it("suspends recognition during feedback and ignores echo before resuming", async () => {
  vi.useFakeTimers();mocks.fail=false;

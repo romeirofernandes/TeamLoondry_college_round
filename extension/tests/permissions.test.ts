@@ -23,8 +23,9 @@ it("reflects denied, granted and externally revoked permissions instead of the c
   const toggle = document.querySelector<HTMLInputElement>("#pages")!;
   toggle.click(); await flush();
   expect(toggle.checked).toBe(false);
-  expect(document.querySelector<HTMLInputElement>("#camera")!.checked).toBe(true);
-  expect(document.querySelector("#microphone-state")!.textContent).toBe("Blocked");
+  expect(document.querySelector<HTMLButtonElement>("#camera")!.hidden).toBe(true);
+  expect(document.querySelector("#camera-state")!.textContent).toBe("Allowed");
+  expect(document.querySelector("#microphone-state")!.textContent).toContain("Blocked");
   grant = true; toggle.click(); await flush();
   expect(toggle.checked).toBe(true);
   pages = false; removed(); await flush();
@@ -33,4 +34,17 @@ it("reflects denied, granted and externally revoked permissions instead of the c
   expect(toggle.checked).toBe(true);
   toggle.click(); await flush();
   expect(toggle.checked).toBe(false);
+});
+it("requests only a selected microphone and releases the permission-check stream", async () => {
+  vi.resetModules(); document.body.innerHTML = '<div id="permissions"></div>';
+  vi.stubGlobal("location", {search:"?kind=devices&camera=false&microphone=true&return=%23setup"});
+  const stop = vi.fn(); const getUserMedia = vi.fn(async () => ({getTracks:()=>[{stop}]}));
+  vi.stubGlobal("navigator", {mediaDevices:{getUserMedia},permissions:{query:vi.fn(async()=>({state:"prompt",addEventListener:vi.fn()}))}});
+  vi.stubGlobal("chrome",{runtime:{sendMessage:vi.fn(async()=>({pages:false,tabs:false,provider:false}))},permissions:{onAdded:{addListener:vi.fn()},onRemoved:{addListener:vi.fn()}}});
+  await import("../src/permissions");await flush();
+  expect(document.querySelector<HTMLElement>('[data-kind="camera"]')!.hidden).toBe(true);
+  expect(document.querySelector<HTMLElement>('[data-kind="microphone"]')!.hidden).toBe(false);
+  expect(getUserMedia).not.toHaveBeenCalled();
+  document.querySelector<HTMLButtonElement>("#microphone")!.click();await flush();
+  expect(getUserMedia).toHaveBeenCalledExactlyOnceWith({audio:true});expect(stop).toHaveBeenCalledOnce();
 });

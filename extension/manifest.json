@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Browse with face movements, broad hand gestures, and deliberate voice commands.",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "activeTab", "scripting", "offscreen"],
+  "permissions": ["storage", "activeTab", "scripting", "offscreen", "tts"],
   "optional_permissions": ["tabs"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "host_permissions": ["https://api.groq.com/*", "https://openrouter.ai/*", "http://localhost/*", "http://127.0.0.1/*"],

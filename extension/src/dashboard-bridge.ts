@@ -14,6 +14,7 @@ if (!bridgeWindow.__handsfreeBridge) {
   });
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "STATE") window.postMessage({ channel: "handsfree-dashboard-state", state: message.state }, origin);
+    if (message?.type === "UI_HEARD") window.postMessage({ channel: "handsfree-dashboard-heard", text: message.text }, origin);
   });
   window.postMessage({ channel: "handsfree-dashboard-ready" }, origin);
 }

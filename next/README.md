@@ -11,6 +11,14 @@ npm run dev
 
 Open `http://localhost:3000`. The session dashboard is at `/dashboard`; open it from the extension popup to connect. It manages calibration, pointer settings, speech, tabs, provider keys, and local activity. Tracking and microphone capture run in the extension offscreen document, so switching away from the dashboard does not stop the session.
 
+First visits open a three-step setup. Choose any combination of voice, head movement, and hand movement. When both pointers are selected, choose a primary pointer and switch deliberately; voice can stay on alongside either pointer. Preferences and setup progress stay in extension storage. Existing pointer tuning and calibrations are preserved.
+
+Setup offers spoken guidance after five seconds without interaction. This offer does not start a session or microphone recording. Choose **Read setup aloud** for narration or **Listen for setup commands** after allowing the microphone. Setup speech stays on the dashboard and pauses recognition while the assistant speaks. Screen readers and the keyboard can use the same labelled controls.
+
+Chrome grants extension device permissions in a small access window. It requests only the selected devices and provides **Return to Handsfree**, keeping your place in setup. Voice-only setup never requests a camera. Camera previews need an explicit **Show camera preview** action.
+
+The dashboard separates Session, Tabs, and Help. The top-right **Profile** button opens input, pointer, speech, and browser-access preferences. Provider configuration and testing recipients are under Advanced. Use **Replay setup** to revisit onboarding. Reload the unpacked extension after rebuilding; the extension now declares Chrome's `tts` permission for setup narration.
+
 For production:
 
 ```bash

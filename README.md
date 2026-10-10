@@ -25,10 +25,12 @@ The first build downloads Google's versioned MediaPipe face and hand models, ver
 5. Pin Handsfree using Chrome's Extensions menu.
 6. Open a normal HTTP or HTTPS webpage. Chrome settings, extension pages, the Chrome Web Store, and other protected pages cannot be controlled.
 7. Start the website in a second terminal with `cd next`, `npm ci`, then `npm run dev`. Open `http://localhost:3000/dashboard` from the extension's **Open dashboard** button.
-8. On a normal webpage, open Handsfree and select **Start Handsfree**. Allow the camera and microphone. The popup shows a live camera preview while the session runs.
-9. Open the website dashboard for calibration, pointer settings, speech language, tabs, providers, and activity. Capture continues in Chrome's offscreen document when the popup closes or you return to another tab.
+8. Complete the dashboard setup. Choose any combination of voice, head movement, and hand movement. Allow only the selected devices. Voice alone needs no camera. You can skip access or calibration and return later.
+9. Select **Start session**, or use **Start Handsfree** in the popup while on a normal webpage. Capture continues in Chrome's offscreen document when the popup closes or you return to another tab. The top-right **Profile** button opens editable preferences. Dashboard camera previews are optional.
 10. Select **Calibrate**. Follow five three-second captures: center, left, right, up and down. Hold each comfortable pose for its photo. Use small movements; you do not need to reach the screen edges. Face and hand save separate measurements. Photos stay in this session and clear on Stop. [How calibration works](docs/calibration.md) explains the mapping.
-11. Use the dashboard permission setup to enable webpage control and optional tab commands. Permission prompts open on the extension origin. If Chrome refuses a popup media prompt, use **Enable camera and microphone** in that setup window, then retry.
+11. Use **Browser access** under Profile to review device access, webpage control, and optional tab commands. Chrome opens device prompts in a small window on the extension origin. Choose **Allow camera** or **Allow microphone** there, then **Return to Handsfree** to continue at your saved step.
+
+Setup offers spoken guidance after about five seconds without interaction. **Read setup aloud** narrates instructions. **Listen for setup commands** enables microphone input for choices such as "voice only", "use hands", "next", and "finish setup". These commands stay in setup. If head and hand are both selected, only the chosen primary pointer moves the cursor; switch deliberately in Profile or say "use head" or "use hands" when voice is enabled. **Replay setup** is available in Profile.
 
 The Chrome dashboard shortcut is `chrome-extension://<extension-id>/dashboard.html#tabs`. It redirects to the configured website dashboard. The default website URL is `http://localhost:3000/dashboard`. For another development port or HTTPS deployment, update the saved `dashboardUrl` through the extension settings protocol and grant webpage access to that host before opening it.
 

@@ -51,6 +51,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
     tabs: {
       get: vi.fn(async (id: number) => ({
         id,
+        active: true,
         windowId: 1,
         index: id - 1,
         url: "https://example.test/",
@@ -91,7 +92,8 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
       onRemoved: event(),
     },
     windows: {
-      create: vi.fn(async () => ({ tabs: [{ id: 99 }] })),
+      create: vi.fn(async (_options: chrome.windows.CreateData) => ({ tabs: [{ id: 99 }] })),
+      get: vi.fn(async () => ({focused:true})),
       update: vi.fn(async () => ({})),
     },
     commands: { onCommand: event() },
@@ -121,6 +123,70 @@ afterEach(() => {
 });
 
 describe("background command and permission boundary", () => {
+  it("preserves voice-only edits from an older connected dashboard", async () => {
+    const { send } = await setup();
+    const current = await send({ type: "GET_SETTINGS" });
+    await send({ type: "SAVE_SETTINGS", settings: { ...current, voiceOnly: true } });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ voiceOnly: true, enabledInputs: ["voice"] });
+    const voice = await send({ type: "GET_SETTINGS" });
+    await send({ type: "SAVE_SETTINGS", settings: { ...voice, voiceOnly: false, pointerMode: "hand" } });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ voiceOnly: false, enabledInputs: ["voice", "hand"], pointerMode: "hand" });
+  });
+  it("ends dictation and clears calibration when Profile removes voice, preserving pause", async () => {
+    const { send } = await setup({ settings: { enabledInputs: ["voice", "face", "hand"] } });
+    await send({ type: "PAUSE" });
+    await send({ type: "SET_STATE", patch: { dictating: true, calibrationStage: "old", calibrationProgress: 0.5 } });
+    const current = await send({ type: "GET_SETTINGS" });
+    await send({ type: "SAVE_SETTINGS", settings: { ...current, enabledInputs: ["hand"], pointerMode: "hand" } });
+    expect(await send({ type: "GET_STATE" })).toMatchObject({ paused: true, dictating: false, confidence: 0, calibrationStage: "", calibrationProgress: null });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ enabledInputs: ["hand"], pointerMode: "hand" });
+  });
+  it("keeps setup speech in the active trusted dashboard and drops it after navigation", async () => {
+    const {browser,send}=await setup();
+    await send({type:"STOP"});await send({type:"OPEN_DASHBOARD"});
+    browser.tabs.get.mockImplementation(async(id)=>({id,windowId:1,index:0,url:id===3?defaults.dashboardUrl:"https://example.test/",title:"Dashboard",active:true}));
+    const dashboardSender={id:"handsfree-test",tab:{id:3} as chrome.tabs.Tab,url:defaults.dashboardUrl};
+    expect(await send({type:"UI_VOICE",enabled:true},dashboardSender)).toMatchObject({ok:false});
+    await send({type:"MEDIA_PERMISSIONS",camera:"prompt",microphone:"granted"});
+    expect(await send({type:"UI_VOICE",enabled:true},dashboardSender)).toMatchObject({ok:true});
+    browser.tabs.sendMessage.mockClear();
+    await send({type:"UI_HEARD",text:"choose voice"});
+    expect(browser.tabs.sendMessage).toHaveBeenCalledExactlyOnceWith(3,{type:"UI_HEARD",text:"choose voice"});
+    expect(await send({type:"GET_STATE"})).toMatchObject({running:false});
+    browser.tabs.get.mockResolvedValue({id:3,windowId:1,index:0,url:"https://example.test/",title:"Other page",active:true});
+    browser.tabs.sendMessage.mockClear();await send({type:"UI_HEARD",text:"new tab"});
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+  it("reuses a permission window and passes only the chosen devices",async()=>{
+    const {browser,send}=await setup({settings:{voiceOnly:true}});
+    await send({type:"GRANT_PERMISSIONS",kind:"devices",camera:false,microphone:true,returnHash:"#setup"});
+    expect(browser.windows.create).toHaveBeenCalledWith(expect.objectContaining({url:expect.stringContaining("camera=false&microphone=true")}));
+    browser.tabs.query.mockResolvedValue([{id:99,windowId:9,index:0,url:"chrome-extension://handsfree-test/permissions.html?kind=devices",title:"Browser access"}]);
+    await send({type:"GRANT_PERMISSIONS",kind:"tabs"});
+    expect(browser.windows.create).toHaveBeenCalledTimes(1);
+    expect(browser.tabs.update).toHaveBeenCalledWith(99,expect.objectContaining({url:expect.stringContaining("kind=tabs")}));
+  });
+  it("returns to setup after installing on-device speech", async () => {
+    const { browser, send } = await setup();
+    await send({ type: "INSTALL_SPEECH_PACK", returnHash: "#setup" });
+    const options = browser.windows.create.mock.calls[0][0] as { url: string };
+    const url = new URL(options.url);
+    expect(url.searchParams.get("kind")).toBe("speech");
+    expect(url.searchParams.get("return")).toBe("#setup");
+  });
+  it("switches only to a selected pointer without resuming a paused session", async () => {
+    const { send } = await setup({ settings: { enabledInputs: ["voice", "face", "hand"] } });
+    await send({ type: "PAUSE" });
+    await send({ type: "ACTION", intent: { type: "switch-pointer", mode: "hand" } });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ pointerMode: "hand", enabledInputs: ["voice", "face", "hand"] });
+    expect(await send({ type: "GET_STATE" })).toMatchObject({ paused: true });
+  });
+  it("rejects switching to an unselected input", async () => {
+    const { send } = await setup({ settings: { enabledInputs: ["voice", "face"] } });
+    await send({ type: "HEARD", text: "switch to hands" });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ pointerMode: "face" });
+    expect(await send({ type: "GET_STATE" })).toMatchObject({ feedback: "Select this input in Profile and preferences first." });
+  });
   it("opens a new tab from ordinary phrasing without selecting a page target", async () => {
     const { browser, send } = await setup();
     await send({ type: "HEARD", text: "open a fresh tab please" });

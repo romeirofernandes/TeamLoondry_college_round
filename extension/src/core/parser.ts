@@ -120,6 +120,8 @@ export function wakeRequest(text: string): string | null {
 /** Only call in command mode. Dictation bypasses this parser altogether. */
 export function parseIntent(text: string): Intent {
   const normalized = normalizeSpeech(text).replace(/^(?:(?:could|can|would) you )?(?:please )?/, "").replace(/ please$/, "");
+  const pointer = /^(?:use|switch to) (?:the )?(head|face|hand|hands)(?: (?:pointer|control))?$/.exec(normalized);
+  if (pointer) return { type: "switch-pointer", mode: /^(head|face)$/.test(pointer[1]) ? "face" : "hand" };
   if (/^(?:(?:open|create|make)(?: me)? )?(?:a |another )?(?:new|fresh|blank) tab$/.test(normalized)) return { type: "new-tab" };
   const endScroll = /^(?:scroll|go|move|jump)(?: all the way)? to (?:the )?(top|bottom)(?: of (?:the |this )?page)?$/.exec(normalized);
   if (endScroll) return { type: "scroll", direction: endScroll[1] as "top" | "bottom" };
