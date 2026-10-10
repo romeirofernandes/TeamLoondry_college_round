@@ -46,7 +46,7 @@ export class ContentRuntime {
   private running = false;
   private paused = false;
   private dictating = false;
-  private sites = new SiteExecutor(undefined, () => Date.now(), () => this.settings.testWriteTargets.some(prefix => location.href.replace(/\/$/, "") === prefix.replace(/\/$/, "") || location.href.startsWith(prefix.replace(/\/$/, "") + "/")));
+  private sites = new SiteExecutor(undefined, () => Date.now(), () => this.settings.testWriteTargets.some(prefix => location.href.replace(/\/$/, "") === prefix.replace(/\/$/, "") || location.href.startsWith(prefix.replace(/\/$/, "") + "/")), (site, recipients) => recipients.length > 0 && recipients.every(recipient => this.settings.testMessageRecipients.includes(`${site}:${recipient}`.toLowerCase())));
   private typingTarget: HTMLElement | null = null;
   private target: HTMLElement | null = null;
   private pointerTarget = false;

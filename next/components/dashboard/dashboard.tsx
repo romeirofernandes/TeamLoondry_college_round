@@ -115,6 +115,7 @@ export function HandsfreeDashboard() {
   const [providers, setProviders] = useState<ProviderStatus | null>(null);
   const [permissions, setPermissions] = useState<PermissionState | null>(null);
   const [pausePhrase, setPausePhrase] = useState(defaults.pausePhrase);
+  const [messageRecipients, setMessageRecipients] = useState("");
   const [resumePhrase, setResumePhrase] = useState(defaults.resumePhrase);
   const [groqKeys, setGroqKeys] = useState([""]);
   const [jevKey, setJevKey] = useState("");
@@ -147,6 +148,7 @@ export function HandsfreeDashboard() {
       setPermissions(grants);
       setPausePhrase(preferences.pausePhrase);
       setResumePhrase(preferences.resumePhrase);
+      setMessageRecipients((preferences.testMessageRecipients || []).join(", "));
       connectedRef.current = true;
       setConnected(true);
       setError("");
@@ -755,7 +757,7 @@ export function HandsfreeDashboard() {
                 />
                 <FieldGroup>
                   <div>
-                    <p>Site commands cover Wikipedia, GitHub, Reddit, Amazon India, Spotify, Netflix and X. Availability depends on the current page and account. Live voice qualification is pending.</p>
+                    <p>Site commands cover Wikipedia, GitHub, Reddit, Amazon India, Spotify, Netflix, X, WhatsApp, Gmail, Meet, LinkedIn, IRCTC and Maps. Availability depends on the current page and account. Live voice qualification is pending.</p>
                     <Button variant="outline" disabled={locked} onClick={() => void safe(async () => { setSiteSupport(await request<SiteSnapshot | null>({type:"GET_SITE_CONTEXT"})); setSupportLoaded(true); })}>Check current page commands</Button>
                     <div aria-live="polite">
                       {supportLoaded && !siteSupport && <p>The selected tab has no dedicated site adapter. Generic browser commands remain available.</p>}
@@ -764,6 +766,12 @@ export function HandsfreeDashboard() {
                   </div>
                   <SettingSwitch id="voice-only" label="Voice-only session" hint="Keep the camera off. Select named items and numbered results by speaking." checked={settings.voiceOnly} disabled={locked} onChange={(checked) => save({ voiceOnly: checked, ...(checked ? { dwellEnabled: false, edgeScroll: false } : {}) })} />
                   <SettingSwitch id="spoken-feedback" label="Speak feedback" hint="Read choices and results aloud. Listening pauses during each response to prevent the assistant from hearing itself, then resumes." checked={settings.spokenFeedback} disabled={locked} onChange={(checked) => save({ spokenFeedback: checked })} />
+                  <Field>
+                    <FieldLabel htmlFor="test-message-recipients">Owned test recipients</FieldLabel>
+                    <FieldDescription>Sending requires an exact recipient here and a separate voice confirmation. Use gmail:you@example.com, whatsapp:exact chat name, or meet:abc-defg-hij. Only add recipients and private meetings you own or have permission to test.</FieldDescription>
+                    <Input id="test-message-recipients" value={messageRecipients} disabled={locked} onChange={event => setMessageRecipients(event.target.value)} />
+                  </Field>
+                  <Button variant="outline" disabled={locked} onClick={() => save({testMessageRecipients:messageRecipients.split(",").map(value=>value.trim()).filter(Boolean)})}>Save test recipients</Button>
                   <Field>
                     <FieldLabel htmlFor="pause-phrase">Pause keyword or phrase</FieldLabel>
                     <Input id="pause-phrase" value={pausePhrase} maxLength={80} disabled={locked} onChange={event => setPausePhrase(event.target.value)} />

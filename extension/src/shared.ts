@@ -4,6 +4,7 @@ export interface Settings {
   voiceOnly: boolean;
   spokenFeedback: boolean;
   testWriteTargets: string[];
+  testMessageRecipients: string[];
   sensitivity: number;
   handSensitivity: number;
   pausePhrase: string;
@@ -28,6 +29,7 @@ export const defaults: Settings = {
   voiceOnly: false,
   spokenFeedback: false,
   testWriteTargets: [],
+  testMessageRecipients: [],
   sensitivity: 1,
   handSensitivity: 1.6,
   pausePhrase: "pause handsfree",
@@ -62,6 +64,7 @@ export function normalizeControlSettings(value: Partial<Settings>): Settings {
   return {
     ...next,
     testWriteTargets: Array.isArray(next.testWriteTargets) ? next.testWriteTargets.filter((value): value is string => typeof value === "string" && /^https:\/\/(?:github\.com\/[^/]+\/[^/?#]+|(?:www\.)?reddit\.com\/r\/[^/?#]+|x\.com\/[^/]+\/status\/\d+)\/?$/.test(value)).slice(0,5) : [],
+    testMessageRecipients: Array.isArray(next.testMessageRecipients) ? [...new Set(next.testMessageRecipients.filter((entry): entry is string => typeof entry === "string" && /^(?:gmail:[^\s@]+@[^\s@]+\.[^\s@]+|whatsapp:[^\n]{1,100}|meet:[a-z]{3}-[a-z]{4}-[a-z]{3})$/.test(entry)).map(entry => entry.toLowerCase().trim()))].slice(0,20) : [],
     voiceOnly: typeof next.voiceOnly === "boolean" ? next.voiceOnly : false,
     spokenFeedback: typeof next.spokenFeedback === "boolean" ? next.spokenFeedback : false,
     sensitivity: bounded(next.sensitivity, 0.2, 6, defaults.sensitivity),

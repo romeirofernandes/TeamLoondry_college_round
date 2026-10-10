@@ -1,4 +1,4 @@
-/** Action IDs come from the Group A scope contract. Catalogue membership is not availability. */
+/** Action IDs come from the Group A and Group B scope contracts. Catalogue membership is not availability. */
 export const catalogue = [
   {
     id: "W01",
@@ -1330,6 +1330,497 @@ export const catalogue = [
     description:
       "Not implemented until account-state verification is qualified",
   },
+  {
+    id: "WA01",
+    site: "whatsapp",
+    priority: "P0",
+    examples: ["open my chat with Mira"],
+    description:
+      "Resolve chat by exact header/account identity; duplicate names require spoken choice.",
+  },
+  {
+    id: "WA02",
+    site: "whatsapp",
+    priority: "P0",
+    examples: ["show unread chats"],
+    description: "Announce bounded candidates and verify selected chat header.",
+  },
+  {
+    id: "WA03",
+    site: "whatsapp",
+    priority: "P0",
+    examples: ["read the latest message"],
+    description:
+      "Read only the selected conversation and message; redact content from diagnostics.",
+  },
+  {
+    id: "WA04",
+    site: "whatsapp",
+    priority: "P0",
+    examples: ["scroll older messages"],
+    description:
+      "Scroll the message pane, not the chat list; re-resolve after incoming messages.",
+  },
+  {
+    id: "WA05",
+    site: "whatsapp",
+    priority: "P0",
+    examples: ["write a message"],
+    description:
+      "Focus the selected chat composer and preserve literal command words.",
+  },
+  {
+    id: "WA06",
+    site: "whatsapp",
+    priority: "P0",
+    examples: ["send this message"],
+    description:
+      "Preview recipient and content summary; confirm once; verify exactly one message.",
+  },
+  {
+    id: "WA07",
+    site: "whatsapp",
+    priority: "P0",
+    examples: ["clear this draft"],
+    description:
+      "Cancel pending send or confirm clearing only the bound draft.",
+  },
+  {
+    id: "WA08",
+    site: "whatsapp",
+    priority: "P1",
+    examples: ["search this chat for invoice"],
+    description: "Use in-chat search and verify search scope/results.",
+  },
+  {
+    id: "WA09",
+    site: "whatsapp",
+    priority: "P1",
+    examples: ["open chat info"],
+    description: "Operate the current chat panel and restore prior context.",
+  },
+  {
+    id: "WA10",
+    site: "whatsapp",
+    priority: "P1",
+    examples: ["reply to that message"],
+    description: "Resolve the selected message and verify quoted reply target.",
+  },
+  {
+    id: "WA11",
+    site: "whatsapp",
+    priority: "P2",
+    examples: ["call this contact"],
+    description:
+      "Unavailable in initial release; no call without separately qualified flow.",
+  },
+  {
+    id: "GM01",
+    site: "gmail",
+    priority: "P0",
+    examples: ["search Gmail for project update"],
+    description:
+      "Submit query deliberately and verify exact conversation and subject.",
+  },
+  {
+    id: "GM02",
+    site: "gmail",
+    priority: "P0",
+    examples: ["open the second result"],
+    description:
+      "Resolve candidate by sender, subject and date; ask when ambiguous.",
+  },
+  {
+    id: "GM03",
+    site: "gmail",
+    priority: "P0",
+    examples: ["go back to inbox"],
+    description: "Control thread expansion and inbox navigation independently.",
+  },
+  {
+    id: "GM04",
+    site: "gmail",
+    priority: "P0",
+    examples: ["compose an email"],
+    description:
+      "Select the intended compose window and semantic recipient/subject/body fields.",
+  },
+  {
+    id: "GM05",
+    site: "gmail",
+    priority: "P0",
+    examples: ["send this email"],
+    description:
+      "Read back recipient and subject; require explicit confirmation and verify Sent plus recipient inbox.",
+  },
+  {
+    id: "GM06",
+    site: "gmail",
+    priority: "P0",
+    examples: ["reply to this email"],
+    description:
+      "Bind reply to selected message; distinguish Reply from Reply all.",
+  },
+  {
+    id: "GM07",
+    site: "gmail",
+    priority: "P0",
+    examples: ["archive this conversation"],
+    description: "Resolve exact thread and verify archive state/reversal.",
+  },
+  {
+    id: "GM08",
+    site: "gmail",
+    priority: "P0",
+    examples: ["mark as unread"],
+    description:
+      "Set desired state on the selected conversation, not an adjacent row.",
+  },
+  {
+    id: "GM09",
+    site: "gmail",
+    priority: "P1",
+    examples: ["switch to the other draft"],
+    description:
+      "Select draft by recipient/subject and bind dictation to that editor.",
+  },
+  {
+    id: "GM10",
+    site: "gmail",
+    priority: "P1",
+    examples: ["discard this draft"],
+    description: "Confirm exact draft identity before deletion.",
+  },
+  {
+    id: "GM11",
+    site: "gmail",
+    priority: "P2",
+    examples: ["attach the report"],
+    description:
+      "Unavailable until file selection and attachment verification receive separate safety qualification.",
+  },
+  {
+    id: "ME01",
+    site: "meet",
+    priority: "P0",
+    examples: ["join this meeting"],
+    description:
+      "Resolve meeting identity; joining requires preview and explicit confirmation.",
+  },
+  {
+    id: "ME02",
+    site: "meet",
+    priority: "P0",
+    examples: ["mute my meeting microphone"],
+    description:
+      "Set Meet mic state and verify it; Handsfree listening remains a separate state.",
+  },
+  {
+    id: "ME03",
+    site: "meet",
+    priority: "P0",
+    examples: ["turn my Meet camera off"],
+    description:
+      "Verify outgoing Meet camera while independently observing Handsfree tracking.",
+  },
+  {
+    id: "ME04",
+    site: "meet",
+    priority: "P0",
+    examples: ["turn captions on"],
+    description: "Set caption state when available and report restrictions.",
+  },
+  {
+    id: "ME05",
+    site: "meet",
+    priority: "P0",
+    examples: ["raise my hand"],
+    description: "Verify hand state for this meeting.",
+  },
+  {
+    id: "ME06",
+    site: "meet",
+    priority: "P0",
+    examples: ["open participants"],
+    description: "Open scoped panels and avoid controls behind overlays.",
+  },
+  {
+    id: "ME07",
+    site: "meet",
+    priority: "P0",
+    examples: ["write a chat message"],
+    description:
+      "Dictate to the current meeting chat; preview destination and content summary.",
+  },
+  {
+    id: "ME08",
+    site: "meet",
+    priority: "P0",
+    examples: ["send this to the meeting"],
+    description:
+      "Explicit confirmation; verify exactly one message in the current meeting.",
+  },
+  {
+    id: "ME09",
+    site: "meet",
+    priority: "P1",
+    examples: ["present this tab"],
+    description:
+      "Not supported until browser-owned picker/permission boundaries are qualified.",
+  },
+  {
+    id: "ME10",
+    site: "meet",
+    priority: "P1",
+    examples: ["leave the meeting"],
+    description:
+      "Preview meeting identity and require confirmation; verify own departure only.",
+  },
+  {
+    id: "LI01",
+    site: "linkedin",
+    priority: "P0",
+    examples: ["search LinkedIn jobs for data analyst"],
+    description: "Enter query and verify job result context.",
+  },
+  {
+    id: "LI02",
+    site: "linkedin",
+    priority: "P0",
+    examples: ["set location to Bengaluru"],
+    description:
+      "Use the correct location suggestion and verify selected location.",
+  },
+  {
+    id: "LI03",
+    site: "linkedin",
+    priority: "P0",
+    examples: ["filter for remote jobs"],
+    description: "Set only available filters and verify active chips/results.",
+  },
+  {
+    id: "LI04",
+    site: "linkedin",
+    priority: "P0",
+    examples: ["open the second job"],
+    description: "Announce title, company and location; clarify duplicates.",
+  },
+  {
+    id: "LI05",
+    site: "linkedin",
+    priority: "P0",
+    examples: ["read job details"],
+    description: "Inspect selected role and preserve result context.",
+  },
+  {
+    id: "LI06",
+    site: "linkedin",
+    priority: "P0",
+    examples: ["save this job"],
+    description:
+      "Use desired state, confirm mutation and verify same job identity.",
+  },
+  {
+    id: "LI07",
+    site: "linkedin",
+    priority: "P1",
+    examples: ["show the company profile"],
+    description: "Open scoped company link and return to selected job.",
+  },
+  {
+    id: "LI08",
+    site: "linkedin",
+    priority: "P1",
+    examples: ["draft a message to my test contact"],
+    description:
+      "Only if owned/consenting test contact; dictate without sending.",
+  },
+  {
+    id: "LI09",
+    site: "linkedin",
+    priority: "P1",
+    examples: ["apply for this role"],
+    description: "Stop at employer redirect; no submission in initial scope.",
+  },
+  {
+    id: "LI10",
+    site: "linkedin",
+    priority: "P2",
+    examples: ["send this connection request"],
+    description:
+      "Not supported until recipient identity, note and confirmation flow are qualified.",
+  },
+  {
+    id: "IR01",
+    site: "irctc",
+    priority: "P0",
+    examples: ["set origin to Chennai Central"],
+    description:
+      "Choose exact station suggestion and verify station name/code.",
+  },
+  {
+    id: "IR02",
+    site: "irctc",
+    priority: "P0",
+    examples: ["set destination to Bengaluru City"],
+    description:
+      "Resolve exact destination separately; similar names require clarification.",
+  },
+  {
+    id: "IR03",
+    site: "irctc",
+    priority: "P0",
+    examples: ["travel on 18 November 2026"],
+    description:
+      "Set and verify full date including year; reject past/invalid dates.",
+  },
+  {
+    id: "IR04",
+    site: "irctc",
+    priority: "P0",
+    examples: ["choose AC three tier"],
+    description: "Set only visible options and announce final values.",
+  },
+  {
+    id: "IR05",
+    site: "irctc",
+    priority: "P0",
+    examples: ["search trains"],
+    description:
+      "Submit once after previewing origin, destination, date and options.",
+  },
+  {
+    id: "IR06",
+    site: "irctc",
+    priority: "P0",
+    examples: ["open train 12627"],
+    description: "Verify train number/name, journey date and route.",
+  },
+  {
+    id: "IR07",
+    site: "irctc",
+    priority: "P0",
+    examples: ["show availability"],
+    description:
+      "Read displayed availability/fare as transient site data with timestamp/context.",
+  },
+  {
+    id: "IR08",
+    site: "irctc",
+    priority: "P0",
+    examples: ["swap origin and destination"],
+    description:
+      "Swap explicitly and verify both fields before searching again.",
+  },
+  {
+    id: "IR09",
+    site: "irctc",
+    priority: "P1",
+    examples: ["sort by departure time"],
+    description: "Only if exposed; verify actual sort state.",
+  },
+  {
+    id: "IR10",
+    site: "irctc",
+    priority: "P1",
+    examples: ["add passenger"],
+    description:
+      "Fixture-only dummy data initially; no live passenger details or booking.",
+  },
+  {
+    id: "IR11",
+    site: "irctc",
+    priority: "P2",
+    examples: ["book this ticket"],
+    description:
+      "Rejected in initial release; never activate booking/payment controls.",
+  },
+  {
+    id: "MAP01",
+    site: "maps",
+    priority: "P0",
+    examples: ["find the Bengaluru Palace"],
+    description:
+      "Resolve place by name/address and ask when same-name results exist.",
+  },
+  {
+    id: "MAP02",
+    site: "maps",
+    priority: "P0",
+    examples: ["open the second result"],
+    description:
+      "Bind ordinal to the latest announced list and verify place identity.",
+  },
+  {
+    id: "MAP03",
+    site: "maps",
+    priority: "P0",
+    examples: ["read the address"],
+    description:
+      "Read only visible current-place facts and identify unavailable values.",
+  },
+  {
+    id: "MAP04",
+    site: "maps",
+    priority: "P0",
+    examples: ["get directions from Bengaluru Palace to Bengaluru airport"],
+    description:
+      "Resolve both endpoints separately; require confirmation of exact places.",
+  },
+  {
+    id: "MAP05",
+    site: "maps",
+    priority: "P0",
+    examples: ["switch to walking"],
+    description: "Set route mode and verify endpoints/mode.",
+  },
+  {
+    id: "MAP06",
+    site: "maps",
+    priority: "P0",
+    examples: ["choose the fastest route"],
+    description:
+      "Select among announced alternatives and verify route summary.",
+  },
+  {
+    id: "MAP07",
+    site: "maps",
+    priority: "P0",
+    examples: ["zoom the map in"],
+    description:
+      "Change map scale using supported controls; verify map, not browser zoom.",
+  },
+  {
+    id: "MAP08",
+    site: "maps",
+    priority: "P0",
+    examples: ["pan the map east"],
+    description:
+      "Only if a semantic keyboard/control route is available; verify center changed.",
+  },
+  {
+    id: "MAP09",
+    site: "maps",
+    priority: "P1",
+    examples: ["search near this place for cafes"],
+    description:
+      "Use current place as grounded location and verify result scope.",
+  },
+  {
+    id: "MAP10",
+    site: "maps",
+    priority: "P1",
+    examples: ["avoid tolls"],
+    description: "Set available route options and verify route recomputation.",
+  },
+  {
+    id: "MAP11",
+    site: "maps",
+    priority: "P2",
+    examples: ["start navigation"],
+    description:
+      "Not claimed on desktop. Mobile navigation and Street View require separate adapters.",
+  },
 ] as const;
 export type SiteId = (typeof catalogue)[number]["site"];
 export type ActionId = (typeof catalogue)[number]["id"];
@@ -1341,11 +1832,20 @@ export const siteHomes: Record<SiteId, string> = {
   spotify: "https://open.spotify.com/",
   netflix: "https://www.netflix.com/",
   x: "https://x.com/",
+  whatsapp: "https://web.whatsapp.com/",
+  gmail: "https://mail.google.com/mail/u/0/",
+  meet: "https://meet.google.com/",
+  linkedin: "https://www.linkedin.com/jobs/",
+  irctc: "https://www.irctc.co.in/nget/train-search",
+  maps: "https://www.google.com/maps",
 };
 export function siteForUrl(url: string): SiteId | null {
   try {
     const u = new URL(url);
-    if (u.protocol !== "https:") return null;
+    if (u.protocol !== "https:" || u.username || u.password || u.port)
+      return null;
+    if (["www.google.com", "google.com"].includes(u.hostname))
+      return /^\/maps(?:\/|$)/.test(u.pathname) ? "maps" : null;
     return (
       (
         {
@@ -1361,6 +1861,14 @@ export function siteForUrl(url: string): SiteId | null {
           "x.com": "x",
           "www.x.com": "x",
           "twitter.com": "x",
+          "web.whatsapp.com": "whatsapp",
+          "mail.google.com": "gmail",
+          "meet.google.com": "meet",
+          "linkedin.com": "linkedin",
+          "www.linkedin.com": "linkedin",
+          "irctc.co.in": "irctc",
+          "www.irctc.co.in": "irctc",
+          "maps.google.com": "maps",
         } as Record<string, SiteId>
       )[u.hostname] ?? null
     );

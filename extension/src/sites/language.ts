@@ -116,6 +116,10 @@ function argsFor(
   const args: SiteArgs = {};
   if (spec.id === "W08" && /^(?:find|select)/.test(text)) args.mode = "select";
   if (spec.extract === "query") {
+    if (spec.id === "MAP04") {
+      if (!match[1]?.trim() || !match[2]?.trim() || match[1].length > 300 || match[2].length > 100) return null;
+      return {query:match[1].trim(),mode:match[2].trim()};
+    }
     args.query = match
       .slice(1)
       .filter(Boolean)

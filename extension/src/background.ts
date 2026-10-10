@@ -645,9 +645,9 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     return;
   }
   if (isCancellation(text)) { await action({type:"cancel"},current); return; }
-  const openSite = /^(?:open|take me to) (wikipedia|github|reddit|amazon|spotify|netflix|x|twitter)$/i.exec(text.trim().replace(/[.!?]+$/,""));
+  const openSite = /^(?:open|take me to) (wikipedia|github|reddit|amazon|spotify|netflix|x|twitter|whatsapp|gmail|google meet|meet|linkedin|irctc|google maps|maps)$/i.exec(text.trim().replace(/[.!?]+$/,""));
   if (openSite) {
-    const site = openSite[1].toLowerCase() === "twitter" ? "x" : openSite[1].toLowerCase() as keyof typeof siteHomes;
+    const site = openSite[1].toLowerCase() === "twitter" ? "x" : openSite[1].toLowerCase().replace(/^google /, "") as keyof typeof siteHomes;
     if (await needTabs() || !current()) return;
     await chrome.tabs.create({url:siteHomes[site]});
     if(current()) await publish({feedback:`Opening ${site}.`});

@@ -28,7 +28,17 @@ export type EntityKind =
   | "artist"
   | "profile"
   | "title"
-  | "episode";
+  | "episode"
+  | "chat"
+  | "message"
+  | "thread"
+  | "draft"
+  | "meeting"
+  | "job"
+  | "train"
+  | "place"
+  | "route"
+  | "station";
 export interface Entity {
   id: string;
   kind: EntityKind;
@@ -73,6 +83,7 @@ export interface SiteResult {
   navigate?: { url: string; newTab: boolean };
 }
 export type Operation =
+  | { kind: "group-b"; scope?: string }
   | { kind: "search"; url: string }
   | { kind: "entities"; entity: EntityKind; selectOnly?: boolean }
   | {
@@ -94,7 +105,11 @@ export type Operation =
       names: string[];
       scope?: string;
       verify:
-        "selected" | "expanded" | "closed" | "entity-change" | "destination";
+        | "selected"
+        | "expanded"
+        | "closed"
+        | "entity-change"
+        | "destination";
     }
   | {
       kind: "state";
@@ -134,6 +149,7 @@ export interface Adapter {
   site: SiteId;
   entities: Partial<Record<EntityKind, string>>;
   current: string;
+  currentKind?: EntityKind;
   scope: string;
   actions: ActionSpec[];
 }

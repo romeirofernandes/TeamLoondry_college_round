@@ -1,3 +1,4 @@
+import { prepareGroupB, executeGroupB, groupBSends, type RecipientAllowed } from "./group-b";
 import { SiteContext } from "./context";
 import { catalogue } from "./catalogue";
 import {
@@ -60,6 +61,7 @@ export class SiteExecutor {
     url?: () => string,
     private now: () => number = () => Date.now(),
     private publicationAllowed: () => boolean = () => false,
+    private recipientAllowed: RecipientAllowed = () => false,
   ) {
     this.context = new SiteContext(url);
   }
@@ -109,10 +111,13 @@ export class SiteExecutor {
     request: SiteRequest,
   ): ParentNode | null {
     const op = spec.operation;
-    if (spec.id === "R07") return document;
+    if (spec.id === "R07" || op.kind === "group-b" && !op.scope) return document;
     const selector = "scope" in op ? op.scope : undefined;
     if (selector) {
       let roots = elements(selector);
+      const selected = this.identity(request, snapshot);
+      const selectedNode = selected && this.context.node(selected.id);
+      if (selectedNode && roots.length > 1) { const bound = roots.filter(root => root === selectedNode || root.contains(selectedNode)); if (bound.length === 1) roots = bound; }
       if(roots.length>1 && op.kind==='field') {
         const names=request.args.mode?.includes('title') ? ['Title','Add a title'] : request.args.mode?.match(/body|description/) ? ['Body','Description','Add a description'] : op.names;
         roots=roots.filter(root=>elements('input,textarea,[contenteditable="true"]',root).some(e=>editable(e)&&names.some(n=>norm(label(e))===norm(n))));
@@ -142,6 +147,7 @@ export class SiteExecutor {
     return node
       ? JSON.stringify([
           label(node),
+          elements("[email],[data-email]").map(e=>[e.getAttribute("email"),e.getAttribute("data-email")]),
           node.getAttribute("aria-pressed"),
           node.getAttribute("aria-expanded"),
           node.closest("form")?.textContent,
@@ -168,8 +174,13 @@ export class SiteExecutor {
       adapter = this.context.adapter();
     if (!snapshot || !adapter) return null;
     const name = norm(label(node));
+    if (snapshot.site === "irctc" && node.closest("app-passenger-input,app-review-booking,app-payment")) return "blocked";
     for (const spec of adapter.actions) {
       const op = spec.operation;
+      if (spec.write && op.kind === "group-b") {
+        const customNames: Record<string,string[]> = {WA06:["Send"], GM05:["Send"], ME08:["Send a message","Send"], ME01:["Join now","Ask to join"], ME10:["Leave call"], LI06:["Save","Saved","Unsave"], GM07:["Archive","Move to Inbox"], GM08:["Mark as read","Mark as unread"], GM10:["Discard draft","Discard"], IR05:["Search","Search trains"]};
+        if ((customNames[spec.id] || []).some(n => norm(n) === name)) return "blocked";
+      }
       if (!spec.write || !("names" in op)) continue;
       const names = [...op.names, ...(op.kind === "state" ? op.opposite : [])];
       if (!names.some((n) => norm(n) === name)) continue;
@@ -192,7 +203,7 @@ export class SiteExecutor {
       };
     }
     if (
-      /\b(like|unlike|upvote|downvote|star|unstar|save|unsave|bookmark|repost|retweet|follow|unfollow|send|post|publish|submit|comment|reply|delete|remove|cart|buy|checkout|order|merge|subscribe)\b/.test(
+      /\b(like|unlike|upvote|downvote|star|unstar|save|unsave|bookmark|repost|retweet|follow|unfollow|send|post|publish|submit|comment|reply|delete|remove|cart|buy|book|booking|pay|payment|apply|checkout|order|merge|subscribe)\b/.test(
         name,
       ) &&
       !editable(node) &&
@@ -222,7 +233,7 @@ export class SiteExecutor {
         n,
       )
     ) {
-      const s = this.context.inspect();
+      const s = this.snapshot();
       if (!s) return null;
       const actions = s.capabilities.filter(
         (a) => a.state !== "not-implemented",
@@ -323,12 +334,12 @@ export class SiteExecutor {
       }
     }
     if (this.pending) this.pending = null;
-    if (n === "list results" || n === "list comments") {
+    if (/^(?:list results|list comments|list chats|list messages|list drafts|list jobs|list trains|list places|list routes)$/.test(n)) {
       const s = this.context.inspect();
       if (!s) return null;
       const spec = this.context
         .adapter()!
-        .actions.find((a) => a.operation.kind === "entities" && (n !== "list comments" || a.operation.entity === "comment"));
+        .actions.find((a) => a.operation.kind === "entities" && (n === "list results" || a.operation.entity === ({"list comments":"comment","list chats":"chat","list messages":"message","list drafts":"draft","list jobs":"job","list trains":"train","list places":"place","list routes":"route"} as Record<string,string>)[n]));
       if (!spec)
         return result("unavailable", "No result list is available here.");
       return this.run({
@@ -364,7 +375,7 @@ export class SiteExecutor {
         ),
       );
     }
-    const snapshot = this.context.inspect()!,
+    const snapshot = this.snapshot()!,
       spec = this.context
         .adapter()!
         .actions.find((a) => a.id === request.action)!;
@@ -434,6 +445,12 @@ export class SiteExecutor {
       this.context.inspect()?.url === snapshot.url;
     const args = request.args;
     let target: HTMLElement | undefined;
+    let groupPreview: string | undefined;
+    if (op.kind === "group-b") {
+      const prepared = prepareGroupB(spec, request, snapshot, scope, this.recipientAllowed);
+      if (prepared.result) return this.remember(prepared.result);
+      target = prepared.target; groupPreview = prepared.preview;
+    }
     if (op.kind === "state") {
       const matches = controls([...op.names, ...op.opposite], scope);
       if (matches.length !== 1)
@@ -490,14 +507,14 @@ export class SiteExecutor {
     }
     if (spec.write && !confirmed) {
       const identity = this.identity(request, snapshot);
-      if (!identity && op.kind !== "submit" && op.kind !== "clear-draft")
+      if (!identity && op.kind !== "submit" && op.kind !== "clear-draft" && op.kind !== "group-b")
         return result(
           "needs-choice",
           "Which item should change? Select a named item first.",
         );
       if (["R15"].includes(spec.id) && identity?.kind !== "comment")
         return result("needs-choice", "Select a comment before voting on it.");
-      const preview = `${catalogue.find((a) => a.id === spec.id)!.description}. Target: ${identity?.label || label(scope as HTMLElement)} on ${safelyDescribeDestination(snapshot)}. Say confirm within 15 seconds, or cancel.`;
+      const preview = `${groupPreview || catalogue.find((a) => a.id === spec.id)!.description}. Target: ${identity?.label || (scope instanceof HTMLElement ? label(scope) : snapshot.site)} on ${safelyDescribeDestination(snapshot)}. Say confirm within 15 seconds, or cancel.`;
       this.pending = {
         request,
         preview,
@@ -543,6 +560,10 @@ export class SiteExecutor {
         this.handled.delete(this.handled.keys().next().value!);
     }
     const updated = this.context.inspect();
+    if (output.state === "needs-choice" && output.choices?.length && updated) {
+      this.choices = {request: {...request, revision: updated.revision}, entities: output.choices, offset:0, expires:this.now()+30000};
+      output.feedback = this.choiceFeedback(this.choices);
+    }
     if (
       updated &&
       this.selected &&
@@ -568,6 +589,7 @@ export class SiteExecutor {
             "failed",
             "The control was activated, but its result could not be verified. No automatic retry.",
           );
+    if (op.kind === "group-b") return executeGroupB(spec, request, s, scope, target, valid, this.context);
     if (op.kind === "search" || op.kind === "route") {
       const url = new URL(s.url),
         parts = url.pathname.split("/").filter(Boolean),
@@ -721,6 +743,13 @@ export class SiteExecutor {
           navigate: { url: url.href, newTab: spec.id === "W09" },
         });
       }
+      if (["chat", "thread", "train", "route"].includes(chosen.kind)) {
+        if (chosen.kind === "train") return result("available", `Selected train ${chosen.label}.`, {evidence:chosen.id});
+        if (chosen.kind === "route" && !request.entityId) return result("needs-choice", "Say list routes, then choose an announced number. Fastest is not inferred from an unqualified route list.");
+        node.click();
+        return verified(() => chosen.kind === "route" ? stateOf(node,[]) === true : chosen.kind === "thread" ? !node.isConnected && !!this.context.inspect()?.current : norm(this.context.inspect()?.current?.label || "") === norm(chosen.label), `Opened ${chosen.label}.`);
+      }
+      if (chosen.kind === "draft") {node.focus();return result("available", `Selected draft ${chosen.label}.`,{evidence:chosen.id});}
       const player = node.querySelector<HTMLElement>(
         'button[aria-label^="Play"],button[data-testid="play-button"]',
       );

@@ -48,6 +48,10 @@ export class SiteContext {
         title,
         node.getAttribute("data-asin"),
         node.getAttribute("post-id"),
+        node.getAttribute("data-id"),
+        node.getAttribute("data-job-id"),
+        node.getAttribute("data-train-number"),
+        node.getAttribute("data-meeting-title"),
       ]);
       let stored = this.ids.get(node);
       if (!stored || stored.key !== key) {
@@ -88,7 +92,7 @@ export class SiteContext {
       currentNodes.length === 1
         ? make(
             currentNodes[0],
-            site === "spotify"
+            adapter.currentKind || (site === "spotify"
               ? "track"
               : site === "github"
                 ? "repository"
@@ -98,7 +102,7 @@ export class SiteContext {
                     ? "article"
                     : site === "netflix"
                       ? "title"
-                      : "post",
+                      : "post"),
           )
         : null;
     if (
@@ -131,6 +135,7 @@ export class SiteContext {
       current,
       controlSignature,
       drafts,
+      elements("[email],[data-email]").map(e => [e.getAttribute("email"), e.getAttribute("data-email")]),
     ]);
     if (this.signature && signature !== this.signature) this.revision++;
     this.signature = signature;
