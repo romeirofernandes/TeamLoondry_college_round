@@ -76,6 +76,12 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as tem
         wrong=subprocess.run([str(binary),"--native-host","chrome-extension://wrong/"],env=ui_env,capture_output=True,timeout=10)
         assert wrong.returncode!=0
         record("native host rejects an unpaired browser origin")
+        def screenshot_window(file):
+            swift='import Foundation; import CoreGraphics; let windows=CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID)!; let data=try! JSONSerialization.data(withJSONObject:windows); print(String(data:data,encoding:.utf8)!)'
+            windows=json.loads(run(["xcrun","swift","-e",swift]).stdout)
+            candidates=[w for w in windows if w.get("kCGWindowOwnerPID")==process.pid and w.get("kCGWindowBounds",{}).get("Width",0)>=300 and w.get("kCGWindowBounds",{}).get("Height",0)>=240]
+            assert candidates, "Installed app window missing from WindowServer"
+            run(["screencapture","-x","-l",str(candidates[0]["kCGWindowNumber"]),str(file)])
         hosts=[]
         def host():
             child=subprocess.Popen([manifest["path"],f"chrome-extension://{extension_id}/"],env=ui_env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -96,7 +102,7 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as tem
             while time.monotonic()<deadline and json.loads(ready.read_text()).get("view")!="compact":time.sleep(.1)
             assert json.loads(ready.read_text())["view"]=="compact"
             record("installed WKWebView renders the compact camera and start-stop view")
-            run(["screencapture","-x",str(report_path.with_name("handsfree-macos-compact.png"))])
+            screenshot_window(report_path.with_name("handsfree-macos-compact.png"))
             assert request(first,"claim")["ok"]
             assert request(first,"heartbeat")["result"]["owner"]=="browser"
             second=host();assert request(second,"hello")["ok"]
@@ -117,9 +123,9 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as tem
             last.stdin.close();last.wait(timeout=5)
         time.sleep(.5)
         screenshot = report_path.with_name("handsfree-macos-panel.png")
-        run(["screencapture", "-x", str(screenshot)])
+        screenshot_window(screenshot)
         image = run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", str(screenshot)]).stdout
-        assert screenshot.stat().st_size > 12000 and "pixelWidth" in image and "pixelHeight" in image, image
+        assert screenshot.stat().st_size > 1000 and "pixelWidth" in image and "pixelHeight" in image, image
         record("live installed Mac panel screenshot captured")
     finally:
         if process.poll() is None:

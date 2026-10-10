@@ -12,6 +12,23 @@ concurrency:
   group: handsfree-macos-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  tag-candidate:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bind candidate tag to the source before long-running checks
+        run: |
+          tag="v0.2.0-preview.${{ github.run_number }}"
+          existing=$(git ls-remote origin "refs/tags/$tag" | cut -f1)
+          if [ -n "$existing" ]; then
+            test "$existing" = "$GITHUB_SHA"
+          else
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          fi
   macos:
     runs-on: macos-26
     timeout-minutes: 45
@@ -82,7 +99,7 @@ jobs:
           path: desktop/release/
           if-no-files-found: error
   publish:
-    needs: macos
+    needs: [macos, tag-candidate]
     if: github.event_name != 'pull_request'
     runs-on: macos-26
     permissions:
@@ -103,7 +120,7 @@ jobs:
           shasum -a 256 -c SHA256SUMS
           python3 -c 'import json; r=json.load(open("macos-validation.json")); assert all(c["status"]=="passed" for c in r["checks"]); assert len(r["checks"])>=12'
           tag="v0.2.0-preview.${{ github.run_number }}"
-          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target '${{ github.sha }}' --draft --prerelease --title "Handsfree $tag · macOS 26 ARM64" --notes-file ../desktop/RELEASE_NOTES.md ./*.dmg ./*.sh ./*.zip ./SHA256SUMS ./macos-validation.json ./*.png
+          gh release create "$tag" --verify-tag --repo "$GITHUB_REPOSITORY" --target '${{ github.sha }}' --draft --prerelease --title "Handsfree $tag · macOS 26 ARM64" --notes-file ../desktop/RELEASE_NOTES.md ./*.dmg ./*.sh ./*.zip ./SHA256SUMS ./macos-validation.json ./*.png
           asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets[] | select(.name == "install-app.sh") | .id')
           curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" -o "$RUNNER_TEMP/install-handsfree.sh"
           HANDSFREE_ALLOW_UNSIGNED_MAC=1 HANDSFREE_NO_LAUNCH=1 HANDSFREE_VERSION="$tag" HANDSFREE_INSTALL_DIR="$RUNNER_TEMP/Handsfree network install/Applications" bash "$RUNNER_TEMP/install-handsfree.sh"
