@@ -92,50 +92,58 @@ export class SiteExecutor {
     );
   }
   snapshot(): SiteSnapshot | null {
-    const snapshot = this.context.inspect();
+    let snapshot = this.context.inspect();
     if (snapshot && !this.publicationAllowed())
-      snapshot.capabilities = snapshot.capabilities.map((c) =>
-        this.context.adapter()?.actions.find((a) => a.id === c.id)?.operation
-          .kind === "submit"
-          ? { ...c, state: "not-implemented" }
-          : c,
-      );
-    if (snapshot)
-      snapshot.capabilities = snapshot.capabilities.map((capability) => {
-        if (!groupBSends.has(capability.id)) return capability;
-        const spec = this.context
-          .adapter()!
-          .actions.find((a) => a.id === capability.id)!;
-        const roots =
-          spec.operation.kind === "group-b" && spec.operation.scope
-            ? elements(spec.operation.scope)
-            : [document];
-        if (roots.length !== 1)
+      snapshot = {
+        ...snapshot,
+        capabilities: snapshot.capabilities.map((c) =>
+          this.context.adapter()?.actions.find((a) => a.id === c.id)?.operation
+            .kind === "submit"
+            ? { ...c, state: "not-implemented" }
+            : c,
+        ),
+      };
+    if (snapshot) {
+      const baseSnapshot = snapshot;
+      snapshot = {
+        ...baseSnapshot,
+        capabilities: baseSnapshot.capabilities.map((capability) => {
+          if (!groupBSends.has(capability.id)) return capability;
+          const spec = this.context
+            .adapter()!
+            .actions.find((a) => a.id === capability.id)!;
+          const roots =
+            spec.operation.kind === "group-b" && spec.operation.scope
+              ? elements(spec.operation.scope)
+              : [document];
+          if (roots.length !== 1)
+            return {
+              ...capability,
+              state: roots.length ? "needs-choice" : "unavailable",
+            };
+          const prepared = prepareGroupB(
+            spec,
+            {
+              type: "site-action",
+            site: baseSnapshot.site,
+            url: baseSnapshot.url,
+              action: spec.id,
+              args: {},
+            revision: baseSnapshot.revision,
+            documentId: baseSnapshot.documentId,
+              requestId: "capability",
+            },
+            baseSnapshot,
+            roots[0],
+            this.recipientAllowed,
+          );
           return {
             ...capability,
-            state: roots.length ? "needs-choice" : "unavailable",
+            state: prepared.result?.state || "needs-confirmation",
           };
-        const prepared = prepareGroupB(
-          spec,
-          {
-            type: "site-action",
-            site: snapshot.site,
-            url: snapshot.url,
-            action: spec.id,
-            args: {},
-            revision: snapshot.revision,
-            documentId: snapshot.documentId,
-            requestId: "capability",
-          },
-          snapshot,
-          roots[0],
-          this.recipientAllowed,
-        );
-        return {
-          ...capability,
-          state: prepared.result?.state || "needs-confirmation",
-        };
-      });
+        }),
+      };
+    }
     return snapshot &&
       this.selected &&
       this.selectedRevision === snapshot.revision
@@ -193,7 +201,7 @@ export class SiteExecutor {
       return roots.length === 1 ? roots[0] : null;
     }
     if (
-      spec.write ||
+      (spec.write && op.kind !== "prompt") ||
       ["R09", "R10", "R15", "R20", "X13", "R24", "R25"].includes(spec.id)
     ) {
       const entity = this.identity(request, snapshot);
@@ -412,7 +420,7 @@ export class SiteExecutor {
     }
     if (this.pending) this.pending = null;
     if (
-      /^(?:list results|list comments|list chats|list messages|list drafts|list jobs|list trains|list places|list routes)$/.test(
+      /^(?:list results|list comments|list chats|list conversations|list videos(?: on screen)?|show videos on screen|list messages|list drafts|list jobs|list trains|list places|list routes)$/.test(
         n,
       )
     ) {
@@ -429,6 +437,10 @@ export class SiteExecutor {
                   {
                     "list comments": "comment",
                     "list chats": "chat",
+                    "list conversations": "chat",
+                    "list videos": "video",
+                    "list videos on screen": "video",
+                    "show videos on screen": "video",
                     "list messages": "message",
                     "list drafts": "draft",
                     "list jobs": "job",
@@ -603,7 +615,11 @@ export class SiteExecutor {
         );
       target = matches[0];
       const state = stateOf(target, op.opposite, op.names);
-      const desired = args.mode?.startsWith("unsave") ? false : op.desired;
+      const desired = args.mode === "off" || args.mode?.startsWith("unsave")
+        ? false
+        : args.mode === "on"
+          ? true
+          : op.desired;
       if (state === desired)
         return this.remember(
           result(
@@ -644,7 +660,7 @@ export class SiteExecutor {
       )
         return result("unavailable", "The scoped draft is empty.");
     }
-    if (spec.write && !confirmed) {
+    if (spec.write && op.kind !== "prompt" && !confirmed) {
       const identity = this.identity(request, snapshot);
       if (
         !identity &&
@@ -668,13 +684,16 @@ export class SiteExecutor {
       };
       return this.remember(result("needs-confirmation", preview));
     }
-    const mutationKey = `${spec.id}:${request.entityId || this.selected?.id || snapshot.current?.id}`;
-    if (spec.write && this.uncertain.has(mutationKey))
+    const guardedWrite = spec.write || op.kind === "prompt";
+    const mutationKey = op.kind === "prompt"
+      ? `${spec.id}:${request.args.query || "summary"}`
+      : `${spec.id}:${request.entityId || this.selected?.id || snapshot.current?.id}`;
+    if (guardedWrite && this.uncertain.has(mutationKey))
       return result(
         "failed",
         "The previous change has an uncertain outcome. Inspect the item before trying again. It will not be repeated automatically.",
       );
-    if (spec.write) this.uncertain.add(mutationKey);
+    if (guardedWrite) this.uncertain.add(mutationKey);
     let output: SiteResult;
     try {
       output = await this.execute(
@@ -691,14 +710,16 @@ export class SiteExecutor {
         error instanceof Error ? error.message : "The page interaction failed.",
       );
     }
+    if (op.kind === "prompt" && output.evidence === "prompt-not-sent")
+      this.uncertain.delete(mutationKey);
     if (!valid())
       output = result(
         "failed",
         "The action was cancelled or the page changed. Its result was not verified.",
       );
-    if (spec.write && ["available", "already-satisfied"].includes(output.state))
+    if (guardedWrite && ["available", "already-satisfied"].includes(output.state))
       this.uncertain.delete(mutationKey);
-    if (spec.write || output.state === "available") {
+    if (guardedWrite || output.state === "available") {
       this.handled.set(request.requestId, output);
       if (this.handled.size > 100)
         this.handled.delete(this.handled.keys().next().value!);
@@ -738,6 +759,34 @@ export class SiteExecutor {
             "failed",
             "The control was activated, but its result could not be verified. No automatic retry.",
           );
+    if (op.kind === "prompt") {
+      const editors = elements(op.editor, document).filter(editable);
+      if (editors.length !== 1)
+        return result("unavailable", "A unique ChatGPT prompt field is unavailable.", { evidence: "prompt-not-sent" });
+      const editor = editors[0];
+      const readEditor = () => editor instanceof HTMLInputElement || editor instanceof HTMLTextAreaElement
+        ? editor.value
+        : editor.textContent || "";
+      if (readEditor().trim())
+        return result("needs-choice", "The ChatGPT message field already has text. Clear or review it before sending another prompt.", { evidence: "prompt-not-sent" });
+      const prompt = a.query || "Summarize this conversation, including its main points and any unresolved questions.";
+      editor.focus();
+      insertText(editor, prompt);
+      if (norm(readEditor()) !== norm(prompt))
+        return result("failed", "The prompt could not be placed in ChatGPT's message field. It was not sent.", { evidence: "prompt-not-sent" });
+      const send = controls(op.submitNames);
+      if (send.length !== 1)
+        return result("unavailable", "ChatGPT has no enabled Send button. The prompt remains in the field and was not sent; check whether this page requires you to sign in.", { evidence: "prompt-not-sent" });
+      const prior = elements(op.responseSelector).map((e) => e.textContent || "").join("\n");
+      send[0].click();
+      const sent = await until(() => {
+        const response = elements(op.responseSelector).map((e) => e.textContent || "").join("\n");
+        return !readEditor().trim() || controls(["Stop generating", "Stop streaming"]).length > 0 || response !== prior;
+      }, valid, 1800);
+      return sent
+        ? result("available", "Sent your prompt to ChatGPT.", { evidence: "composer-cleared-or-response-started" })
+        : result("failed", "I could not verify that ChatGPT accepted the prompt. Check the message field before trying again; Handsfree will not resend it automatically.");
+    }
     if (op.kind === "group-b")
       return executeGroupB(
         spec,
@@ -786,7 +835,7 @@ export class SiteExecutor {
     }
     if (spec.id === "WA01" && a.query && !request.entityId) {
       const inputs = elements(
-        '#side [contenteditable="true"][role="textbox"],#pane-side input[aria-label="Search chats"],#side input[aria-label="Search chats"],#side [aria-label="Search input textbox"]',
+        '#side [contenteditable="true"][role="textbox"],#pane-side input[aria-label="Search chats"],#side input[aria-label="Search chats"],#side [aria-label="Search input textbox"],input[aria-label="Search or start a new chat"],[role="textbox"][aria-label="Search or start a new chat"]',
       );
       if (inputs.length !== 1 || !editable(inputs[0]))
         return result(
@@ -803,21 +852,11 @@ export class SiteExecutor {
         getSelection()?.addRange(range);
         insertText(input, a.query);
       }
-      let signature = "",
-        stableSince = performance.now();
-      const started = stableSince;
       const settled = await until(() => {
         const chats =
           this.context.inspect()?.entities.filter((e) => e.kind === "chat") ||
           [];
-        const next = chats.map((e) => e.id + ":" + e.label).join("|");
-        if (next !== signature) {
-          signature = next;
-          stableSince = performance.now();
-        }
         return (
-          performance.now() - started >= 400 &&
-          performance.now() - stableSince >= 200 &&
           !elements('#side [aria-busy="true"],#pane-side [aria-busy="true"]')
             .length &&
           chats.some((e) => norm(e.label).includes(norm(a.query!)))
@@ -978,7 +1017,10 @@ export class SiteExecutor {
         if (!["https:", "http:"].includes(url.protocol))
           return result("unavailable", "That link scheme is unsupported.");
         return result("available", `Opening ${chosen.label}.`, {
-          navigate: { url: url.href, newTab: spec.id === "W09" },
+          navigate: {
+            url: url.href,
+            newTab: spec.id === "W09" || request.args.mode === "new-tab",
+          },
         });
       }
       if (["chat", "thread", "train", "route"].includes(chosen.kind)) {
@@ -1157,6 +1199,18 @@ export class SiteExecutor {
       );
     }
     if (op.kind === "info") {
+      if (s.site === "chatgpt") {
+        const latest = elements('main [data-message-author-role="assistant"]').at(-1);
+        if (!latest)
+          return result("unavailable", "There is no visible ChatGPT response to read yet.");
+        const text = (latest.innerText || latest.textContent || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 1400);
+        return text
+          ? result("available", `Latest ChatGPT response: ${text}`, { evidence: "visible-assistant-message" })
+          : result("unavailable", "The latest ChatGPT response has no readable text.");
+      }
       if (s.site === "amazon") {
         const product = s.current;
         if (!product)
@@ -1187,7 +1241,11 @@ export class SiteExecutor {
       );
     }
     if (op.kind === "state") {
-      const desired = a.mode?.startsWith("unsave") ? false : op.desired;
+      const desired = a.mode === "off" || a.mode?.startsWith("unsave")
+        ? false
+        : a.mode === "on"
+          ? true
+          : op.desired;
       if (!target || !visible(target))
         return result("unavailable", "The reaction control changed.");
       target.click();
@@ -1582,6 +1640,15 @@ export class SiteExecutor {
         desired ? "Player muted." : "Player unmuted.",
         { evidence: `muted=${player.muted}` },
       );
+    }
+    if (command === "speed") {
+      const allowed = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+      if (a.value === undefined || !allowed.some((speed) => Math.abs(speed - a.value!) < 0.001))
+        return result("unavailable", "Choose a supported playback speed from 0.25x to 2x.");
+      player.playbackRate = a.value;
+      return Math.abs(player.playbackRate - a.value) < 0.001
+        ? result("available", `Playback speed set to ${a.value}x.`, { evidence: `playbackRate=${player.playbackRate}` })
+        : result("failed", "The player rejected the requested playback speed.");
     }
     if (command === "volume" || command === "volume-relative") {
       if (

@@ -10,7 +10,51 @@ export class SiteContext {
   private ids = new WeakMap<Element, { id: string; key: string }>();
   private nodes = new Map<string, HTMLElement>();
   private counter = 0;
-  constructor(private url: () => string = () => location.href) {}
+  private dirty = true;
+  private lastInspectedUrl = "";
+  private cachedSnapshot: SiteSnapshot | null = null;
+  private readonly markDirty = () => {
+    this.dirty = true;
+  };
+  constructor(private url: () => string = () => location.href) {
+    if (typeof document === "undefined" || typeof window === "undefined")
+      return;
+    if (document.documentElement && typeof MutationObserver !== "undefined") {
+      const observer = new MutationObserver(this.markDirty);
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: [
+          "aria-label",
+          "aria-hidden",
+          "aria-pressed",
+          "aria-selected",
+          "aria-expanded",
+          "href",
+          "title",
+          "role",
+          "contenteditable",
+          "placeholder",
+          "disabled",
+          "class",
+          "style",
+          "data-testid",
+          "data-id",
+          "data-chat-id",
+          "data-asin",
+          "data-job-id",
+          "data-train-number",
+          "data-meeting-title",
+        ],
+      });
+    }
+    document.addEventListener("input", this.markDirty, true);
+    document.addEventListener("change", this.markDirty, true);
+    window.addEventListener("scroll", this.markDirty, true);
+    window.addEventListener("resize", this.markDirty, true);
+  }
   node(id: string): HTMLElement | undefined {
     const e = this.nodes.get(id);
     return e?.isConnected && visible(e) ? e : undefined;
@@ -18,19 +62,51 @@ export class SiteContext {
   invalidate() {
     this.revision++;
     this.signature = "";
+    this.dirty = true;
   }
   inspect(): SiteSnapshot | null {
     const url = this.url(),
       site = siteForUrl(url);
-    if (!site) return null;
+    if (!this.dirty && this.lastInspectedUrl === url)
+      return this.cachedSnapshot;
+    if (!site) {
+      this.nodes.clear();
+      this.lastInspectedUrl = url;
+      this.cachedSnapshot = null;
+      this.dirty = false;
+      return null;
+    }
     const adapter = adapters[site],
       entities: Entity[] = [];
     this.nodes.clear();
+    const inViewport = (node: HTMLElement) => {
+      const rect = node.getBoundingClientRect();
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.bottom > 0 &&
+        rect.right > 0 &&
+        rect.top < window.innerHeight &&
+        rect.left < window.innerWidth
+      );
+    };
+    const visualOrder = (nodes: HTMLElement[]) =>
+      nodes
+        .filter(inViewport)
+        .sort((a, b) => {
+          const ar = a.getBoundingClientRect();
+          const br = b.getBoundingClientRect();
+          return Math.abs(ar.top - br.top) > 24
+            ? ar.top - br.top
+            : ar.left - br.left;
+        });
     const make = (node: HTMLElement, kind: EntityKind): Entity => {
       const link =
         node instanceof HTMLAnchorElement
           ? node
-          : node.querySelector<HTMLAnchorElement>(
+          : (kind === "video"
+              ? node.querySelector<HTMLAnchorElement>('a[href*="/watch"]')
+              : null) || node.querySelector<HTMLAnchorElement>(
               'a[href*="/status/"],a[href*="/comments/"],a[href*="/track/"]',
             ) || node.querySelector<HTMLAnchorElement>("a[href]");
       const href =
@@ -40,7 +116,9 @@ export class SiteContext {
             ? new URL(link.getAttribute("href")!, url).href
             : undefined;
       const chatIds =
-        site === "whatsapp" && kind === "chat"
+        site === "whatsapp" &&
+        kind === "chat" &&
+        !node.closest("#pane-side")
           ? [
               ...new Set(
                 [
@@ -64,6 +142,14 @@ export class SiteContext {
           ? chatIds[0]
           : undefined;
       const title =
+        (site === "youtube" && kind === "video"
+          ? node.querySelector<HTMLElement>(
+              "#video-title, a#video-title, h3",
+            )?.getAttribute("title") ||
+            node.querySelector<HTMLElement>(
+              "#video-title, a#video-title, h3",
+            )?.textContent
+          : undefined) ||
         node.getAttribute("post-title") ||
         (site === "whatsapp" && kind === "chat" && node.closest("#pane-side")
           ? node
@@ -104,7 +190,11 @@ export class SiteContext {
         label: title.trim().slice(0, 180),
         ...(identity ? { identity } : {}),
         detail: (
-          label(node) +
+          (site === "youtube" && kind === "video"
+            ? node.querySelector<HTMLElement>(
+                "#channel-name a, ytd-channel-name a, .ytd-channel-name a",
+              )?.textContent || ""
+            : label(node)) +
           (href && ["file", "folder", "repository"].includes(kind)
             ? " " + new URL(href).pathname
             : "")
@@ -115,7 +205,11 @@ export class SiteContext {
     for (const [kind, selector] of Object.entries(adapter.entities)) {
       const seen = new Set<string>();
       let kindCount = 0;
-      for (const node of elements(selector!)) {
+      const found = elements(selector!);
+      const ordered = site === "youtube" && kind === "video"
+        ? visualOrder(found)
+        : found;
+      for (const node of ordered) {
         if (
           site === "wikipedia" &&
           node.closest('.navbox,.sidebar,.vertical-navbox,[role="navigation"]')
@@ -132,10 +226,15 @@ export class SiteContext {
       }
     }
     const currentNodes = elements(adapter.current);
+    const currentNode = site === "chatgpt"
+      ? currentNodes.at(-1)
+      : currentNodes.length === 1
+        ? currentNodes[0]
+        : undefined;
     let current =
-      currentNodes.length === 1
+      currentNode
         ? make(
-            currentNodes[0],
+            currentNode,
             adapter.currentKind ||
               (site === "spotify"
                 ? "track"
@@ -187,7 +286,7 @@ export class SiteContext {
     ]);
     if (this.signature && signature !== this.signature) this.revision++;
     this.signature = signature;
-    return {
+    const snapshot: SiteSnapshot = {
       site,
       url,
       documentId: this.documentId,
@@ -205,7 +304,7 @@ export class SiteContext {
           let state: SiteSnapshot["capabilities"][number]["state"] =
             !spec || spec.operation.kind === "unsupported"
               ? "not-implemented"
-              : spec.write
+              : spec.write && spec.operation.kind !== "prompt"
                 ? "needs-confirmation"
                 : "available";
           if (spec && spec.operation.kind !== "unsupported") {
@@ -288,6 +387,10 @@ export class SiteContext {
           return { id: a.id, state, description: a.description };
         }),
     };
+    this.lastInspectedUrl = url;
+    this.cachedSnapshot = snapshot;
+    this.dirty = false;
+    return snapshot;
   }
   adapter(): Adapter | null {
     const site = siteForUrl(this.url());
