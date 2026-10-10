@@ -231,7 +231,7 @@ export type Message =
   | { type: "VALIDATE_LINK"; id: string; url: string; pageUrl: string }
   | { type: "GET_PAGE_CONTEXT" }
   | { type: "ANSWER"; text: string }
-  | { type: "FIND_RESULT"; ids: string[] }
+  | { type: "FIND_RESULT"; ids: string[]; disposition?: LinkDisposition }
   | { type: "METRIC"; event: MetricEvent }
   | { type: "GET_LOGS" }
   | { type: "CLEAR_LOGS" }

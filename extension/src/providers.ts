@@ -404,6 +404,10 @@ export async function resolveArbitrary(
   // first, then match the original query locally; never activate provider IDs.
   const requested = parseIntent(text);
   const named = requested.type === "click-target" ? { ids: [], intent: requested } : undefined;
+  const requestedNavigation =
+    (requested.type === "click-target" || requested.type === "click-link") && requested.disposition
+      ? { ids: [], intent: requested }
+      : undefined;
   if (output.answer !== undefined && output.answer !== null) {
     if (typeof output.answer !== "string" || !output.answer.trim() || output.answer.length > 6000 ||
       ids.length || output.intent !== undefined && output.intent !== null)
@@ -414,9 +418,11 @@ export async function resolveArbitrary(
     const intent = validateIntent(output.intent);
     if (!intent || ids.length)
       throw new Error("Invalid or unsupported Groq intent.");
-    return named && ["click", "open"].includes(intent.type) ? named : { ids, intent };
+    if (requestedNavigation || named && ["click", "open"].includes(intent.type))
+      return requestedNavigation ?? named!;
+    return { ids, intent };
   }
-  return named ?? { ids };
+  return requestedNavigation ?? named ?? { ids };
 }
 
 export async function transcribeAudio(

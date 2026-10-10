@@ -468,3 +468,11 @@ describe("Jev transport failure bounds", () => {
     expect(validateIntent({ type: "focus-target", query: "search" })).toEqual({ type: "focus-target", query: "search" });
   });
 });
+it.each([
+  { ids: [], intent: { type: "click-target", query: "Guide" } },
+  { ids: ["careers"] },
+])("preserves an explicit background disposition after provider interpretation", async output => {
+  request.mockResolvedValue(completion(output));
+  await expect(resolveArbitrary("open the first link in a background tab", targets, { groqKeys: ["dummy-groq"] }))
+    .resolves.toMatchObject({ intent: { type: "click-link", index: 1, disposition: "background" }, ids: [] });
+});

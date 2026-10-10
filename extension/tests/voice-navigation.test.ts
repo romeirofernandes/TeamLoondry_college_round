@@ -64,6 +64,18 @@ it("prepares only http links for worker-authorized tab opening and validates the
   document.getElementById("second")!.setAttribute("href", "javascript:alert(1)");
   expect(await runtime.handle({ type: "VALIDATE_LINK", ...result.link })).toMatchObject({ ok: false });
 });
+it("keeps a background-tab request through duplicate-label choice and click-this", async () => {
+  document.getElementById("duplicate")!.textContent = "ChatGPT";
+  await run({ type: "click-target", query: "chatgpt", disposition: "background" });
+  expect((runtime as any).choices).toHaveLength(2);
+  hit = document.getElementById("duplicate");
+  expect(await run({ type: "choose", index: 2 })).toMatchObject({ ok: true });
+  expect((runtime as any).selectedDisposition).toBe("background");
+  expect(clicked).toEqual([]);
+  const result = await run({ type: "click" }) as any;
+  expect(result).toMatchObject({ ok: true, disposition: "background", link: { url: new URL("/first", location.href).href } });
+  expect(clicked).toEqual([]);
+});
 it("does not list private or aria-hidden candidates", () => {
   document.getElementById("first")!.setAttribute("aria-hidden", "true"); document.getElementById("duplicate")!.setAttribute("data-private", ""); const targets = new PageTargets();
   expect(targets.links().map(id => targets.get(id)?.id)).toEqual(["second"]); targets.destroy();

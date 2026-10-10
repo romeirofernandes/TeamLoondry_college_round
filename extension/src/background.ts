@@ -377,6 +377,7 @@ async function activateTab(id: number, current: () => boolean = () => true) {
   }
 }
 async function arbitraryFind(query: string, signal?: AbortSignal) {
+  const parsed = parseIntent(query);
   if (!groqOptions().groqKeys.length) { await publish({ feedback: "Add a Groq key in the website dashboard to use hey handsfree commands." }); return; }
   const requestRevision = pageRevision;
   const snapshotTab = state.targetTabId;
@@ -397,14 +398,22 @@ async function arbitraryFind(query: string, signal?: AbortSignal) {
       if (current()) await publish({ feedback: response?.error || result.answer });
       return;
     }
-    if (result.intent) { await action(result.intent, current); return; }
+    if (result.intent) {
+      if (parsed.type === "click-target" && parsed.disposition && result.intent.type === "click-target")
+        result.intent.disposition = parsed.disposition;
+      if (parsed.type === "click-link" && parsed.disposition && result.intent.type === "click-link")
+        result.intent.disposition = parsed.disposition;
+      await action(result.intent, current); return;
+    }
     let ids = result.ids;
     if (ids.length === 1) {
       const selected = chosen.find(target => target.id === ids[0]);
       const label = selected?.text.toLowerCase().replace(/\s+/g, " ").trim();
       if (label) ids = chosen.filter(target => target.role === selected?.role && target.text.toLowerCase().replace(/\s+/g, " ").trim() === label).map(target => target.id);
     }
-    const response = await page({ type: "FIND_RESULT", ids: ids.slice(0, 10) });
+    const requested = parseIntent(query);
+    const disposition = requested.type === "click-link" || requested.type === "click-target" ? requested.disposition : undefined;
+    const response = await page({ type: "FIND_RESULT", ids: ids.slice(0, 10), disposition });
     if (current() && response?.error) await publish({ feedback: response.error });
     record(ids.length ? "find-match" : "find-no-match");
   } catch (error) {
@@ -507,7 +516,8 @@ async function action(intent: Intent, current: () => boolean = () => true) {
   const authorizationRevision = linkAuthorizationRevision;
   const stillCurrent = () => authorizationRevision === linkAuthorizationRevision && current() && state.running && !state.paused && !state.dictating && state.targetTabId === snapshotTab && pageRevision === revision;
   const result = await page({ type: "PAGE_ACTION", intent });
-  if ((intent.type === "click-link" || intent.type === "click-target") && intent.disposition && result?.ok && result.link && snapshotTab !== null) {
+  const openDisposition = intent.type === "click-link" || intent.type === "click-target" ? intent.disposition : result?.disposition;
+  if (openDisposition && result?.ok && result.link && snapshotTab !== null) {
     if (!stillCurrent() || await needTabs() || !stillCurrent()) return;
     const link = result.link;
     let url: URL;
@@ -517,7 +527,7 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     if (!stillCurrent() || tab.url !== link.pageUrl) return;
     const valid = await page({ type: "VALIDATE_LINK", id: link.id, url: url.href, pageUrl: link.pageUrl }, snapshotTab);
     if (!stillCurrent() || valid?.ok !== true) return;
-    await chrome.tabs.create({ url: url.href, active: intent.disposition !== "background" });
+    await chrome.tabs.create({ url: url.href, active: openDisposition !== "background" });
     return;
   }
   if (typeof result?.dictating === "boolean")
@@ -597,6 +607,8 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     if (signal.aborted) return;
     const intent = await mapCommand(text, { ...options, tabs, targets, forceClassification: classifyNamed }, signal);
     if (signal.aborted || revision !== pageRevision || !state.running || state.paused) return;
+    if (parsed.type === "click-target" && parsed.disposition && intent.type === "click-target")
+      intent.disposition = parsed.disposition;
     await action(intent, () => !signal.aborted && revision === pageRevision && state.running && !state.paused);
   });
 }

@@ -436,6 +436,13 @@ test("wake answers, find highlights and named clicks use the real worker and con
     await heard("hey handsfree click Submit example form");
     await heard("confirm");
     await expect(page.locator("#submissions")).toHaveText("1");
+    const before = await message({ type: "GET_STATE" });
+    const background = context.waitForEvent("page");
+    await heard("hey handsfree open the first link in a background tab");
+    const opened = await background;
+    await opened.waitForURL("**/second");
+    expect((await message({ type: "GET_STATE" })).targetTabId).toBe(before.targetTabId);
+    expect(await worker.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0].id)).toBe(before.targetTabId);
   } finally {
     await worker.evaluate(() => {
       const scope = globalThis as any;
@@ -542,6 +549,24 @@ test("final transcripts navigate generic result links and focus fields without p
     expect(new URL(page.url()).pathname).toBe("/results");
     await heard("click this");
     await page.waitForURL("**/guide");
+    await heard("go back");
+    await page.waitForURL("**/results?q=accessible%20design");
+    await page.evaluate(() => {
+      const duplicate = document.createElement("a");
+      duplicate.href = "/guide";
+      duplicate.textContent = "ChatGPT";
+      document.querySelector("main")!.append(duplicate);
+    });
+    const beforeAmbiguous = await message({ type: "GET_STATE" });
+    await heard("open the ChatGPT link in a background tab");
+    await expect(page.locator("#handsfree-assist-overlay .choice")).toHaveCount(2);
+    await heard("choose two");
+    const ambiguousBackground = context.waitForEvent("page");
+    await heard("click this");
+    const selectedBackground = await ambiguousBackground; opened.push(selectedBackground);
+    await selectedBackground.waitForURL("**/guide");
+    expect((await message({ type: "GET_STATE" })).targetTabId).toBe(beforeAmbiguous.targetTabId);
+    expect(await worker.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0].id)).toBe(beforeAmbiguous.targetTabId);
   } finally {
     await context.unroute(searchPattern);
     page = originalPage;

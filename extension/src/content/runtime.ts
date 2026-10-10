@@ -50,6 +50,8 @@ export class ContentRuntime {
   private pointerTarget = false;
   private pending: Pending | null = null;
   private choices: HTMLElement[] = [];
+  private choiceDisposition: "new-tab" | "background" | undefined;
+  private selectedDisposition: "new-tab" | "background" | undefined;
   private choiceSnapshots = new Map<HTMLElement, string>();
   private selectedSnapshot: string | null = null;
   private preparedLink: { id: string; url: string; pageUrl: string } | null = null;
@@ -141,6 +143,8 @@ export class ContentRuntime {
     this.select(null);
     this.stopTyping();
     this.choices = [];
+    this.choiceDisposition = undefined;
+    this.selectedDisposition = undefined;
     this.overlay.options([]);
   };
   private onScroll = () => {
@@ -216,6 +220,7 @@ export class ContentRuntime {
     ].join("|");
   }
   private select(element: HTMLElement | null, fromPointer?: boolean) {
+    if (fromPointer) this.selectedDisposition = undefined;
     if (element !== this.target) {
       this.cancelPending("The target changed. Submission cancelled.");
       this.target = element;
@@ -345,6 +350,8 @@ export class ContentRuntime {
           this.overlay.pointer(0, 0, false);
           this.overlay.options([]);
           this.choices = [];
+          this.choiceDisposition = undefined;
+          this.selectedDisposition = undefined;
           this.overlay.announce("");
           this.overlay.transcript("", false, false);
         } else if (!wasRunning)
@@ -399,11 +406,13 @@ export class ContentRuntime {
         if (!matches.length) {
           this.select(null);
           this.choices = [];
+          this.choiceDisposition = undefined;
           this.overlay.options([]);
           this.feedback("No matching target found on this page.");
           return { ok: true };
         }
         if (matches.length > 1) {
+          this.choiceDisposition = message.disposition;
           this.select(null);
           this.choices = matches.slice(0, 10);
           this.rememberChoices();
@@ -417,6 +426,7 @@ export class ContentRuntime {
           );
         } else {
           this.choices = [];
+          this.choiceDisposition = undefined;
           this.overlay.options([]);
           matches[0].scrollIntoView({ block: "center", behavior: "instant" });
           this.select(matches[0], false);
@@ -439,7 +449,10 @@ export class ContentRuntime {
         }
         this.preparedLink = null;
         const ok = this.action(message.intent);
-        return { ok, dictating: this.dictating, ...(this.preparedLink ? { link: this.preparedLink } : {}) };
+        const linkDisposition = this.preparedLink ? this.selectedDisposition : undefined;
+        const response = { ok, dictating: this.dictating, ...(this.preparedLink ? { link: this.preparedLink } : {}), ...(linkDisposition ? { disposition: linkDisposition } : {}) };
+        if (this.preparedLink && linkDisposition) this.selectedDisposition = undefined;
+        return response;
       }
       case "DICTATE": {
         if (
@@ -499,6 +512,8 @@ export class ContentRuntime {
     if (intent.type === "cancel") {
       this.cancelPending();
       this.choices = [];
+      this.choiceDisposition = undefined;
+      this.selectedDisposition = undefined;
       this.overlay.options([]);
       this.feedback("Cancelled.");
       return true;
@@ -550,6 +565,8 @@ export class ContentRuntime {
         return false;
       }
       this.choices = [];
+      this.selectedDisposition = this.choiceDisposition;
+      this.choiceDisposition = undefined;
       this.overlay.options([]);
       choice.scrollIntoView({ block: "center", behavior: "instant" });
       this.select(choice, false);
@@ -560,6 +577,8 @@ export class ContentRuntime {
       return true;
     }
     if (intent.type === "show-links") {
+      this.choiceDisposition = undefined;
+      this.selectedDisposition = undefined;
       this.choices = this.targets.links().slice(0, 10).map(id => this.targets.get(id)).filter((element): element is HTMLElement => !!element);
       this.select(null);
       this.cancelPending();
@@ -571,12 +590,14 @@ export class ContentRuntime {
     if (intent.type === "click-target" || intent.type === "click-link" || intent.type === "focus-target") {
       const ids = intent.type === "click-link" ? this.targets.links().slice(intent.index - 1, intent.index) : intent.type === "focus-target" ? this.targets.fields(intent.query) : this.targets.named(intent.query);
       if (ids.length !== 1) {
-        void this.handle({ type: "FIND_RESULT", ids });
+        void this.handle({ type: "FIND_RESULT", ids, disposition: intent.type === "focus-target" ? undefined : intent.disposition });
         return true;
       }
       const target = this.targets.get(ids[0]);
       if (!target) return false;
       this.choices = [];
+      this.choiceDisposition = undefined;
+      this.selectedDisposition = intent.type === "focus-target" ? undefined : intent.disposition;
       this.overlay.options([]);
       this.select(target, false);
       target.scrollIntoView({ block: "center", behavior: "instant" });
@@ -725,6 +746,15 @@ export class ContentRuntime {
         this.select(null); this.feedback("The selected target changed. Select it again."); return false;
       }
       if (!this.voiceAllowed()) return false;
+      if (this.selectedDisposition) {
+        const url = linkUrl(this.target);
+        if (!url || !this.target.matches('a[href],[role="link"]')) {
+          this.feedback("Only HTTP or HTTPS links can open in another tab.");
+          return false;
+        }
+        this.preparedLink = { id: this.targets.id(this.target), url, pageUrl: location.href };
+        return true;
+      }
       return this.activate(this.target, "voice");
     }
     return false;
