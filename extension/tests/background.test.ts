@@ -16,7 +16,7 @@ const pageSender = (id: number): chrome.runtime.MessageSender => ({
   url: "https://example.test/",
 });
 
-async function setup(options: { tabPermission?: boolean; key?: string } = {}) {
+async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: string } = {}) {
   let listener: Listener | undefined;
   let pageDictating = false;
   const event = () => ({ addListener: vi.fn() });
@@ -25,7 +25,8 @@ async function setup(options: { tabPermission?: boolean; key?: string } = {}) {
       local: {
         setAccessLevel: vi.fn(async () => {}),
         get: vi.fn(async () => ({
-          settings: { ...defaults, llmKey: options.key ?? "" },
+          settings: { ...defaults },
+          providers: { groqKeys: options.key ? [options.key] : [], jevKey: options.jevKey ?? "" },
           logs: [],
         })),
         set: vi.fn(async () => {}),
@@ -35,12 +36,15 @@ async function setup(options: { tabPermission?: boolean; key?: string } = {}) {
     runtime: {
       getURL: (path: string) => "chrome-extension://handsfree-test/" + path,
       sendMessage: vi.fn(async () => undefined),
+      getContexts: vi.fn(async () => []),
+      ContextType: { OFFSCREEN_DOCUMENT: "OFFSCREEN_DOCUMENT" },
       onMessage: {
         addListener: vi.fn((registered: Listener) => {
           listener = registered;
         }),
       },
     },
+    offscreen: { createDocument: vi.fn(async () => {}), closeDocument: vi.fn(async () => {}), Reason: { USER_MEDIA: "USER_MEDIA", WORKERS: "WORKERS" } },
     permissions: { contains: vi.fn(async () => options.tabPermission ?? true) },
     scripting: { executeScript: vi.fn(async () => []) },
     extension: { isAllowedIncognitoAccess: vi.fn(async () => false) },
@@ -310,23 +314,24 @@ describe("arbitrary find boundary", () => {
   it("never calls the provider or scans the page when no key is set", async () => {
     const { browser, send, fetch } = await setup();
     browser.tabs.sendMessage.mockClear();
-    await send({ type: "HEARD", text: "find careers page" });
+    await send({ type: "HEARD", text: "hey handsfree careers page" });
     expect(fetch).not.toHaveBeenCalled();
     expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, {
       type: "GET_TARGETS",
     });
     expect((await send({ type: "GET_STATE" })).feedback).toContain(
-      "Arbitrary find is off",
+      "Add a Groq key",
     );
   });
 
-  it("never fetches when tab permission is denied, even with a key", async () => {
+  it("can find page targets without optional tab-title permission", async () => {
     const { send, fetch } = await setup({
       key: "test-only-key",
       tabPermission: false,
     });
-    await send({ type: "HEARD", text: "find careers page" });
-    expect(fetch).not.toHaveBeenCalled();
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":["careers"]}' } }] }) });
+    await send({ type: "HEARD", text: "hey handsfree careers page" });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("rejects invented provider target IDs without highlighting or activating them", async () => {
@@ -337,7 +342,7 @@ describe("arbitrary find boundary", () => {
         choices: [{ message: { content: '{"ids":["invented"]}' } }],
       }),
     });
-    await send({ type: "HEARD", text: "find careers page" });
+    await send({ type: "HEARD", text: "hey handsfree careers page" });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(
       browser.tabs.sendMessage.mock.calls.some(
@@ -345,7 +350,7 @@ describe("arbitrary find boundary", () => {
       ),
     ).toBe(false);
     expect((await send({ type: "GET_STATE" })).feedback).toContain(
-      "invalid target IDs",
+      "Invalid target IDs",
     );
   });
 
@@ -357,7 +362,7 @@ describe("arbitrary find boundary", () => {
         choices: [{ message: { content: '{"ids":["careers"]}' } }],
       }),
     });
-    await send({ type: "HEARD", text: "find careers page" });
+    await send({ type: "HEARD", text: "hey handsfree careers page" });
     const request = JSON.parse(fetch.mock.calls[0][1].body);
     expect(JSON.parse(request.messages[1].content)).toEqual({
       phrase: "careers page",
@@ -386,7 +391,7 @@ describe("arbitrary find boundary", () => {
         });
       });
     });
-    const request = send({ type: "HEARD", text: "find careers page" });
+    const request = send({ type: "HEARD", text: "hey handsfree careers page" });
     await started;
     await send({ type: "PAUSE" });
     resolveFetch({
@@ -414,7 +419,7 @@ describe("arbitrary find boundary", () => {
         });
       });
     });
-    const request = send({ type: "HEARD", text: "find careers page" });
+    const request = send({ type: "HEARD", text: "hey handsfree careers page" });
     await started;
     await send({ type: "PAUSE" });
     await send({ type: "RESUME" });
@@ -443,7 +448,7 @@ describe("arbitrary find boundary", () => {
         });
       });
     });
-    const request = send({ type: "HEARD", text: "find careers page" });
+    const request = send({ type: "HEARD", text: "hey handsfree careers page" });
     await started;
     const updateListener = browser.tabs.onUpdated.addListener.mock
       .calls[0][0] as (id: number, change: { status: string }) => void;
@@ -476,7 +481,7 @@ describe("arbitrary find boundary", () => {
           });
         });
       });
-      const request = send({ type: "HEARD", text: "find careers page" });
+      const request = send({ type: "HEARD", text: "hey handsfree careers page" });
       await started;
       await send({ type: "HEARD", text });
       expect(await send({ type: "GET_STATE" })).toMatchObject(
@@ -510,7 +515,7 @@ describe("arbitrary find boundary", () => {
           });
         });
       });
-      const request = send({ type: "HEARD", text: "find careers page" });
+      const request = send({ type: "HEARD", text: "hey handsfree careers page" });
       await started;
       const queued = send({ type: "HEARD", text: "close tab" });
       await send({ type: "GET_STATE" });
@@ -530,4 +535,21 @@ describe("arbitrary find boundary", () => {
       expect(browser.tabs.remove).not.toHaveBeenCalled();
     },
   );
+});
+
+ describe("Jev emergency interruption", () => {
+  it("pauses immediately while ordinary speech mapping is pending", async () => {
+    const { send, fetch, browser } = await setup({ jevKey: "test-only-jev" });
+    let resolveFetch: (response: unknown) => void = () => {};
+    const started = new Promise<void>(resolve => fetch.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { resolveFetch = resolver; });
+    }));
+    const request = send({ type: "HEARD", text: "move a little further down" });
+    await started;
+    await send({ type: "HEARD", text: "pause handsfree" });
+    expect(await send({ type: "GET_STATE" })).toMatchObject({ paused: true });
+    resolveFetch({ ok: true, json: async () => ({}) });
+    await request;
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: "PAGE_ACTION", intent: { type: "scroll", direction: "down" } });
+  });
 });

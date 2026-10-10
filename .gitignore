@@ -17,3 +17,4 @@ coverage/
 /extension/assets/
 /extension/test-results/
 /extension/playwright-report/
+/extension/config/providers.local.json

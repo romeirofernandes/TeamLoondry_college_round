@@ -24,15 +24,17 @@ The first build downloads Google's versioned MediaPipe face and hand models, ver
 4. Select this repository's **`extension/dist`** directory, not `extension/` or `next/`.
 5. Pin Handsfree using Chrome's Extensions menu.
 6. Open a normal HTTP or HTTPS webpage. Chrome settings, extension pages, the Chrome Web Store, and other protected pages cannot be controlled.
-7. Click Handsfree, then **Open controls**.
-8. Click **Start session**. Allow the camera when Chrome asks.
-9. Keep the control window open and visible. It owns the camera and speech session; closing it stops capture. Do not minimize it while testing tracking.
-10. Click **Calibrate / recalibrate**. Hold your comfortable neutral position for the first 2.5 seconds, then move comfortably left, right, up, and down until the eight-second calibration ends.
-11. After media setup, use **Enable webpage access** to permit control across page navigation. **Enable tab commands** grants optional tab-title access when you want tab or find commands.
+7. Start the website in a second terminal with `cd next`, `npm ci`, then `npm run dev`. Open `http://localhost:3000/dashboard` from the extension's **Open dashboard** button.
+8. On a normal webpage, open Handsfree and select **Start Handsfree**. Allow the camera and microphone. The popup shows a live camera preview while the session runs.
+9. Open the website dashboard for calibration, pointer settings, speech language, tabs, providers, and activity. Capture continues in Chrome's offscreen document when the popup closes or you return to another tab.
+10. Select **Calibrate**. Hold your comfortable neutral position for the first 2.5 seconds, then move comfortably left, right, up, and down until the eight-second calibration ends. Instructions and progress appear above the camera.
+11. Use the dashboard permission setup to enable webpage control and optional tab commands. Permission prompts open on the extension origin. If Chrome refuses a popup media prompt, use **Enable camera and microphone** in that setup window, then retry.
+
+The Chrome dashboard shortcut is `chrome-extension://<extension-id>/dashboard.html#tabs`. It redirects to the configured website dashboard. The default website URL is `http://localhost:3000/dashboard`. For another development port or HTTPS deployment, update the saved `dashboardUrl` through the extension settings protocol and grant webpage access to that host before opening it.
 
 Permissions and first-time startup require a user gesture. Someone can assist with setup if necessary. The spec's suggestion that a popup can start without any initial input needs this qualification.
 
-To update after code changes, rebuild, click Reload on Handsfree in `chrome://extensions`, and reload the webpages being tested. Reopen controls and start a new session.
+To update after code changes, rebuild, click Reload on Handsfree in `chrome://extensions`, and reload the webpages being tested. Reopen the popup or dashboard and start a new session.
 
 ## Start with a controlled test page
 
@@ -52,19 +54,18 @@ Open `http://127.0.0.1:4177`. This page has a click counter, ordinary text field
 - **Dwell:** enable dwell selection, aim at Count a selection, and wait for the visible ring. It defaults to 800 ms. Moving away cancels it. Remaining on an already activated target does not click repeatedly; leave and return to rearm.
 - **Tracking loss:** cover the camera or move out of view. The pointer should freeze and no dwell or hand action should fire. Return to view before selecting again.
 - **Scroll:** say `scroll down` or `scroll up`. With edge scrolling enabled, hold the pointer near the top or bottom edge.
-- **Pause:** click Pause all, press Escape on the controlled webpage, or use Alt + Shift + P. Cursor activation, voice recognition, and dictation stop together. Resume with the button or shortcut, because paused recognition cannot hear a resume phrase.
+- **Pause:** click Pause, press Escape on the controlled webpage, or use Alt + Shift + P. Cursor activation, voice recognition, and dictation stop together. Resume with the button or shortcut, because paused recognition cannot hear a resume phrase.
 - **Stop:** click Stop or say `stop handsfree` in command mode. This releases the camera and ends recognition.
 
 Face is the default primary pointer. Hand is an explicit alternative rather than an automatic switch that might move the cursor unexpectedly. The displayed confidence is a geometry/presence proxy, not a calibrated probability of a correct selection.
 
 ## Enable voice
 
-Speech starts in on-device-only mode. It needs a Chrome build supporting local speech recognition and an installed English language pack. Click **Install local English speech pack**, then restart the session. If Chrome reports that local speech is unavailable, pointing still works.
+Browser speech is the default. It may send microphone audio to Chrome's speech provider. If browser recognition is unavailable, the configured Groq fallback records completed utterances and sends them to Groq transcription. The webcam feed stays local. The dashboard shows the active voice status, and a transcript panel appears at the bottom right of the controlled webpage.
 
-You can explicitly select **Browser speech service** and restart. This can send microphone audio to Chrome's speech provider. It is not covered by a promise that audio stays on-device. No silent cloud fallback occurs. Chrome, network availability, browser policy, and microphone permissions can affect recognition.
+Choose a speech language in the dashboard. Automatic uses the browser locale for Chrome speech and automatic detection for Groq. Local-only mode is also available when Chrome supports on-device recognition and the selected language pack is installed. Local-only mode never falls back to a cloud service.
 
-The Type a command field is an accessible fallback and a way to test actions independently of recognition.
-
+Ordinary commands use Jev through OpenRouter or TypeSafe to map speech to existing actions. Exact pause, stop, and cancel commands remain immediate. Dictation inserts literal text and bypasses Jev. The **Type a command** field lets you check actions independently of microphone recognition.
 Core commands:
 
 ```text
@@ -118,15 +119,15 @@ open incognito
 
 Tab-title ties ask you to say `choose one`, `choose two`, and so on. A title with no match changes nothing. Close tab always needs a separate confirmation and binds it to the original tab. Incognito also needs Chrome's Allow in incognito setting in Handsfree's extension details. Chrome's own settings/history/downloads pages can open but their contents cannot be controlled by the in-page overlay.
 
-## Optional arbitrary find
+## Providers and arbitrary commands
 
-This is the only command path that uses an LLM. Add your own OpenAI API key in Optional page find, grant access to the provider, and save. The key stays in extension-local storage and is never sent to webpages. Calls can incur charges on your provider account.
+Ordinary speech uses Jev. Requests starting with `hey handsfree` use Groq with `qwen/qwen3.8-27b`. For example, say `hey handsfree find the careers link`. Matching IDs highlight available top-document controls; say `click this` to activate. Arbitrary navigation requests can also map to existing browser actions. Submit and close-tab still require a separate confirmation.
 
-Say `find careers page`. The extension scans available top-document interactive targets, including offscreen targets, sends your phrase and their labels/roles to OpenAI, then scrolls to and highlights a returned match. It does not click. Say `click this` afterward to activate deliberately.
+Provider output is validated. Unknown IDs, unsupported actions, ambiguous results, timeouts, and provider errors cause no activation. Up to 1,500 target labels can be sent, including offscreen targets. Closed shadow roots and cross-origin iframe contents are not scanned.
 
-Duplicate labels or multiple returned matches ask you to choose. No match, an invalid response, a provider error, timeout, or missing key causes no activation. Requests are bounded to 1,500 targets with short labels. Closed shadow roots and cross-origin iframe contents are not scanned.
+The local build reads `extension/config/providers.local.json`, which is gitignored. Use `providers.example.json` as the format. This workspace's supplied credentials are already configured; no values belong in tracked code or documentation. Groq requests rotate across up to five configured keys, including transcription requests. This local build uses the four working supplied keys; the rejected fifth is excluded. Keys are bundled in the local extension build. Keep `dist/` out of GitHub too.
 
-Remove the key and save to disable arbitrary find. Fixed navigation and tab commands do not use an LLM.
+The dashboard accepts local overrides without exposing stored values back to webpages. Saving empty provider values disables that provider. Without Jev, exact commands still work. Browser speech may send audio to Chrome, Groq fallback sends audio to Groq, Jev receives command text, and arbitrary Groq requests receive command text and target labels. Camera frames remain local.
 
 ## Check timing and errors
 
@@ -145,6 +146,8 @@ npm test
 npm run build
 npm run test:e2e
 ```
+
+With the Next dev server running, `node tests/dashboard-next.mjs` additionally checks the actual website dashboard against the packaged extension. `node tests/tracking-timing.mjs` checks capture when the preview video clock freezes.
 
 Browser tests use `/usr/bin/chromium` by default. Set `CHROMIUM_PATH` to your local Chromium executable if needed. The automated extension fixture pregrants tab and localhost permissions in a temporary manifest; production permissions remain optional. Tests inject deterministic pointer/transcript messages through the production message protocol to verify browser behavior. Fake camera frames verify capture and local worker loading, not human tracking or microphone accuracy.
 

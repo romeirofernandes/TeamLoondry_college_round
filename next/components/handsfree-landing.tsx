@@ -51,7 +51,7 @@ const steps = [
   {
     title: "Start from Chrome.",
     description:
-      "Open the extension popup. Camera and microphone permissions come with a plain explanation and a live preview. If camera access is denied, keep going with voice.",
+      "Open the extension popup, grant browser and device access, then open the website dashboard. Preview your camera and adjust your session there. If camera access is denied, keep going with voice.",
   },
   {
     title: "Set your comfortable range.",
@@ -69,37 +69,37 @@ const faq = [
   {
     question: "Who is Handsfree for?",
     answer:
-      "People who find mouse and keyboard input difficult because of motor limits, injury, or strain. The planned Chrome extension combines head movement, broad hand gestures, and voice without specialist hardware.",
+      "People who find mouse and keyboard input difficult because of motor limits, injury, or strain. The Chrome extension combines head movement, broad hand gestures, and voice without specialist hardware.",
   },
   {
     question: "What stays on my device?",
     answer:
-      "Camera frames, calibration, settings, and run logs stay on your device. Speech defaults to on-device recognition when Chrome supports it; optional browser-service speech may send audio to Chrome’s provider and requires an explicit choice. Optional arbitrary find sends target labels and your phrase to an LLM with your locally stored key. Handsfree has no backend or cloud store.",
+      "Camera frames, calibration, settings, and run logs stay on your device. Speech defaults to Chrome’s online service, with Groq transcription as a fallback when a key is available. You can choose on-device speech in the dashboard when Chrome supports it. Jev maps command text; “hey handsfree” requests send your phrase and visible target labels to Groq. Provider keys stay in the extension.",
   },
   {
     question: "What can I say?",
     answer:
-      "Core commands include “scroll up,” “scroll down,” “go back,” “go forward,” “click this,” “open this,” “start typing,” and “stop typing.” Tab commands cover new tabs, background searches, next or previous tab, switching by title, and Chrome history, downloads, settings, or incognito. Closing a tab requires confirmation. Unknown phrases show what was heard and take no action.",
+      "Core commands include “scroll up,” “scroll down,” “go back,” “go forward,” “click this,” “open this,” “start typing,” and “stop typing.” Tab commands cover new tabs, background searches, next or previous tab, switching by title, and Chrome history, downloads, settings, or incognito. Closing a tab requires confirmation. Jev can map other command phrases when configured. Say “hey handsfree” before a request to use Groq. Unrecognized requests show what was heard and take no action.",
   },
   {
-    question: "How does “find careers page” work?",
+    question: "How does “hey handsfree, find careers” work?",
     answer:
-      "Optional arbitrary find checks the live page, including content outside the viewport, then scrolls to and highlights a match. It asks you to choose when matches tie and takes no action when nothing matches. A missing key disables this feature with a clear message; fixed voice commands do not use an LLM.",
+      "Say “hey handsfree, find careers.” Groq checks the live page’s target labels, including content outside the viewport, then scrolls to and highlights a match. You choose when several targets match. Nothing is clicked automatically. Groq keys are configured through the website dashboard; fixed commands work without a key.",
   },
   {
     question: "Will dictated text submit a form?",
     answer:
-      "No. Dictation only inserts text and never runs navigation commands. You explicitly stop typing, make manual corrections, and separately confirm submission. Wake-word activation and automatic form filling are later work, not part of the core experience.",
+      "No. Dictation only inserts text and never runs navigation commands. You explicitly stop typing, make manual corrections, and separately confirm submission. During dictation, “hey handsfree” is inserted as text. Only “stop typing” ends dictation.",
   },
   {
     question: "Where will Handsfree work?",
     answer:
-      "Inside supported webpages in Chrome. It does not control your operating system, and protected browser pages show a clear out-of-scope message. Read aloud and wake-word activation are deferred; offline speech is not promised.",
+      "Inside supported webpages in Chrome. It does not control your operating system, and protected browser pages show a clear out-of-scope message. Read aloud is deferred. On-device speech requires Chrome support and a language pack.",
   },
   {
     question: "Can I use the extension yet?",
     answer:
-      "An unpacked development extension is available in this repository. Follow the root README to build it and load extension/dist in Chrome. Real-device tracking and speech accuracy still need testing. This website does not activate your camera or microphone.",
+      "An unpacked development extension is available in this repository. Follow the root README to build it and load extension/dist in Chrome. Real-device tracking and speech accuracy still need testing. The landing page does not request device access. The dashboard offers a camera preview after you start a session.",
   },
 ];
 
@@ -347,8 +347,7 @@ export default function HandsfreeLanding() {
               <span className="muted-heading">Clear answers.</span>
             </h2>
             <p>
-              Privacy, voice commands, and the boundaries of the planned
-              extension.
+              Privacy, voice commands, and where the extension works.
             </p>
           </div>
           <Accordion type="single" collapsible>

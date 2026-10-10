@@ -19,7 +19,7 @@ test("packaged face and hand workers load locally and reject blank camera frames
       (await context.waitForEvent("serviceworker", { timeout: 10000 }));
     const page = await context.newPage();
     await page.goto(
-      `chrome-extension://${new URL(service.url()).host}/controller.html`,
+      `chrome-extension://${new URL(service.url()).host}/popup.html`,
     );
     for (const mode of ["face", "hand"] as const) {
       const result = await page.evaluate(

@@ -45,8 +45,20 @@ function recognizerClass(): RecognitionConstructor {
     );
   return constructor;
 }
+function speechLanguage(language: string): string {
+  const selected =
+    language === "auto" ? globalThis.navigator?.language || "en-US" : language;
+  try {
+    const canonical = Intl.getCanonicalLocales(selected)[0];
+    if (!canonical || !/^[a-z]{2,3}(?:-|$)/i.test(canonical)) throw new Error();
+    return canonical;
+  } catch {
+    throw new Error("Choose a valid speech language, such as en-US or hi-IN.");
+  }
+}
 /** Download is deliberately separate from start and must be called by a user action. */
 export async function installLocalSpeech(language: string): Promise<void> {
+  language = speechLanguage(language);
   const Recognition = recognizerClass();
   if (!Recognition.available || !Recognition.install)
     throw new Error(
@@ -93,6 +105,7 @@ export class SpeechAdapter {
   constructor(
     private onText: (text: string) => void,
     private onStatus: (status: string) => void,
+    private onInterim: (text: string) => void = () => {},
   ) {}
   async start(settings: Settings): Promise<void> {
     this.stop();
@@ -101,6 +114,8 @@ export class SpeechAdapter {
     this.active = true;
     this.retryCount = 0;
     try {
+      settings = { ...settings, language: speechLanguage(settings.language) };
+      this.settings = settings;
       const Recognition = recognizerClass();
       const recognition = new Recognition();
       if (settings.speechMode === "local") {
@@ -135,7 +150,7 @@ export class SpeechAdapter {
     const settings = this.settings!;
     recognition.lang = settings.language;
     recognition.continuous = true;
-    recognition.interimResults = false;
+    recognition.interimResults = true;
     recognition.maxAlternatives = 1;
     this.recognition = recognition;
     const current = () =>
@@ -179,18 +194,25 @@ export class SpeechAdapter {
       };
       recognition.onresult = (event) => {
         if (!current()) return;
+        const interim: string[] = [];
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i];
-          if (!result.isFinal) continue;
           const text = result[0]?.transcript?.trim();
+          if (!result.isFinal) {
+            if (text) interim.push(text);
+            continue;
+          }
           if (text) {
             this.retryCount = 0;
             this.onText(text);
+            if (!current()) return;
           }
         }
+        this.onInterim(interim.join(" "));
       };
       recognition.onerror = (event) => {
         if (!current()) return;
+        this.onInterim("");
         lastError = event.error;
         const help =
           errorHelp[event.error] ??
@@ -211,6 +233,7 @@ export class SpeechAdapter {
       };
       recognition.onend = () => {
         if (!current()) return;
+        this.onInterim("");
         if (!settled) {
           fail(
             new Error(
@@ -267,6 +290,7 @@ export class SpeechAdapter {
   }
   private disable() {
     this.active = false;
+    this.onInterim("");
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.restartTimer = null;
     this.rejectStartup?.(new Error("Speech stopped"));

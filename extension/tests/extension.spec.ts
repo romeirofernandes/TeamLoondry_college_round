@@ -72,13 +72,14 @@ test.beforeAll(async () => {
     (await context.waitForEvent("serviceworker"));
   const id = worker.url().split("/")[2];
   controls = await context.newPage();
-  await controls.goto(`chrome-extension://${id}/controller.html`);
+  await controls.goto(`chrome-extension://${id}/popup.html`);
   page = await context.newPage();
   await page.goto("http://127.0.0.1:4177");
   const tabId = await worker.evaluate(async () => {
     const tabs = await chrome.tabs.query({ url: "http://127.0.0.1:4177/*" });
     return tabs[0].id!;
   });
+  await message({ type: "SAVE_PROVIDERS", groqKeys: [], jevKey: "" });
   await message({ type: "START", tabId });
   await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
   await message({
@@ -153,9 +154,9 @@ test("unknown phrases and missing-key find are explicit no-ops", async () => {
   expect((await message({ type: "GET_STATE" })).feedback).toContain(
     "No command matched",
   );
-  await heard("find careers page");
+  await heard("hey handsfree find careers page");
   expect((await message({ type: "GET_STATE" })).feedback).toContain(
-    "Arbitrary find is off",
+    "Add a Groq key",
   );
   const targets = await worker.evaluate(async () => {
     const { state } = await chrome.storage.session.get("state");
@@ -201,238 +202,100 @@ test("tab switch by title works and closing always requires confirmation", async
   await heard("confirm");
   await expect.poll(() => second.isClosed()).toBe(true);
 });
-test("packaged worker and camera start, stop releases capture, popup theme persists", async () => {
-  // Reset target after prior close so camera/controller lifecycle is independent of tabs test.
-  const id = worker.url().split("/")[2];
-  await page.bringToFront();
-  await controls.bringToFront();
-  await controls
-    .getByRole("button", { name: /^(Start|Restart) session$/ })
-    .click();
-  await expect
-    .poll(async () => (await message({ type: "GET_STATE" })).trackingBackend, {
-      timeout: 30000,
-    })
-    .toBe("Worker / CPU");
-  await expect
-    .poll(() =>
-      controls
-        .locator("video")
-        .evaluate((el) => (el as HTMLVideoElement).srcObject !== null),
-    )
-    .toBe(true);
-  await controls.getByRole("button", { name: "Stop", exact: true }).click();
-  await expect
-    .poll(() =>
-      controls
-        .locator("video")
-        .evaluate((el) => (el as HTMLVideoElement).srcObject === null),
-    )
-    .toBe(true);
+async function offscreenCount() {
+  return worker.evaluate(async () => (await chrome.runtime.getContexts({
+    contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
+  })).length);
+}
+async function dashboardRequest<T = any>(dashboard: Page, request: unknown): Promise<T> {
+  return dashboard.evaluate((message) => new Promise((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => { removeEventListener("message", listener); reject(new Error("Dashboard bridge timed out")); }, 5000);
+    function listener(event: MessageEvent) {
+      if (event.source !== window || event.origin !== location.origin || event.data?.channel !== "handsfree-dashboard-response" || event.data.id !== id) return;
+      clearTimeout(timer); removeEventListener("message", listener); resolve(event.data.result);
+    }
+    addEventListener("message", listener);
+    window.postMessage({ channel: "handsfree-dashboard-request", id, message }, location.origin);
+  }), request) as Promise<T>;
+}
+
+test("minimal popup previews camera; capture survives popup close and webpage navigation", async () => {
+  const id = new URL(worker.url()).host;
   const popup = await context.newPage();
   await popup.goto(`chrome-extension://${id}/popup.html`);
-  await expect(
-    popup.getByRole("button", { name: "Open controls" }),
-  ).toBeVisible();
-  await popup.getByRole("button", { name: "Toggle color theme" }).click();
-  const dark = await popup
-    .locator("html")
-    .evaluate((el) => el.classList.contains("dark"));
-  await popup.reload();
-  await expect
-    .poll(() =>
-      popup.locator("html").evaluate((el) => el.classList.contains("dark")),
-    )
-    .toBe(dark);
-  await controls.screenshot({
-    path: "test-results/controller.png",
-    fullPage: true,
-  });
+  await expect(popup.getByRole("button", { name: "Open dashboard" })).toBeVisible();
+  await expect(popup.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await expect.poll(async () => (await message({ type: "GET_STATE" })).trackingBackend, { timeout: 30000 }).toBe("Worker / CPU");
+  await expect.poll(() => popup.locator("video").evaluate(el => {
+    const stream = (el as HTMLVideoElement).srcObject as MediaStream | null;
+    return stream?.getVideoTracks()[0]?.readyState;
+  })).toBe("live");
+  await popup.getByRole("button", { name: "Pause", exact: true }).click();
+  await expect.poll(async () => (await message({ type: "GET_STATE" })).paused).toBe(true);
+  await popup.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect.poll(async () => (await message({ type: "GET_STATE" })).paused).toBe(false);
+  await popup.close();
+  await page.bringToFront();
+  await page.goto("http://127.0.0.1:4177/second");
+  await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+  expect((await message({ type: "GET_STATE" })).running).toBe(true);
+  expect(await offscreenCount()).toBe(1);
+  // Clear the previous timing value so this requires fresh offscreen inference.
+  await message({ type: "SET_STATE", patch: { latencyMs: 0 } });
+  await expect.poll(async () => (await message({ type: "GET_STATE" })).latencyMs).toBeGreaterThan(0);
+  await message({ type: "STOP" });
+  await expect.poll(offscreenCount).toBe(0);
+  const stopped = await message({ type: "GET_STATE" });
+  expect(stopped.running).toBe(false);
+  expect(stopped.camera).toBe("Off");
+  expect(stopped.voice).toBe("Off");
 });
 
-test("closing the owned control window stops the session", async () => {
-  const tabId = await worker.evaluate(async () => {
-    const tabs = await chrome.tabs.query({ url: "http://127.0.0.1:4177/" });
-    return tabs[0].id!;
-  });
+test("website dashboard exchanges state and settings without exposing stored provider keys", async () => {
+  await message({ type: "SET_DASHBOARD_URL", url: "http://127.0.0.1:4177/dashboard" });
   const opened = context.waitForEvent("page");
-  await message({ type: "OPEN_CONTROLLER", tabId });
-  const owned = await opened;
-  await owned.waitForLoadState();
-  await owned
-    .getByRole("button", { name: /^(Start|Restart) session$/ })
-    .click();
-  await expect
-    .poll(async () => (await message({ type: "GET_STATE" })).trackingBackend, {
-      timeout: 30000,
-    })
-    .toBe("Worker / CPU");
-  await owned.close();
-  await expect
-    .poll(async () => (await message({ type: "GET_STATE" })).running)
-    .toBe(false);
+  await message({ type: "OPEN_DASHBOARD" });
+  const dashboard = await opened;
+  await dashboard.waitForURL("http://127.0.0.1:4177/dashboard#overview");
+  await expect.poll(async () => {
+    try { return !!(await dashboardRequest(dashboard, { type: "GET_STATE" })); } catch { return false; }
+  }).toBe(true);
+  const settings = await dashboardRequest(dashboard, { type: "GET_SETTINGS" });
+  expect(settings.llmKey).toBe("");
+  expect(settings.groqKeys).toBeUndefined();
+  expect(settings.jevKey).toBeUndefined();
+  expect(await dashboardRequest(dashboard, { type: "SAVE_SETTINGS", settings: { ...settings, sensitivity: 1.4 } })).toEqual({ ok: true });
+  expect((await message({ type: "GET_SETTINGS" })).sensitivity).toBe(1.4);
+  // A website may control the session, but cannot forge camera telemetry or pointer samples.
+  const denied = await dashboardRequest(dashboard, { type: "SET_STATE", patch: { camera: "Forged" } });
+  expect(denied.ok).toBe(false);
+  expect(denied.error).toContain("not available");
+  expect((await message({ type: "GET_STATE" })).camera).not.toBe("Forged");
+  await dashboardRequest(dashboard, { type: "PAUSE" });
+  await expect.poll(async () => (await message({ type: "GET_STATE" })).paused).toBe(true);
+  await dashboardRequest(dashboard, { type: "RESUME" });
+  await expect.poll(async () => (await message({ type: "GET_STATE" })).paused).toBe(false);
+  const tabs = await dashboardRequest(dashboard, { type: "GET_TABS" });
+  expect(tabs.some((tab: any) => tab.url.includes("/dashboard"))).toBe(false);
+  // Closing website controls must preserve the offscreen browser session.
+  await dashboard.close();
+  expect((await message({ type: "GET_STATE" })).running).toBe(true);
+  expect(await offscreenCount()).toBe(1);
 });
 
-test("stop during an outstanding settings save cannot acquire camera afterward", async () => {
-  await controls.reload();
-  await controls.evaluate(() => {
-    const scope = window as any;
-    const runtime = chrome.runtime as any;
-    const original = runtime.sendMessage.bind(runtime);
-    const camera = navigator.mediaDevices.getUserMedia.bind(
-      navigator.mediaDevices,
-    );
-    scope.cameraStarts = 0;
-    navigator.mediaDevices.getUserMedia = async (constraints) => {
-      scope.cameraStarts++;
-      return camera(constraints);
-    };
-    runtime.sendMessage = async (msg: any) => {
-      if (msg.type === "SAVE_SETTINGS")
-        await new Promise<void>((resolve) => {
-          scope.releaseSave = resolve;
-        });
-      return original(msg);
-    };
-  });
-  await controls
-    .getByRole("button", { name: /^(Start|Restart) session$/ })
-    .click();
-  await expect
-    .poll(() => controls.evaluate(() => typeof (window as any).releaseSave))
-    .toBe("function");
-  await controls.getByRole("button", { name: "Stop", exact: true }).click();
-  await controls.evaluate(() => (window as any).releaseSave());
-  await expect(
-    controls.getByRole("button", { name: "Start session", exact: true }),
-  ).toBeEnabled();
-  expect(await controls.evaluate(() => (window as any).cameraStarts)).toBe(0);
-  expect((await message({ type: "GET_STATE" })).running).toBe(false);
-});
-
-test("pause during camera startup cannot start speech until resumed", async () => {
-  await controls.reload();
-  await controls.evaluate(() => {
-    const scope = window as any;
-    const camera = navigator.mediaDevices.getUserMedia.bind(
-      navigator.mediaDevices,
-    );
-    scope.speechStarts = 0;
-    navigator.mediaDevices.getUserMedia = async (constraints) => {
-      await new Promise<void>((resolve) => {
-        scope.releaseCamera = resolve;
-      });
-      return camera(constraints);
-    };
-    class MockSpeech {
-      static async available() {
-        return "available";
-      }
-      processLocally = true;
-      lang = "";
-      continuous = true;
-      interimResults = false;
-      maxAlternatives = 1;
-      onstart: null | (() => void) = null;
-      onend = null;
-      onresult = null;
-      onerror = null;
-      start() {
-        scope.speechStarts++;
-        this.onstart?.();
-      }
-      abort() {}
-    }
-    Object.defineProperty(window, "SpeechRecognition", {
-      value: MockSpeech,
-      configurable: true,
-    });
-  });
-  await controls
-    .getByRole("button", { name: /^(Start|Restart) session$/ })
-    .click();
-  await expect
-    .poll(() => controls.evaluate(() => typeof (window as any).releaseCamera))
-    .toBe("function");
-  await controls
-    .getByRole("button", { name: "Pause all", exact: true })
-    .click();
-  await controls.evaluate(() => (window as any).releaseCamera());
-  await expect(
-    controls.getByRole("button", { name: "Restart session", exact: true }),
-  ).toBeEnabled();
-  expect((await message({ type: "GET_STATE" })).paused).toBe(true);
-  expect(await controls.evaluate(() => (window as any).speechStarts)).toBe(0);
-  await controls.getByRole("button", { name: "Resume", exact: true }).click();
-  await expect
-    .poll(() => controls.evaluate(() => (window as any).speechStarts))
-    .toBe(1);
-  await controls.getByRole("button", { name: "Stop", exact: true }).click();
-});
-
-test("local notices do not hide close-tab confirmation feedback", async () => {
-  await controls
-    .getByRole("button", { name: "Mark task start", exact: true })
-    .click();
-  await expect(controls.locator(".local-notice")).toHaveText(
-    "Task timer started.",
-  );
-  await heard("close tab");
-  await expect(controls.locator(".feedback")).toContainText("Say confirm");
-  await heard("cancel");
-});
-
-test("pause and resume during speech availability restarts cancelled startup", async () => {
-  await controls.reload();
-  await controls.evaluate(() => {
-    const scope = window as any;
-    scope.speechStarts = 0;
-    scope.availabilityChecks = 0;
-    class DelayedSpeech {
-      static async available() {
-        scope.availabilityChecks++;
-        if (scope.availabilityChecks === 1)
-          await new Promise<void>((resolve) => {
-            scope.releaseSpeech = resolve;
-          });
-        return "available";
-      }
-      processLocally = true;
-      lang = "";
-      continuous = true;
-      interimResults = false;
-      maxAlternatives = 1;
-      onstart: null | (() => void) = null;
-      onend = null;
-      onresult = null;
-      onerror = null;
-      start() {
-        scope.speechStarts++;
-        this.onstart?.();
-      }
-      abort() {}
-    }
-    Object.defineProperty(window, "SpeechRecognition", {
-      value: DelayedSpeech,
-      configurable: true,
-    });
-  });
-  await controls
-    .getByRole("button", { name: /^(Start|Restart) session$/ })
-    .click();
-  await expect
-    .poll(() => controls.evaluate(() => typeof (window as any).releaseSpeech), {
-      timeout: 30000,
-    })
-    .toBe("function");
-  await controls
-    .getByRole("button", { name: "Pause all", exact: true })
-    .click();
-  await controls.getByRole("button", { name: "Resume", exact: true }).click();
-  await controls.evaluate(() => (window as any).releaseSpeech());
-  await expect
-    .poll(() => controls.evaluate(() => (window as any).speechStarts))
-    .toBe(1);
-  expect((await message({ type: "GET_STATE" })).paused).toBe(false);
-  await controls.getByRole("button", { name: "Stop", exact: true }).click();
+test("dashboard requests reject after navigating the authorized tab to another path", async () => {
+  const opened = context.waitForEvent("page");
+  await message({ type: "OPEN_DASHBOARD" });
+  const dashboard = await opened;
+  await dashboard.waitForURL("http://127.0.0.1:4177/dashboard#overview");
+  await expect.poll(async () => {
+    try { return !!(await dashboardRequest(dashboard, { type: "GET_STATE" })); } catch { return false; }
+  }).toBe(true);
+  // Keep the already-injected isolated-world bridge but change the URL in place.
+  // The service worker must revalidate sender.url for every request.
+  await dashboard.evaluate(() => history.pushState({}, "", "/unauthorized"));
+  const denied = await dashboardRequest(dashboard, { type: "GET_SETTINGS" });
+  expect(denied.ok).toBe(false);
+  await dashboard.close();
 });

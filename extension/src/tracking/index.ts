@@ -3,6 +3,7 @@ import type {
   PointerSample,
   SessionState,
   Settings,
+  PointerMode,
 } from "../shared";
 import { PointerFilter, type RawPoint } from "./math";
 import type { Inference } from "./inference";
@@ -14,6 +15,31 @@ interface CalibrationRun {
   timer: ReturnType<typeof setInterval>;
   resolve: (value: Calibration) => void;
   reject: (error: Error) => void;
+}
+export interface CalibrationStore {
+  getCalibration(mode: PointerMode): Promise<Calibration | undefined>;
+  saveCalibration(mode: PointerMode, calibration: Calibration): Promise<void>;
+}
+const localCalibrationStore: CalibrationStore = {
+  async getCalibration(mode) {
+    const stored = await chrome.storage.local.get(`calibration-${mode}`);
+    return stored[`calibration-${mode}`] as Calibration | undefined;
+  },
+  async saveCalibration(mode, calibration) {
+    await chrome.storage.local.set({ [`calibration-${mode}`]: calibration });
+  },
+};
+interface TrackProcessorConstructor {
+  new (options: { track: MediaStreamTrack; maxBufferSize: number }): {
+    readable: ReadableStream<VideoFrame>;
+  };
+}
+function trackProcessor(): TrackProcessorConstructor | undefined {
+  return (
+    globalThis as unknown as {
+      MediaStreamTrackProcessor?: TrackProcessorConstructor;
+    }
+  ).MediaStreamTrackProcessor;
 }
 const validCalibration = (value: unknown): value is Calibration => {
   const c = value as Calibration | undefined;
@@ -57,10 +83,13 @@ export class Tracker {
   private fps = 0;
   private initializingReject: ((error: Error) => void) | null = null;
   private fallbackRunning = false;
+  private reader: ReadableStreamDefaultReader<VideoFrame> | null = null;
+  private lastProcessed = -Infinity;
   constructor(
     private video: HTMLVideoElement,
     private onSample: (sample: PointerSample) => void,
     private onStatus: (patch: Partial<SessionState>) => void,
+    private persistence: CalibrationStore = localCalibrationStore,
   ) {}
   async start(settings: Settings): Promise<void> {
     this.stop();
@@ -74,11 +103,10 @@ export class Tracker {
       confidence: 0,
     });
     try {
-      const saved = await chrome.storage.local.get(
-        `calibration-${settings.pointerMode}`,
+      const calibration = await this.persistence.getCalibration(
+        settings.pointerMode,
       );
       if (token !== this.generation) return;
-      const calibration = saved[`calibration-${settings.pointerMode}`];
       this.calibrated = validCalibration(calibration);
       if (validCalibration(calibration))
         this.filter.setCalibration(calibration);
@@ -99,7 +127,9 @@ export class Tracker {
       this.video.srcObject = stream;
       this.video.muted = true;
       this.video.playsInline = true;
-      await this.video.play();
+      const playback = this.video.play();
+      if (trackProcessor()) void playback.catch(() => {});
+      else await playback;
       if (token !== this.generation) return;
       stream.getVideoTracks().forEach((track) =>
         track.addEventListener("ended", () => {
@@ -143,7 +173,7 @@ export class Tracker {
             new Error("Tracking worker timed out"),
           );
       }, 100);
-      this.schedule(token);
+      if (!this.openCameraFrames(token)) this.schedule(token);
     } catch (error) {
       if (token !== this.generation) return;
       this.stop();
@@ -257,53 +287,135 @@ export class Tracker {
         )
           return;
         this.lastVideoTime = this.video.currentTime;
-        this.busy = true;
-        this.busySince = performance.now();
-        if (this.worker) {
-          const worker = this.worker;
-          const epoch = this.frameEpoch;
-          void createImageBitmap(this.video)
-            .then((bitmap) => {
-              if (
-                token !== this.generation ||
-                this.paused ||
-                worker !== this.worker ||
-                epoch !== this.frameEpoch
-              ) {
-                bitmap.close();
-                if (token === this.generation) this.busy = false;
-                return;
-              }
-              worker.postMessage(
-                { type: "frame", bitmap, timestamp: this.busySince, epoch },
-                [bitmap],
-              );
-            })
-            .catch((error) => {
-              if (token === this.generation) {
-                this.busy = false;
-                this.loss();
-                void this.recoverWorker(token, new Error(String(error)));
-              }
-            });
-        } else if (this.model) {
-          try {
-            const start = performance.now();
-            const point = this.model.detect(this.video, start);
-            this.accept(point, start, performance.now() - start);
-          } catch (error) {
-            this.loss();
-            this.pause();
-            this.onStatus({
-              camera: `Tracking failed. Stop and restart: ${String(error)}`,
-            });
-          } finally {
-            this.busy = false;
-          }
-        } else this.busy = false;
+        void this.processImage(this.video, token);
       },
       this.model ? 66 : 33,
     );
+  }
+  private openCameraFrames(token: number): boolean {
+    const Processor = trackProcessor(),
+      track = this.stream?.getVideoTracks()[0];
+    if (!Processor || !track) return false;
+    let reader: ReadableStreamDefaultReader<VideoFrame>;
+    try {
+      reader = new Processor({ track, maxBufferSize: 1 }).readable.getReader();
+    } catch {
+      this.onStatus({
+        feedback:
+          "Raw camera frames are unavailable. Using the video capture compatibility path.",
+      });
+      return false;
+    }
+    this.reader = reader;
+    void (async () => {
+      try {
+        while (token === this.generation && reader === this.reader) {
+          const result = await reader.read();
+          if (result.done) {
+            if (token === this.generation && this.active) {
+              this.pause();
+              this.onStatus({
+                camera: "Camera stream ended. Stop and start again.",
+              });
+            }
+            break;
+          }
+          const frame = result.value;
+          if (token !== this.generation || reader !== this.reader) {
+            frame.close();
+            break;
+          }
+          // Drain while inference is busy or paused. A one-frame source buffer and
+          // no inference queue keep the next accepted frame current.
+          void this.processImage(frame, token, () => frame.close());
+        }
+      } catch (error) {
+        if (
+          token === this.generation &&
+          reader === this.reader &&
+          this.active
+        ) {
+          this.loss();
+          this.onStatus({
+            feedback: `Raw camera frames stopped: ${String(error)}. Using video capture compatibility.`,
+          });
+          this.reader = null;
+          this.schedule(token);
+        }
+      } finally {
+        try {
+          reader.releaseLock();
+        } catch {}
+        if (reader === this.reader) this.reader = null;
+      }
+    })();
+    return true;
+  }
+  private async processImage(
+    image: ImageBitmapSource,
+    token: number,
+    release?: () => void,
+  ): Promise<void> {
+    const timestamp = performance.now();
+    if (
+      token !== this.generation ||
+      !this.active ||
+      this.paused ||
+      this.busy ||
+      (!this.worker && !this.model) ||
+      timestamp - this.lastProcessed < (this.model ? 66 : 0)
+    ) {
+      release?.();
+      return;
+    }
+    this.busy = true;
+    this.busySince = timestamp;
+    this.lastProcessed = timestamp;
+    const worker = this.worker,
+      epoch = this.frameEpoch;
+    let bitmap: ImageBitmap | null = null;
+    try {
+      bitmap = await createImageBitmap(image);
+      release?.();
+      release = undefined;
+      if (
+        token !== this.generation ||
+        this.paused ||
+        epoch !== this.frameEpoch ||
+        worker !== this.worker
+      ) {
+        bitmap.close();
+        bitmap = null;
+        if (token === this.generation) this.busy = false;
+        return;
+      }
+      if (worker) {
+        worker.postMessage({ type: "frame", bitmap, timestamp, epoch }, [
+          bitmap,
+        ]);
+        bitmap = null;
+      } else if (this.model) {
+        const start = performance.now();
+        const point = this.model.detect(bitmap, timestamp);
+        this.accept(point, timestamp, performance.now() - start);
+        this.busy = false;
+      } else this.busy = false;
+    } catch (error) {
+      if (token === this.generation) {
+        this.busy = false;
+        this.loss();
+        if (worker) void this.recoverWorker(token, new Error(String(error)));
+        else {
+          this.pause();
+          this.onStatus({
+            camera: `Tracking failed. Stop and restart: ${String(error)}`,
+          });
+        }
+      }
+    } finally {
+      bitmap?.close();
+      release?.();
+    }
   }
   private accept(point: RawPoint | null, time: number, latencyMs: number) {
     this.lastReply = performance.now();
@@ -409,8 +521,8 @@ export class Tracker {
           const calibration = { neutralX, neutralY, rangeX, rangeY };
           this.filter.setCalibration(calibration);
           this.calibrated = true;
-          chrome.storage.local
-            .set({ [`calibration-${this.settings.pointerMode}`]: calibration })
+          this.persistence
+            .saveCalibration(this.settings.pointerMode, calibration)
             .then(() => {
               if (token === this.generation) {
                 this.onStatus({ camera: "Calibrated. Camera ready" });
@@ -476,10 +588,14 @@ export class Tracker {
     this.model?.close();
     this.model = null;
     this.stream?.getTracks().forEach((track) => track.stop());
+    const reader = this.reader;
+    this.reader = null;
+    if (reader) void reader.cancel().catch(() => {});
     this.stream = null;
     this.video.srcObject = null;
     this.busy = false;
     this.lastVideoTime = -1;
+    this.lastProcessed = -Infinity;
     this.calibrated = false;
     this.filter.reset();
     this.loss();

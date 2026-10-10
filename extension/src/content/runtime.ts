@@ -304,10 +304,12 @@ export class ContentRuntime {
           this.overlay.options([]);
           this.choices = [];
           this.overlay.announce("");
+          this.overlay.transcript("", false, false);
         } else if (!wasRunning)
           this.feedback(
             "Handsfree is ready. Point at a target or say find followed by its name.",
           );
+        if (this.paused) this.overlay.transcript("", false, false);
         return { ok: true };
       }
       case "POINTER": {
@@ -336,6 +338,9 @@ export class ContentRuntime {
       }
       case "GET_TARGETS":
         return this.targets.scan();
+      case "TRANSCRIPT":
+        this.overlay.transcript(message.text, message.final, this.running && !this.paused);
+        return { ok: true };
       case "FIND_RESULT": {
         if (!this.running || this.paused) return { ok: false };
         const matches = [...new Set(message.ids)]
@@ -625,6 +630,7 @@ export class ContentRuntime {
     if (message) this.feedback(message);
   }
   destroy() {
+    this.targets.destroy();
     this.destroyed = true;
     cancelAnimationFrame(this.frame);
     this.observer.disconnect();

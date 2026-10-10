@@ -1,6 +1,6 @@
 # Handsfree website
 
-Next.js App Router landing page with Tailwind CSS v4 and shadcn/ui (Radix Nova). Requires Node.js 20.9 or later.
+Next.js App Router landing page and connected dashboard with Tailwind CSS v4 and shadcn/ui (Radix Nova). Requires Node.js 20.9 or later.
 
 Run commands from this directory:
 
@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`. The session dashboard is at `/dashboard`; open it from the extension popup to connect. It manages calibration, pointer settings, speech, tabs, provider keys, and local activity. Tracking and microphone capture run in the extension offscreen document, so switching away from the dashboard does not stop the session.
 
 For production:
 
@@ -24,13 +24,13 @@ TypeScript check: `npm run typecheck`.
 
 ## Interaction modes
 
-- **Voice:** fixed navigation and tab commands, separate dictation, and optional arbitrary find.
+- **Voice:** fixed navigation and tab commands, separate dictation, optional Jev text mapping, and Groq requests beginning with "hey handsfree". Chrome speech is the default; Groq recorded-audio transcription is a fallback. On-device speech is an explicit dashboard choice requiring browser support and a language pack.
 - **Hand gestures:** broad movement as a second pointer with hold confirmation; no pinch required.
 - **Face movements:** primary in-page pointer with smoothing, posture adaptation, and adjustable sensitivity.
 
-Content follows the repository-root `spec.md`: Chrome-only scope, intentional selection, instant pause, local tracking/settings/logs, optional text-only LLM find, and explicit confirmations for form submission and tab closing. The page introduces each mode with three editorial feature rows, a setup overview, and a quick-guide accordion. The development extension lives in `../extension/`; see the [root README](../README.md) for building, loading, and testing it. Voice typing belongs to the voice mode. Real-device performance still needs evaluation.
+Content follows the repository-root `spec.md`: Chrome-only scope, intentional selection, instant pause, local tracking/settings/logs, provider-assisted commands and target finding, and explicit confirmations for form submission and tab closing. The page introduces each mode with three editorial feature rows, a setup overview, and a quick-guide accordion. The development extension lives in `../extension/`; see the [root README](../README.md) for building, loading, and testing it. Voice typing belongs to the voice mode. Real-device performance still needs evaluation.
 
-No authentication or environment variables are required. A single shadcn Button toggles light/dark mode through `next-themes` and remembers the choice locally. The page follows the system theme initially and respects the operating system’s reduced-motion preference automatically.
+The website needs no authentication or environment variables. Provider credentials stay in extension storage or its generated local configuration, and are never returned to the dashboard. The dashboard sends commands through a same-origin message bridge injected only into an authorized dashboard tab. A single shadcn Button toggles light/dark mode through `next-themes` and remembers the choice locally. The page follows the system theme initially and respects the operating system’s reduced-motion preference automatically.
 
 ## Logo
 

@@ -11,6 +11,9 @@ export interface Settings {
   language: string;
   llmKey: string;
   llmModel: string;
+  dashboardUrl: string;
+  groqModel: string;
+  jevProvider: "typesafe" | "openrouter";
 }
 export const defaults: Settings = {
   sensitivity: 1,
@@ -20,10 +23,13 @@ export const defaults: Settings = {
   pointerMode: "face",
   dwellEnabled: true,
   edgeScroll: true,
-  speechMode: "local",
+  speechMode: "browser",
   language: "en-US",
   llmKey: "",
   llmModel: "gpt-4.1-mini",
+  dashboardUrl: "http://localhost:3000/dashboard",
+  groqModel: "qwen/qwen3.8-27b",
+  jevProvider: "openrouter",
 };
 export interface Calibration {
   neutralX: number;
@@ -54,6 +60,9 @@ export interface SessionState {
   fps: number;
   latencyMs: number;
   trackingBackend: string;
+  interimTranscript: string;
+  calibrationProgress: number | null;
+  calibrationStage: string;
 }
 export const initialState: SessionState = {
   running: false,
@@ -68,6 +77,9 @@ export const initialState: SessionState = {
   fps: 0,
   latencyMs: 0,
   trackingBackend: "Not started",
+  interimTranscript: "",
+  calibrationProgress: null,
+  calibrationStage: "",
 };
 export type Intent =
   | { type: "scroll"; direction: "up" | "down" }
@@ -113,6 +125,19 @@ export interface MetricEvent {
 export type Message =
   | { type: "GET_STATE" }
   | { type: "GET_SETTINGS" }
+  | { type: "OPEN_DASHBOARD"; tabId?: number; hash?: string }
+  | { type: "GET_TABS" }
+  | { type: "ACTIVATE_TAB"; id: number }
+  | { type: "GET_PROVIDER_STATUS" }
+  | { type: "SAVE_PROVIDERS"; groqKeys?: string[]; jevKey?: string }
+  | { type: "SET_DASHBOARD_URL"; url: string }
+  | { type: "GRANT_PERMISSIONS"; kind: "pages" | "tabs" | "provider" }
+  | { type: "INSTALL_SPEECH_PACK" }
+  | { type: "TRANSCRIPT"; text: string; final: boolean }
+  | { type: "TRANSCRIBE_AUDIO"; audio: number[]; mime: string; language: string }
+  | { type: "GET_CALIBRATION"; mode: PointerMode }
+  | { type: "SAVE_CALIBRATION"; mode: PointerMode; calibration: Calibration }
+  | { type: "OFFSCREEN_COMMAND"; command: "start" | "pause" | "resume" | "stop" | "calibrate" | "settings" | "install-speech"; settings?: Settings }
   | { type: "SAVE_SETTINGS"; settings: Settings }
   | { type: "OPEN_CONTROLLER"; tabId?: number }
   | { type: "START"; tabId?: number }
@@ -144,5 +169,7 @@ export type Message =
     }
   | { type: "RECALIBRATE" };
 export async function send<T = any>(message: Message): Promise<T> {
-  return chrome.runtime.sendMessage(message);
+  const result = await chrome.runtime.sendMessage(message);
+  if (result?.ok === false) throw new Error(result.error || "The action failed. Retry from the popup.");
+  return result;
 }

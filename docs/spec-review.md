@@ -25,3 +25,7 @@ Chrome requires optional permissions to be requested from a user gesture. The co
 Chrome's Web Speech API may use server-based recognition. See [MDN SpeechRecognition](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition). Local MediaPipe processes frames on-device. See [Google MediaPipe web tasks](https://github.com/google-ai-edge/mediapipe/blob/master/mediapipe/tasks/web/vision/README.md).
 
 The raw spec stays unchanged so these decisions remain visible rather than rewriting away conflicts.
+
+## Latest user overrides, 2026-10-10
+
+The interrupted follow-up explicitly changes earlier implementation choices. The full dashboard now lives in Next.js; an offscreen document owns capture while the popup keeps a live preview and minimal controls. Browser speech is the default with Groq audio fallback disclosure. Local-only mode remains available. Jev maps ordinary speech and the reserved hey handsfree prefix routes arbitrary requests to Groq Qwen. These instructions supersede the original spec's OpenAI-only arbitrary find and deferred wake phrase. Permission prompts still require a visible extension-origin user gesture.

@@ -4,6 +4,13 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 const root = path.resolve(import.meta.dirname, "..");
 const dist = path.join(root, "dist");
+let providerConfig = { groqKeys: [], jevKey: "" };
+try {
+  providerConfig = JSON.parse(await readFile(path.join(root, "config/providers.local.json"), "utf8"));
+  if (!Array.isArray(providerConfig.groqKeys) || providerConfig.groqKeys.length > 5 || providerConfig.groqKeys.some(key => typeof key !== "string")) throw new Error("Expected at most five Groq keys.");
+} catch (error) {
+  if (error.code !== "ENOENT") throw new Error("Invalid local provider configuration. Check config/providers.local.json.");
+}
 execFileSync(process.execPath, [path.join(root, "scripts/assets.mjs")], {
   stdio: "inherit",
 });
@@ -14,7 +21,7 @@ const common = {
   platform: "browser",
   target: "chrome120",
   logLevel: "info",
-  define: { "process.env.NODE_ENV": '"production"' },
+  define: { "process.env.NODE_ENV": '"production"', "__HANDS_FREE_PROVIDERS__": JSON.stringify(providerConfig) },
   legalComments: "linked",
 };
 await build({
@@ -41,6 +48,9 @@ await build({
   outfile: path.join(dist, "ui.js"),
   format: "iife",
 });
+for (const name of ["offscreen", "dashboard-bridge", "dashboard-redirect", "permissions"]) {
+  await build({ ...common, entryPoints: [path.join(root, `src/${name}.ts`)], outfile: path.join(dist, `${name}.js`), format: "iife" });
+}
 await cp(path.join(root, "manifest.json"), path.join(dist, "manifest.json"));
 await cp(path.join(root, "src/ui/theme.css"), path.join(dist, "theme.css"));
 await cp(path.resolve(root, "../next/public/brand"), path.join(dist, "brand"), {
@@ -63,4 +73,7 @@ for (const view of ["popup", "controller"]) {
     `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Handsfree ${view === "popup" ? "" : "controls"}</title><link rel="stylesheet" href="theme.css"></head><body data-view="${view}"><div id="root"></div><script src="ui.js"></script></body></html>`,
   );
 }
+await writeFile(path.join(dist, "offscreen.html"), '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Handsfree capture</title></head><body><video id="camera" autoplay muted playsinline></video><script src="offscreen.js"></script></body></html>');
+await writeFile(path.join(dist, "dashboard.html"), '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Handsfree dashboard</title></head><body><p>Opening your Handsfree dashboard…</p><script src="dashboard-redirect.js"></script></body></html>');
+await writeFile(path.join(dist, "permissions.html"), '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Handsfree permissions</title><link rel="stylesheet" href="theme.css"></head><body><main id="permissions"></main><script src="permissions.js"></script></body></html>');
 console.log("Load unpacked: " + dist);

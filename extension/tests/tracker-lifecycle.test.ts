@@ -29,6 +29,22 @@ class WorkerMock {
     this.onmessage?.({ data });
   }
 }
+class ProcessorMock {
+  static instances: ProcessorMock[] = [];
+  controller!: ReadableStreamDefaultController<VideoFrame>;
+  cancelled = vi.fn();
+  readable = new ReadableStream<VideoFrame>({
+    start: (controller) => {
+      this.controller = controller;
+    },
+    cancel: () => {
+      this.cancelled();
+    },
+  });
+  constructor() {
+    ProcessorMock.instances.push(this);
+  }
+}
 const streamStop = vi.fn();
 const stream = {
   getTracks: () => [{ stop: streamStop }],
@@ -87,6 +103,63 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe("tracker lifecycle", () => {
+  it("reads raw camera frames even when the preview clock never advances", async () => {
+    ProcessorMock.instances = [];
+    vi.stubGlobal("MediaStreamTrackProcessor", ProcessorMock);
+    const preview = video(),
+      tracker = new Tracker(preview, vi.fn(), vi.fn());
+    await tracker.start(defaults);
+    const worker = WorkerMock.instances[0],
+      processor = ProcessorMock.instances[0];
+    expect(processor).toBeDefined();
+    for (let index = 0; index < 4; index++) {
+      const frame = { close: vi.fn() } as unknown as VideoFrame;
+      processor.controller.enqueue(frame);
+      await vi.advanceTimersByTimeAsync(50);
+      const message = worker.frames.at(-1);
+      expect(message.type).toBe("frame");
+      worker.emit({
+        type: "sample",
+        point: { x: 0.5, y: 0.5, confidence: 1 },
+        timestamp: message.timestamp,
+        epoch: message.epoch,
+        latencyMs: 2,
+      });
+      expect(frame.close).toHaveBeenCalled();
+    }
+    expect(
+      worker.frames.filter((frame) => frame.type === "frame"),
+    ).toHaveLength(4);
+    tracker.pause();
+    const pausedFrame = { close: vi.fn() } as unknown as VideoFrame;
+    processor.controller.enqueue(pausedFrame);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(pausedFrame.close).toHaveBeenCalled();
+    expect(
+      worker.frames.filter((frame) => frame.type === "frame"),
+    ).toHaveLength(4);
+    tracker.stop();
+    await Promise.resolve();
+    expect(processor.cancelled).toHaveBeenCalled();
+  });
+  it("uses an injected calibration store without offscreen-inaccessible chrome.storage", async () => {
+    const persistence = {
+      getCalibration: vi.fn(async () => ({
+        neutralX: 0.5,
+        neutralY: 0.5,
+        rangeX: 0.2,
+        rangeY: 0.2,
+      })),
+      saveCalibration: vi.fn(async () => {}),
+    };
+    vi.stubGlobal("chrome", {
+      runtime: { getURL: (path: string) => "chrome-extension://test/" + path },
+    });
+    const tracker = new Tracker(video(), vi.fn(), vi.fn(), persistence);
+    await tracker.start(defaults);
+    expect(persistence.getCalibration).toHaveBeenCalledWith("face");
+    tracker.stop();
+  });
   it("keeps a pointer-mode restart paused while its model loads", async () => {
     const preview = video(),
       tracker = new Tracker(preview, vi.fn(), vi.fn());
@@ -125,7 +198,7 @@ describe("tracker lifecycle", () => {
     const preview = video(),
       tracker = new Tracker(preview, vi.fn(), vi.fn());
     const starting = tracker.start(defaults);
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     tracker.stop();
     release(stream);
     await starting;

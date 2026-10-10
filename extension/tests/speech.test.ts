@@ -33,9 +33,9 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe("speech adapter", () => {
-  it("defaults to local speech and never downloads a language pack implicitly", async () => {
+  it("uses explicit local speech without downloading a language pack implicitly", async () => {
     const speech = new SpeechAdapter(vi.fn(), vi.fn());
-    await speech.start(defaults);
+    await speech.start({ ...defaults, speechMode: "local" });
     expect(Recognition.instances.at(-1)?.processLocally).toBe(true);
     expect(Recognition.install).not.toHaveBeenCalled();
     speech.stop();
@@ -44,7 +44,9 @@ describe("speech adapter", () => {
     Recognition.available.mockResolvedValue("downloadable");
     const status = vi.fn(),
       speech = new SpeechAdapter(vi.fn(), status);
-    await expect(speech.start(defaults)).rejects.toThrow(/language pack/i);
+    await expect(
+      speech.start({ ...defaults, speechMode: "local" }),
+    ).rejects.toThrow(/language pack/i);
     expect(
       Recognition.instances.every((r) => r.start.mock.calls.length === 0),
     ).toBe(true);
@@ -98,7 +100,7 @@ describe("speech adapter", () => {
         }),
     );
     const speech = new SpeechAdapter(vi.fn(), vi.fn());
-    const starting = speech.start(defaults);
+    const starting = speech.start({ ...defaults, speechMode: "local" });
     speech.stop();
     release("available");
     await starting;
@@ -137,5 +139,52 @@ describe("speech adapter", () => {
     expect(status).toHaveBeenLastCalledWith(
       expect.stringContaining("Microphone denied"),
     );
+  });
+  it("shows interim speech without executing it and clears it after a final result or pause", async () => {
+    const heard = vi.fn(),
+      interim = vi.fn();
+    const speech = new SpeechAdapter(heard, vi.fn(), interim);
+    await speech.start({ ...defaults, language: "hi-IN" });
+    const r = Recognition.instances.at(-1)!;
+    expect(r.interimResults).toBe(true);
+    expect(r.lang).toBe("hi-IN");
+    const callback = r.onresult!;
+    callback({
+      resultIndex: 0,
+      results: [{ isFinal: false, 0: { transcript: " नीचे " } }],
+    });
+    expect(interim).toHaveBeenLastCalledWith("नीचे");
+    expect(heard).not.toHaveBeenCalled();
+    callback({
+      resultIndex: 0,
+      results: [{ isFinal: true, 0: { transcript: "नीचे स्क्रॉल करो" } }],
+    });
+    expect(heard).toHaveBeenCalledWith("नीचे स्क्रॉल करो");
+    expect(interim).toHaveBeenLastCalledWith("");
+    speech.pause();
+    callback({
+      resultIndex: 0,
+      results: [{ isFinal: false, 0: { transcript: "late" } }],
+    });
+    expect(interim).toHaveBeenLastCalledWith("");
+  });
+  it("validates and canonicalizes BCP47 locales before opening the microphone", async () => {
+    const status = vi.fn(),
+      speech = new SpeechAdapter(vi.fn(), status);
+    await expect(
+      speech.start({ ...defaults, language: "not_a_language" }),
+    ).rejects.toThrow(/language/i);
+    expect(Recognition.instances).toHaveLength(0);
+    expect(status).toHaveBeenLastCalledWith(expect.stringMatching(/language/i));
+    await speech.start({ ...defaults, language: "en-in" });
+    expect(Recognition.instances.at(-1)?.lang).toBe("en-IN");
+    speech.stop();
+  });
+  it("uses the browser locale for automatic browser speech", async () => {
+    vi.stubGlobal("navigator", { language: "fr-FR" });
+    const speech = new SpeechAdapter(vi.fn(), vi.fn());
+    await speech.start({ ...defaults, language: "auto" });
+    expect(Recognition.instances.at(-1)?.lang).toBe("fr-FR");
+    speech.stop();
   });
 });

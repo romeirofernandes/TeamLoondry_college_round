@@ -207,6 +207,24 @@ export class PageTargets {
   private sequence = 0;
   private candidates: Element[] = [];
   private refreshedAt = -Infinity;
+  private visible = new Set<Element>();
+  private intersection: IntersectionObserver | null = null;
+  private mutations: MutationObserver | null = null;
+  private dirty = true;
+  constructor() {
+    if (typeof IntersectionObserver !== "undefined") {
+      this.intersection = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) this.visible.add(entry.target);
+          else this.visible.delete(entry.target);
+        }
+      }, { rootMargin: "48px" });
+      this.mutations = new MutationObserver(records => {
+        if (records.some(record => !(record.target instanceof Element && record.target.closest(`#${overlayId}`)))) this.dirty = true;
+      });
+      this.mutations.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["role", "tabindex", "href", "type", "contenteditable"] });
+    }
+  }
   id(element: HTMLElement): string {
     let id = this.ids.get(element);
     if (!id) {
@@ -238,13 +256,31 @@ export class PageTargets {
     if (direct && usable(direct)) return direct;
     let winner: HTMLElement | null = null;
     let distance = 42;
-    if (performance.now() - this.refreshedAt > 250) {
+    if ((this.intersection ? this.dirty : true) && performance.now() - this.refreshedAt > 250) {
       this.candidates = Array.from(
         document.querySelectorAll(interactiveSelector),
-      );
+      ).filter(element => !element.closest(`#${overlayId}`));
       this.refreshedAt = performance.now();
+      this.dirty = false;
+      if (this.intersection) {
+        this.intersection.disconnect();
+        this.visible.clear();
+        for (const candidate of this.candidates) this.intersection.observe(candidate);
+      }
     }
-    for (const candidate of this.candidates) {
+    // Hit-test a small neighborhood until the intersection index has delivered
+    // its first entries. Pointer updates never walk thousands of offscreen boxes.
+    const nearby = new Set(this.visible);
+    if (this.intersection) {
+      for (const radius of [14, 28, 42]) {
+        for (let index = 0; index < 8; index++) {
+          const angle = index * Math.PI / 4;
+          const candidate = document.elementFromPoint(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius)?.closest(interactiveSelector);
+          if (candidate) nearby.add(candidate);
+        }
+      }
+    }
+    for (const candidate of this.intersection ? nearby : this.candidates) {
       if (!candidate.isConnected) continue;
       const box = candidate.getBoundingClientRect();
       if (
@@ -275,5 +311,11 @@ export class PageTargets {
       }
     }
     return winner;
+  }
+  destroy() {
+    this.intersection?.disconnect();
+    this.mutations?.disconnect();
+    this.visible.clear();
+    this.candidates = [];
   }
 }

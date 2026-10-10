@@ -4,9 +4,10 @@
   "version": "0.1.0",
   "description": "Browse with face movements, broad hand gestures, and deliberate voice commands.",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "activeTab", "scripting"],
+  "permissions": ["storage", "activeTab", "scripting", "offscreen"],
   "optional_permissions": ["tabs"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "host_permissions": ["https://api.groq.com/*", "https://openrouter.ai/*", "http://localhost/*", "http://127.0.0.1/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": {
     "default_popup": "popup.html",
@@ -18,7 +19,7 @@
     "128": "brand/handsfree-icon-180.png"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self' https://api.openai.com"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self' https://api.groq.com https://api.typesafe.ai https://openrouter.ai"
   },
   "commands": {
     "pause-handsfree": {

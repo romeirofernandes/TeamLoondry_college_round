@@ -8,13 +8,19 @@ Unit/DOM coverage includes exact parser matching and unknown phrases, target-lat
 
 Browser tests load the real built scripts in Chromium. The isolated fixture manifest pregrants tabs and localhost access so native permission dialogs do not block automation; the distributed manifest retains optional permissions. Deterministic pointer/transcript messages exercise the same runtime protocol as real tracking/recognition. Fake camera frames test stream release and local model initialization. They do not measure real user performance.
 
+## Tracking regression measurements
+
+Run `node tests/tracking-timing.mjs` from `extension/` to check raw-frame capture while the displayed video clock is deliberately frozen. `--baseline=50fa96b` runs the previous tracker against the same harness. On this machine the previous tracker dropped from about20updates/second to0; the updated tracker maintained about20updates/second. This reproduces a frame-delivery failure, not every cause of lag on a physical laptop.
+
+The long-page pointer harness measured a95thpercentile update around0.3ms on20,000controls after visible-target indexing, compared with about20ms in the imported diagnosis. Chrome browser checks also verify fresh worker inference after the popup closes and the browsing tab navigates.
+
 ## Laptop checklist
 
-Use the fixture from the root README. Keep controls visible beside your browser.
+Use the fixture from the root README. Start the Next.js site and open its dashboard from the popup. Return to the fixture to test control; closing the popup should leave capture running.
 
 | Check                                      | Expected result                                              | Record                                                      |
 | ------------------------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------- |
-| First setup with permissions               | Plain permission text, live preview, visible errors          | Seconds from opening controls to first successful selection |
+| First setup with permissions               | Plain permission text, live preview, visible errors          | Seconds from opening popup to first successful selection |
 | Neutral and range calibration              | Completes in about8seconds; no selections during calibration | Total setup time, comfortable range, retries                |
 | Face point to five targets                 | Smooth movement; only intended target highlights             | Correct selections, missed targets, sensitivity             |
 | Broad hand control                         | Palm movement and steady hold work without pinch             | Correct/incorrect selections, fatigue                       |
@@ -25,7 +31,7 @@ Use the fixture from the root README. Keep controls visible beside your browser.
 | Resume after loss                          | Stable position, target review before action                 | Jumps, wrong selection                                      |
 | Shift posture slowly                       | Neutral adapts without constant calibration                  | Recalibration count                                         |
 | Dim light/backlight                        | Low reliability blocks selection, feedback remains clear     | Correct selections and observed failures                    |
-| Local voice command list                   | Exact intended actions; unknown phrase does nothing          | Intended command, heard phrase, action                      |
+| Selected-language voice commands                   | Exact intended actions; unknown phrase does nothing          | Intended command, heard phrase, action                      |
 | Fans/music/distant microphone              | Failures show feedback without unrelated actions             | Accuracy at each noise condition                            |
 | Dictate navigation words                   | Words insert; no navigation                                  | Text match and input events                                 |
 | Change focus during dictation              | Typing stops                                                 | Any text in wrong field                                     |
@@ -33,10 +39,11 @@ Use the fixture from the root README. Keep controls visible beside your browser.
 | Submit then wait/cancel/change target      | No submit without bound, timely confirmation                 | Submission counter                                          |
 | Close tab then cancel/switch tab           | Original close is cancelled                                  | Any tab closed unexpectedly                                 |
 | Duplicate tab titles/find labels           | Numbered choice required                                     | Wrong match/activation                                      |
-| Find offscreen target                      | Scroll/highlight; no click                                   | Match result                                                |
+| Say hey handsfree to find offscreen target                      | Scroll/highlight; no click                                   | Match result                                                |
 | Find with missing key/invalid key/no match | Clear error/no-op                                            | Any unintended action                                       |
 | Pause during pointing/dictation            | All selection and recognition stops                          | Any action after pause                                      |
-| Stop or close controls                     | Camera indicator and recognizer end                          | Capture stopped                                             |
+| Close popup and return to webpage           | Capture and pointer updates continue                         | Fresh inference after closing preview                       |
+| Stop session                               | Camera indicator and recognizer end                          | Capture stopped                                             |
 | Export then clear log                      | JSON exported; clearing removes retained events              | Local storage result                                        |
 
 Use non-sensitive sample forms. Browser compatibility limits described in README apply.
