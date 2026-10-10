@@ -11,7 +11,7 @@ def run(args, **kwargs):
     return subprocess.run(args, check=True, text=True, capture_output=True, **kwargs)
 def record(name):
     checks.append({"name": name, "status": "passed"})
-with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-") as temporary:
+with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as temporary:
     temp = pathlib.Path(temporary)
     destination = temp / "Applications with spaces"
     env = dict(os.environ, HANDSFREE_INSTALL_DIR=str(destination), HANDSFREE_NO_LAUNCH="1")
@@ -77,9 +77,7 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-") as temporary:
         def host():
             child=subprocess.Popen([manifest["path"],f"chrome-extension://{extension_id}/"],env=ui_env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
             hosts.append(child);return child
-        serial=0
         def request(child,kind,**values):
-            nonlocal_unused=None
             data=json.dumps(dict(id=kind,type=kind,**values)).encode()
             child.stdin.write(struct.pack("=I",len(data))+data);child.stdin.flush()
             assert select.select([child.stdout],[],[],12)[0], "native host response timed out"

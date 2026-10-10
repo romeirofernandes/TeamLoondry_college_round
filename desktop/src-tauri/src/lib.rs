@@ -27,12 +27,12 @@ fn open_help(kind:String)->Result<(),String>{
     {let _=url;Err("Open the website dashboard in your browser".into())}
 }
 #[tauri::command]
-fn start(display_id:u32,core:State<Core>,app:tauri::AppHandle)->Result<Snapshot,String>{
+fn start(display_id:u32,pointer_enabled:Option<bool>,core:State<Core>,app:tauri::AppHandle)->Result<Snapshot,String>{
     let bridge=app.state::<bridge::Bridge>();
     let owner=bridge.owner.lock().map_err(|_|"Bridge lock failed")?;
     if owner.is_some(){return Err("Browser control is active. Stop it first.".into());}
-    if !native::trusted(){return Err("Allow Handsfree to control your Mac in Privacy & Security settings first".into());}
-    if !native::displays()?.iter().any(|d|d.id==display_id){return Err("Select an available display".into());}
+    if pointer_enabled.unwrap_or(true)&&!native::trusted(){return Err("Allow Handsfree to control your Mac in Privacy & Security settings first".into());}
+    if pointer_enabled.unwrap_or(true)&&!native::displays()?.iter().any(|d|d.id==display_id){return Err("Select an available display".into());}
     Ok(core.lock().map_err(|_|"Session lock failed")?.start(display_id,Instant::now()))
 }
 #[tauri::command]

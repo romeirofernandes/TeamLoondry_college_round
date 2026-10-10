@@ -3,7 +3,7 @@ test("setup starts stopped, uses explicit inputs and persists opt-in dwell",asyn
  const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message));await page.goto("/");
  await expect(page.getByRole("heading",{name:"Choose your inputs"})).toBeVisible();await expect(page.getByText("Your camera is off")).toBeVisible();await expect(page.getByRole("button",{name:/Calibrate & set up/})).toBeDisabled();
  await page.getByLabel("Click after holding still").check();expect(await page.evaluate(()=>JSON.parse(localStorage.getItem("handsfree-desktop-v1")??"{}").dwell)).toBe(true);
- await page.getByRole("button",{name:"Hand",exact:true}).click();await expect(page.getByRole("button",{name:"Hand",exact:true})).toHaveClass(/selected/);
+ await page.getByLabel("Hand movement",{exact:true}).check();await page.getByRole("button",{name:"Hand",exact:true}).click();await expect(page.getByRole("button",{name:"Hand",exact:true})).toHaveClass(/selected/);
  await page.getByRole("button",{name:"Continue to access"}).click();await expect(page.getByRole("heading",{name:"Allow only what you use"})).toBeVisible();
  await page.getByRole("button",{name:"Continue to practice"}).click();await expect(page.getByRole("heading",{name:"Practice at your pace"})).toBeVisible();
  await page.getByRole("button",{name:"Continue to ready"}).click();await expect(page.getByRole("button",{name:"Show compact panel"})).toBeDisabled();

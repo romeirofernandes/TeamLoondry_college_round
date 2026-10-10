@@ -15,5 +15,6 @@ describe("saved preferences",()=>{
  it("recovers from malformed storage",()=>{expect(readPreferences("{").mode).toBe("face");});
  it("bounds sensitivity and rejects malformed calibrations",()=>{const p=readPreferences(JSON.stringify({version:1,sensitivity:99,calibrations:{face:{neutralX:.5,neutralY:.5,rangeX:0,rangeY:.1}}}));expect(p.sensitivity).toBe(4);expect(p.calibrations.face).toBeUndefined();});
  it("does not enable dwell through a truthy string",()=>{expect(readPreferences('{"version":1,"dwell":"false"}').dwell).toBe(false);});
+ it("migrates older hand preferences and accepts voice-only inputs",()=>{expect(readPreferences('{"version":1,"mode":"hand"}').enabledInputs).toEqual(["hand"]);expect(readPreferences('{"version":1,"enabledInputs":["voice","voice","invalid"]}').enabledInputs).toEqual(["voice"]);});
  it("unknown versions keep default opt-in state",()=>{expect(readPreferences('{"version":2,"dwell":true}').dwell).toBe(false);});
 });

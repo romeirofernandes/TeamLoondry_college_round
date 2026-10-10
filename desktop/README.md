@@ -31,7 +31,7 @@ The build verifies and bundles MediaPipe models and WASM. Both clients import th
 
 ## Setup and compact panel
 
-1. Select Head or Hand. The input choices, access, practice and ready sequence follows the extension onboarding structure.
+1. Select Voice, Head or Hand, or combine inputs. When both movement inputs are selected, choose the primary pointer deliberately. Voice-only app control keeps the camera off and does not require input-event permission. The input choices, access, practice and ready sequence follows the extension onboarding structure.
 2. Allow camera access when calibrating. Allow macOS input control separately. An always-on-top window itself does not need Screen Recording permission.
 3. Calibrate five comfortable positions. Dwell starts off; enable it only after practicing in an empty document.
 4. Choose a corner under Ready, then Show compact panel. Drag its camera area to move it. The compact view has only the camera and Start/Stop control, with error recovery when needed.
