@@ -808,9 +808,10 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     return;
   }
   if (isCancellation(text)) { await action({type:"cancel"},current); return; }
-  const openSite = /^(?:open|take me to) (wikipedia|github|reddit|amazon|spotify|netflix|x|twitter|whatsapp|gmail|google meet|meet|linkedin|irctc|google maps|maps)$/i.exec(text.trim().replace(/[.!?]+$/,""));
+  const openSite = /^(?:open|take me to) (wikipedia|github|reddit|amazon|spotify|netflix|youtube|chatgpt|chat gpt|ai chat|x|twitter|whatsapp|gmail|google meet|meet|linkedin|irctc|google maps|maps)$/i.exec(text.trim().replace(/[.!?]+$/,""));
   if (openSite) {
-    const site = openSite[1].toLowerCase() === "twitter" ? "x" : openSite[1].toLowerCase().replace(/^google /, "") as keyof typeof siteHomes;
+    const spokenSite = openSite[1].toLowerCase();
+    const site = (spokenSite === "twitter" ? "x" : ["chat gpt", "ai chat"].includes(spokenSite) ? "chatgpt" : spokenSite.replace(/^google /, "")) as keyof typeof siteHomes;
     if (await needTabs() || !current()) return;
     await chrome.tabs.create({url:siteHomes[site]});
     if(current()) await publish({feedback:`Opening ${site}.`});
@@ -963,7 +964,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return presets;
     }
     case "GET_GESTURE_DESTINATIONS": {
-      const labels: Record<string, string> = { wikipedia: "Wikipedia", github: "GitHub", reddit: "Reddit", amazon: "Amazon", spotify: "Spotify", netflix: "Netflix", x: "X", whatsapp: "WhatsApp Web", gmail: "Gmail", meet: "Google Meet", linkedin: "LinkedIn Jobs", irctc: "IRCTC", maps: "Google Maps" };
+      const labels: Record<string, string> = { wikipedia: "Wikipedia", github: "GitHub", reddit: "Reddit", amazon: "Amazon", spotify: "Spotify", netflix: "Netflix", youtube: "YouTube", chatgpt: "ChatGPT", x: "X", whatsapp: "WhatsApp Web", gmail: "Gmail", meet: "Google Meet", linkedin: "LinkedIn Jobs", irctc: "IRCTC", maps: "Google Maps" };
       const destinations = Object.entries(siteHomes).map(([id, url]) => ({ id: `site:${id}`, label: labels[id] || id, url, source: "suggested" }));
       if (await chrome.permissions.contains({ permissions: ["tabs"] })) {
         const tabs = await chrome.tabs.query({});

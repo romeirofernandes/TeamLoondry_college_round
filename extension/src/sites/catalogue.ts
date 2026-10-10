@@ -1821,6 +1821,139 @@ export const catalogue = [
     description:
       "Not claimed on desktop. Mobile navigation and Street View require separate adapters.",
   },
+  {
+    id: "YT01",
+    site: "youtube",
+    priority: "P0",
+    examples: ["Search YouTube for Formula 1 highlights"],
+    description: "Search YouTube and verify that results are visible.",
+  },
+  {
+    id: "YT02",
+    site: "youtube",
+    priority: "P0",
+    examples: ["List videos on screen", "list results"],
+    description: "Announce numbered visible video cards in visual reading order.",
+  },
+  {
+    id: "YT03",
+    site: "youtube",
+    priority: "P0",
+    examples: ["Open video two", "play the third video"],
+    description: "Open a video from the current announced visible list.",
+  },
+  {
+    id: "YT04",
+    site: "youtube",
+    priority: "P0",
+    examples: ["Open the video titled WTF is a Googlebook?"],
+    description: "Match a visible video title and clarify duplicate matches.",
+  },
+  {
+    id: "YT05",
+    site: "youtube",
+    priority: "P0",
+    examples: ["Pause", "resume the video"],
+    description: "Control the current YouTube player and verify playback state.",
+  },
+  {
+    id: "YT11",
+    site: "youtube",
+    priority: "P0",
+    examples: ["Resume the video", "play YouTube"],
+    description: "Resume the current YouTube player and verify playback state.",
+  },
+  {
+    id: "YT06",
+    site: "youtube",
+    priority: "P0",
+    examples: ["Skip forward thirty seconds", "go back ten seconds"],
+    description: "Seek relative to the current video time.",
+  },
+  {
+    id: "YT07",
+    site: "youtube",
+    priority: "P0",
+    examples: ["Set volume to forty percent", "mute the video"],
+    description: "Set or mute the current player volume.",
+  },
+  {
+    id: "YT12",
+    site: "youtube",
+    priority: "P0",
+    examples: ["Mute the video", "unmute YouTube"],
+    description: "Mute or unmute the current YouTube player.",
+  },
+  {
+    id: "YT08",
+    site: "youtube",
+    priority: "P0",
+    examples: ["Turn captions on", "turn captions off"],
+    description: "Set the current video's caption state when controls are available.",
+  },
+  {
+    id: "YT09",
+    site: "youtube",
+    priority: "P0",
+    examples: ["Set playback speed to one point five"],
+    description: "Set supported playback rate and verify the player value.",
+  },
+  {
+    id: "YT10",
+    site: "youtube",
+    priority: "P0",
+    examples: ["What video is playing?"],
+    description: "Read the current video title and channel.",
+  },
+  {
+    id: "CH01",
+    site: "chatgpt",
+    priority: "P0",
+    examples: ["Start a new chat"],
+    description: "Open a new ChatGPT conversation.",
+  },
+  {
+    id: "CH02",
+    site: "chatgpt",
+    priority: "P0",
+    examples: ["Ask AI how photosynthesis works", "Ask this assistant a question"],
+    description: "Send only an explicit, user-spoken prompt to the current ChatGPT page.",
+  },
+  {
+    id: "CH03",
+    site: "chatgpt",
+    priority: "P0",
+    examples: ["Summarize this chat", "Summarize this conversation"],
+    description: "Ask ChatGPT to summarize the current conversation.",
+  },
+  {
+    id: "CH04",
+    site: "chatgpt",
+    priority: "P0",
+    examples: ["Stop generating"],
+    description: "Stop the current response generation.",
+  },
+  {
+    id: "CH05",
+    site: "chatgpt",
+    priority: "P0",
+    examples: ["Regenerate the response"],
+    description: "Regenerate the current assistant response if available.",
+  },
+  {
+    id: "CH06",
+    site: "chatgpt",
+    priority: "P0",
+    examples: ["Read the last response"],
+    description: "Read a bounded excerpt from the latest visible response.",
+  },
+  {
+    id: "CH07",
+    site: "chatgpt",
+    priority: "P0",
+    examples: ["List conversations", "open conversation two"],
+    description: "List visible sidebar conversations and open a numbered choice.",
+  },
 ] as const;
 export type SiteId = (typeof catalogue)[number]["site"];
 export type ActionId = (typeof catalogue)[number]["id"];
@@ -1838,6 +1971,8 @@ export const siteHomes: Record<SiteId, string> = {
   linkedin: "https://www.linkedin.com/jobs/",
   irctc: "https://www.irctc.co.in/nget/train-search",
   maps: "https://www.google.com/maps",
+  youtube: "https://www.youtube.com/",
+  chatgpt: "https://chatgpt.com/",
 };
 export function siteForUrl(url: string): SiteId | null {
   try {
@@ -1870,6 +2005,11 @@ export function siteForUrl(url: string): SiteId | null {
           "irctc.co.in": "irctc",
           "www.irctc.co.in": "irctc",
           "maps.google.com": "maps",
+          "youtube.com": "youtube",
+          "www.youtube.com": "youtube",
+          "m.youtube.com": "youtube",
+          "chatgpt.com": "chatgpt",
+          "www.chatgpt.com": "chatgpt",
         } as Record<string, SiteId>
       )[u.hostname] ?? null
     );

@@ -54,10 +54,15 @@ export type RecipientAllowed = (
 ) => boolean;
 
 function recipients(s: SiteSnapshot, scope: ParentNode): string[] {
-  if (s.site === "whatsapp")
-    return s.current?.kind === "chat" && s.current.identity
-      ? [s.current.identity]
+  if (s.site === "whatsapp") {
+    const current = s.current;
+    // WhatsApp no longer exposes the older chat-ID pattern in message data-id
+    // attributes. The current header is still a visible, document-bound chat
+    // identity and is the same target shown in the confirmation preview.
+    return current?.kind === "chat" && current.label.trim()
+      ? [current.identity || current.label.trim()]
       : [];
+  }
   if (s.site === "meet") return meetingCode(s) ? [meetingCode(s)!] : [];
   if (s.site !== "gmail") return [];
   // Require committed recipient chips, not a pending suggestion or an uncommitted address.
@@ -260,7 +265,16 @@ export function prepareGroupB(
           "The selected draft is empty or unavailable.",
         ),
       };
-    if (!parts.destination.length || !allow(s.site, parts.destination))
+    if (!parts.destination.length)
+      return {
+        result: outcome(
+          "unavailable",
+          s.site === "whatsapp"
+            ? "I could not identify the current WhatsApp chat precisely. No message was sent."
+            : "The exact message recipient could not be identified. No message was sent.",
+        ),
+      };
+    if (s.site !== "whatsapp" && !allow(s.site, parts.destination))
       return {
         result: outcome(
           "not-implemented",
@@ -275,7 +289,7 @@ export function prepareGroupB(
       s.site === "gmail" ? one('input[name="subjectbox"]', scope) : undefined;
     return {
       target: buttons[0],
-      preview: `Send to ${s.current?.label || parts.destination.join(", ")} [${parts.destination.join(", ")}]${subject ? ", subject " + value(subject).slice(0, 100) : ""}. Draft: ${value(parts.editor).slice(0, 160)}.`,
+      preview: `Send to ${s.current?.label || parts.destination.join(", ")}${s.site === "whatsapp" ? "" : ` [${parts.destination.join(", ")}]`}${subject ? ", subject " + value(subject).slice(0, 100) : ""}. Draft: ${value(parts.editor).slice(0, 160)}.`,
     };
   }
   if (id === "IR05") {

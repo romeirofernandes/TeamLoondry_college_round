@@ -51,7 +51,9 @@ const validCalibration = (value: unknown, mode: PointerMode): value is Calibrati
     c.neutralY >= 0 && c.neutralY <= 1 &&
     c.rangeX >= 0.008 && c.rangeX <= 1 &&
     c.rangeY >= 0.008 && c.rangeY <= 1 &&
-    [c.left, c.right, c.up, c.down].every(n => n === undefined || Number.isFinite(n) && n >= 0.008 && n <= 1)
+    [c.left, c.right, c.up, c.down].every(n => n === undefined || Number.isFinite(n) && n >= 0.008 && n <= 1) &&
+    (c.invertX === undefined || typeof c.invertX === "boolean") &&
+    (c.invertY === undefined || typeof c.invertY === "boolean")
   );
 };
 
@@ -376,14 +378,18 @@ export class Tracker {
       if (calibration && typeof document !== "undefined") {
         const elapsed = timestamp - calibration.start;
         const stage = calibrationStages[Math.floor(elapsed / calibrationStageMs)];
-        if (stage && elapsed % calibrationStageMs >= 2000 && calibration.poses[stage].length >= 8 && !calibration.snapshots[stage]) {
-          const canvas = document.createElement("canvas");
-          canvas.width = 160; canvas.height = 120;
-          const context = canvas.getContext("2d");
-          if (context) {
-            context.drawImage(bitmap, 0, 0, 160, 120);
-            calibration.snapshots[stage] = canvas.toDataURL("image/jpeg", 0.7);
-            this.onStatus({ calibrationSnapshots: { ...calibration.snapshots } });
+        if (stage && elapsed % calibrationStageMs >= 2000 && !calibration.snapshots[stage]) {
+          try {
+            const canvas = document.createElement("canvas");
+            canvas.width = 160; canvas.height = 120;
+            const context = canvas.getContext("2d");
+            if (context) {
+              context.drawImage(bitmap, 0, 0, 160, 120);
+              calibration.snapshots[stage] = canvas.toDataURL("image/jpeg", 0.7);
+              this.onStatus({ calibrationSnapshots: { ...calibration.snapshots } });
+            }
+          } catch {
+            // Snapshot rendering is UI feedback; it must not interrupt inference.
           }
         }
       }

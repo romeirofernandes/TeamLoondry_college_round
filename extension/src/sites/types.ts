@@ -23,6 +23,7 @@ export type EntityKind =
   | "community"
   | "product"
   | "track"
+  | "video"
   | "album"
   | "playlist"
   | "artist"
@@ -136,9 +137,11 @@ export type Operation =
         | "seek-absolute"
         | "mute"
         | "volume"
-        | "volume-relative";
+        | "volume-relative"
+        | "speed";
     }
   | { kind: "field"; names: string[]; scope?: string }
+  | { kind: "prompt"; editor: string; submitNames: string[]; responseSelector: string }
   | { kind: "submit"; names: string[]; scope: string; created: string }
   | { kind: "clear-draft"; scope: string }
   | { kind: "unsupported"; reason: string };
