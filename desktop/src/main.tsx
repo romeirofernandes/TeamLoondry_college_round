@@ -15,7 +15,7 @@ function App(){
   const [prefs,setPrefs]=useState<Preferences>(()=>readPreferences(localStorage.getItem("handsfree-desktop-v1")));
   const [advanced,setAdvanced]=useState(true),[camera,setCamera]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const [voice,setVoice]=useState(false);
-  const [compact,setCompact]=useState(false),[step,setStep]=useState(0),[corner,setCorner]=useState("bottom-right"),[extensionId,setExtensionId]=useState(""),[command,setCommand]=useState(""),[commandResult,setCommandResult]=useState("");
+  const [compact,setCompact]=useState(localStorage.getItem("handsfree-desktop-onboarded")==="1"),[step,setStep]=useState(0),[corner,setCorner]=useState("bottom-right"),[extensionId,setExtensionId]=useState(""),[command,setCommand]=useState(""),[commandResult,setCommandResult]=useState("");
   const [confidence,setConfidence]=useState(0),[fps,setFps]=useState(0),[stage,setStage]=useState<CalibrationStage|null>(null),[progress,setProgress]=useState(0),[displayId,setDisplayId]=useState(0);
   const video=useRef<HTMLVideoElement>(null),tracker=useRef(new Tracker()),filter=useRef(new PointerFilter());
   const current=useRef(session),settings=useRef(prefs),generation=useRef(0),sequence=useRef(0),sending=useRef(false);
@@ -37,10 +37,10 @@ function App(){
     const setup=isTauri()?listen("show-settings",()=>{setCompact(false);void invoke("panel_layout",{compact:false}).catch(fail);}):Promise.resolve(()=>{});
     const unerror=isTauri()?listen<string>("native-error",e=>setError(e.payload)):Promise.resolve(()=>{});
     // Called only after the real React tree commits in the packaged WKWebView.
-    if(isTauri())void invoke("frontend_ready",{view:"setup"}).catch(fail);
+
     return()=>{alive=false;clearInterval(timer);void unlisten.then(f=>f());void unerror.then(f=>f());void handoff.then(f=>f());void setup.then(f=>f());void popup.then(f=>f());tracker.current.stop();};
   },[]);
-  useEffect(()=>{if(isTauri())void invoke("frontend_ready",{view:compact?"compact":"setup"}).catch(fail);},[compact]);
+  useEffect(()=>{if(isTauri())void invoke("panel_layout",{compact}).then(()=>invoke("frontend_ready",{view:compact?"compact":"setup"})).catch(fail);},[compact]);
   useEffect(()=>{const escape=(e:KeyboardEvent)=>{if(e.key==="Escape")void pause();};window.addEventListener("keydown",escape);return()=>window.removeEventListener("keydown",escape);},[]);
   const onPoint=(point:RawPoint|null,time:number)=>{
     setConfidence(point?.confidence??0);
@@ -85,7 +85,7 @@ function App(){
   const switchMode=async(mode:Preferences["mode"])=>{await stop();save({...settings.current,mode});};
   const running=session.phase==="running";
   const calibrated=Boolean(prefs.calibrations[prefs.mode]);
-  const showPanel=async()=>{await stop();if(isTauri())await invoke("panel_layout",{compact:true,corner});setCompact(true);};
+  const showPanel=async()=>{await stop();if(isTauri())await invoke("panel_layout",{compact:true,corner});localStorage.setItem("handsfree-desktop-onboarded","1");setCompact(true);};
   return <main className={compact?"compact":"setup"}>
     {!compact&&<nav className="setup-steps" aria-label="Desktop setup">{["Inputs","Access","Practice","Ready"].map((name,i)=><button key={name} className={step===i?"selected":""} onClick={()=>setStep(i)}>{i+1}. {name}</button>)}</nav>}
     {!compact&&step===0&&<section className="onboarding"><h2>Choose your inputs</h2><p>Use the same comfortable head or hand movement as the browser extension. Select one pointer source below. Camera recognition and calibration stay on this Mac.</p><button className="secondary" onClick={()=>setStep(1)}>Continue to access</button></section>}

@@ -202,8 +202,14 @@ async function ensureOffscreen() {
   if (!creatingOffscreen) creatingOffscreen = chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.AUDIO_PLAYBACK], justification: "Keep camera tracking and microphone recognition responsive while browsing other tabs." }).finally(() => { creatingOffscreen = null; });
   await creatingOffscreen;
 }
+let captureRevision=0;
 async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>["command"], options: { gesture?: import("./shared").HandGesture; presets?: GesturePreset[] } = {}) {
-  if (command === "start" || command === "ui-start") {await claimDesktop();await ensureOffscreen();}
+  if (command === "start" || command === "ui-start") {
+    const revision=captureRevision;await claimDesktop();
+    if(revision!==captureRevision||command==="start"&&!state.running)throw new Error("Capture start cancelled");
+    await ensureOffscreen();
+    if(revision!==captureRevision||command==="start"&&!state.running){const contexts=await chrome.runtime.getContexts({contextTypes:[chrome.runtime.ContextType.OFFSCREEN_DOCUMENT]});if(contexts.length&&!state.running)await chrome.offscreen.closeDocument();throw new Error("Capture start cancelled");}
+  }
   if (command !== "start" && command !== "ui-start") {
     const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
     if (!contexts.length) return;
@@ -211,6 +217,7 @@ async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>
   await chrome.runtime.sendMessage({ type: "OFFSCREEN_COMMAND", command, settings: pageSettings(), ...options }).catch(() => {});
 }
 async function stop() {
+  captureRevision++;
   uiVoiceTab = null; uiVoiceUntil = 0; ++narrationToken; chrome.tts?.stop();
   ++planToken; planDestination=null;
   wakeUntil = 0;
@@ -1045,7 +1052,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     case "SET_DASHBOARD_URL": {
       const url = new URL(message.url);
       if (!(url.protocol === "https:" || url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) return { ok: false, error: "Use an HTTPS dashboard URL or localhost for development." };
-      const permitted = await chrome.permissions.contains({ origins: [url.origin + "/*"] });
+      const permitted = await chrome.permissions.contains({ origins: [url.protocol + "//" + url.hostname + "/*"] });
       if (!permitted) return { ok: false, error: "Enable webpage access in permission setup before using this dashboard URL." };
       if (settings.dashboardUrl !== url.href) dashboardTabs.clear();
       settings.dashboardUrl = url.href;
@@ -1094,8 +1101,8 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return openController(message.tabId);
     case "OPEN_DASHBOARD":
       return openController(message.tabId, message.hash);
-    case "START":
-      await claimDesktop();
+    case "START": {
+      const revision=++captureRevision;await claimDesktop();if(revision!==captureRevision)return {ok:false,error:"Start cancelled"};
       activeProvider?.abort();
       pageRevision++;
       if (message.tabId !== undefined && !isDashboard((await chrome.tabs.get(message.tabId)).url)) await target(message.tabId);
@@ -1104,6 +1111,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
         const selected = tabs.find(tab => supported(tab.url) && !isDashboard(tab.url));
         if (selected?.id !== undefined) await target(selected.id);
       }
+      if(revision!==captureRevision)return {ok:false,error:"Start cancelled"};
       if (!state.running) record("run-start");
       await publish({
         running: true,
@@ -1114,9 +1122,11 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       });
       await pageState();
       if (state.targetTabId !== null) await attach(state.targetTabId);
+      if(revision!==captureRevision)return {ok:false,error:"Start cancelled"};
       try { await controller("start"); }
-      catch { await stop(); return { ok: false, error: "Capture could not start. Reload the extension, allow camera and microphone, and retry." }; }
+      catch { if(revision===captureRevision)await stop(); return { ok: false, error: "Capture could not start. Reload the extension, allow camera and microphone, and retry." }; }
       return { ok: true };
+    }
     case "PAUSE":
       await pause();
       return { ok: true };

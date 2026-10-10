@@ -20,7 +20,7 @@ export class Tracker {
     await video.play();
     if(generation!==this.generation)throw new Error("Camera setup cancelled");
     const worker=new Worker(new URL("./vision.worker.ts",import.meta.url));this.worker=worker;
-    let ready=false,busy=false,lastTime=-1;
+    let ready=false,busy=false,lastTime=-1,frameStarted=0;
     await new Promise<void>((resolve,reject)=>{
       const timeout=setTimeout(()=>reject(new Error("Tracking model took too long to load. Stop and retry.")),20000);
       worker.onerror=()=>{clearTimeout(timeout);reject(new Error("Tracking worker failed. Stop and retry."));onError("Tracking worker failed. Stop and retry.");};
@@ -34,8 +34,9 @@ export class Tracker {
     });
     if(generation!==this.generation)return;
     this.timer=setInterval(async()=>{
+      if(busy&&performance.now()-frameStarted>2000){this.stop();onError("Tracking stopped responding. Stop and start again.");return;}
       if(!ready||busy||video.readyState<2||video.currentTime===lastTime)return;
-      lastTime=video.currentTime;busy=true;const time=performance.now();
+      lastTime=video.currentTime;busy=true;frameStarted=performance.now();const time=performance.now();
       try{const frame=await createImageBitmap(video);if(generation!==this.generation){frame.close();return;}worker.postMessage({type:"frame",frame,time},[frame]);}
       catch(error){busy=false;onError(error instanceof Error?error.message:"Camera frame unavailable");}
     },40);

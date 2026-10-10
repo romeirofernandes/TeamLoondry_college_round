@@ -4,7 +4,7 @@ use tauri::{Manager,Emitter};
 pub fn stop(app:&tauri::AppHandle){if let Ok(mut state)=app.state::<Speech>().0.lock(){if let Some(mut child)=state.take(){let _=child.kill();let _=child.wait();}}}
 #[tauri::command]
 pub fn voice_start(app:tauri::AppHandle,epoch:u64)->Result<(),String>{
- crate::bridge::assert_desktop(&app)?;if app.state::<crate::Core>().lock().map_err(|_|"Session lock failed")?.snapshot.epoch!=epoch{return Err("Session changed".into());}
+ crate::bridge::assert_desktop(&app)?;let snapshot=app.state::<crate::Core>().lock().map_err(|_|"Session lock failed")?.snapshot.clone();if snapshot.epoch!=epoch||snapshot.phase!=crate::session::Phase::Running{return Err("Session changed".into());}
  stop(&app);
  #[cfg(not(target_os="macos"))]return Err("Native voice requires macOS".into());
  #[cfg(target_os="macos")] {

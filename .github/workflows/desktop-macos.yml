@@ -67,7 +67,14 @@ jobs:
       - name: Install, update, native bridge, capture handoff and installed WKWebView
         run: python3 scripts/macos-smoke.py release/Handsfree_0.2.0_aarch64.dmg release/macos-validation.json
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: failure()
+        with:
+          name: browser-failure-evidence
+          path: |
+            extension/test-results/
+            desktop/test-results/
+      - uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: handsfree-macos-preview
           path: desktop/release/

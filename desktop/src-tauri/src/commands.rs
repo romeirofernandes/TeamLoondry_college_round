@@ -15,6 +15,8 @@ pub fn panel_layout(compact:bool,corner:Option<String>,app:tauri::AppHandle)->Re
  let w=app.get_webview_window("main").ok_or("Panel unavailable")?;
  w.set_min_size(Some(tauri::LogicalSize::new(300.,if compact{240.}else{560.}))).map_err(|e|e.to_string())?;
  w.set_size(tauri::LogicalSize::new(if compact{320.}else{420.},if compact{300.}else{740.})).map_err(|e|e.to_string())?;
+ w.set_decorations(!compact).map_err(|e|e.to_string())?;
+ w.set_resizable(!compact).map_err(|e|e.to_string())?;
  w.set_always_on_top(compact).map_err(|e|e.to_string())?;
  if let Some(corner)=corner{let monitor=w.current_monitor().map_err(|e|e.to_string())?.ok_or("Display unavailable")?;let factor=monitor.scale_factor();let origin=monitor.position().to_logical::<f64>(factor);let size=monitor.size().to_logical::<f64>(factor);let (width,height)=if compact{(320.,300.)}else{(420.,740.)};let x=if corner.ends_with("right"){origin.x+size.width-width-24.}else{origin.x+24.};let y=if corner.starts_with("bottom"){origin.y+size.height-height-48.}else{origin.y+48.};w.set_position(tauri::LogicalPosition::new(x,y)).map_err(|e|e.to_string())?;}
  Ok(())

@@ -324,11 +324,14 @@ test("minimal popup previews camera; capture survives popup close and webpage na
 });
 
 test("website dashboard exchanges state and settings without exposing stored provider keys", async () => {
-  await message({ type: "SET_DASHBOARD_URL", url: "http://127.0.0.1:4177/dashboard" });
+  expect(await message({ type: "SET_DASHBOARD_URL", url: "http://127.0.0.1:4177/dashboard" })).toEqual({ok:true});
   const opened = context.waitForEvent("page");
   await message({ type: "OPEN_DASHBOARD" });
   const dashboard = await opened;
+  dashboard.on("requestfailed",r=>console.log("Dashboard request failed:",r.url(),r.failure()?.errorText));
   await dashboard.waitForURL("http://127.0.0.1:4177/dashboard#overview");
+  await dashboard.waitForLoadState("load");
+  expect(await dashboard.title()).not.toContain("127.0.0.1");
   await expect.poll(async () => {
     try { return !!(await dashboardRequest(dashboard, { type: "GET_STATE" })); } catch { return false; }
   }).toBe(true);
@@ -359,7 +362,10 @@ test("dashboard requests reject after navigating the authorized tab to another p
   const opened = context.waitForEvent("page");
   await message({ type: "OPEN_DASHBOARD" });
   const dashboard = await opened;
+  dashboard.on("requestfailed",r=>console.log("Dashboard request failed:",r.url(),r.failure()?.errorText));
   await dashboard.waitForURL("http://127.0.0.1:4177/dashboard#overview");
+  await dashboard.waitForLoadState("load");
+  expect(await dashboard.title()).not.toContain("127.0.0.1");
   await expect.poll(async () => {
     try { return !!(await dashboardRequest(dashboard, { type: "GET_STATE" })); } catch { return false; }
   }).toBe(true);

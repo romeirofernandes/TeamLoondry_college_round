@@ -9,19 +9,22 @@ export function prepareUpload(token:string){
  const inputs=Array.from(document.querySelectorAll<HTMLInputElement>('input[type="file"]')).filter(i=>!i.disabled&&!i.webkitdirectory);
  const focused=document.activeElement;const input=inputs.includes(focused as HTMLInputElement)?focused as HTMLInputElement:inputs.length===1?inputs[0]:null;
  if(!input)throw new Error(inputs.length>1?"Focus the file upload input first; several inputs are available.":"No supported file input is available on this page.");
+ const scope=globalThis as typeof globalThis & {__handsfreeUploads?:Map<string,HTMLInputElement>};
+ const registry=scope.__handsfreeUploads??=new Map();if(registry.size>=10)throw new Error("Too many pending file selections. Stop and retry.");registry.set(token,input);
  input.setAttribute("data-handsfree-upload",token);return {url:location.href,origin:location.origin,accept:input.accept,token};
 }
 export function commitUpload(token:string,url:string,name:string,type:string,chunks:string[],size:number){
  if(location.href!==url)throw new Error("The page changed while choosing a file.");
- const input=document.querySelector<HTMLInputElement>('input[data-handsfree-upload="'+token+'"]');
- if(!input||input.type!=="file"||input.disabled||input.webkitdirectory)throw new Error("The original file input is no longer available.");
+ const scope=globalThis as typeof globalThis & {__handsfreeUploads?:Map<string,HTMLInputElement>};
+ const input=scope.__handsfreeUploads?.get(token);scope.__handsfreeUploads?.delete(token);
+ if(!input||!input.isConnected||input.getAttribute("data-handsfree-upload")!==token||input.type!=="file"||input.disabled||input.webkitdirectory)throw new Error("The original file input is no longer available.");
  input.removeAttribute("data-handsfree-upload");
  const rules=input.accept.toLowerCase().split(",").map(s=>s.trim()).filter(Boolean);
  if(rules.length&&!rules.some(r=>r.startsWith(".")?name.toLowerCase().endsWith(r):r.endsWith("/*")?type.startsWith(r.slice(0,-1)):type===r))throw new Error("The chosen file does not match this input's allowed file types.");
  const parts=chunks.map(c=>Uint8Array.from(atob(c),v=>v.charCodeAt(0)));if(parts.reduce((n,p)=>n+p.length,0)!==size||size>20*1024*1024)throw new Error("Incomplete or oversized file transfer.");
  const transfer=new DataTransfer();transfer.items.add(new File(parts,name,{type}));input.files=transfer.files;input.dispatchEvent(new Event("input",{bubbles:true}));input.dispatchEvent(new Event("change",{bubbles:true}));return {name:input.files?.[0]?.name,count:input.files?.length};
 }
-export function clearUpload(token:string){document.querySelector('input[data-handsfree-upload="'+token+'"]')?.removeAttribute("data-handsfree-upload");}
+export function clearUpload(token:string){const scope=globalThis as typeof globalThis & {__handsfreeUploads?:Map<string,HTMLInputElement>};scope.__handsfreeUploads?.delete(token);document.querySelector('input[data-handsfree-upload="'+token+'"]')?.removeAttribute("data-handsfree-upload");}
 function mime(name:string){const extension=name.toLowerCase().split(".").pop();return ({txt:"text/plain",csv:"text/csv",pdf:"application/pdf",png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",gif:"image/gif",webp:"image/webp",json:"application/json",zip:"application/zip",mp4:"video/mp4",mp3:"audio/mpeg",docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"} as Record<string,string>)[extension||""]||"application/octet-stream";}
 export async function uploadFile(tabId:number,current:()=>boolean){
  if(!await paired())throw new Error("Connect the desktop app before attaching a file.");

@@ -28,7 +28,9 @@ fn open_help(kind:String)->Result<(),String>{
 }
 #[tauri::command]
 fn start(display_id:u32,core:State<Core>,app:tauri::AppHandle)->Result<Snapshot,String>{
-    bridge::assert_desktop(&app)?;
+    let bridge=app.state::<bridge::Bridge>();
+    let owner=bridge.owner.lock().map_err(|_|"Bridge lock failed")?;
+    if owner.is_some(){return Err("Browser control is active. Stop it first.".into());}
     if !native::trusted(){return Err("Allow Handsfree to control your Mac in Privacy & Security settings first".into());}
     if !native::displays()?.iter().any(|d|d.id==display_id){return Err("Select an available display".into());}
     Ok(core.lock().map_err(|_|"Session lock failed")?.start(display_id,Instant::now()))
@@ -102,7 +104,7 @@ pub fn run(){
                 "show"=>{if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.set_focus();}},
                 "settings"=>{let _=app.emit("show-settings",());if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.set_focus();}},
                 "pause"=>{if let Ok(mut s)=app.state::<Core>().lock(){let _=app.emit("session",s.pause("Paused from menu"));}},
-                "quit"=>app.exit(0),_=>{}
+                "quit"=>{speech::stop(app);app.exit(0)},_=>{}
             });
             if let Some(icon)=app.default_window_icon(){tray=tray.icon(icon.clone());}tray.build(app)?;
             for key in ["CommandOrControl+Shift+P","CommandOrControl+Shift+Space","CommandOrControl+Shift+ArrowUp","CommandOrControl+Shift+ArrowDown"]{
@@ -115,7 +117,7 @@ pub fn run(){
             });
             Ok(())
         })
-        .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{..}=event{if let Ok(mut s)=window.state::<Core>().lock(){s.stop();}}})
+        .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{..}=event{speech::stop(window.app_handle());if let Ok(mut s)=window.state::<Core>().lock(){s.stop();}}})
         .run(tauri::generate_context!()).expect("Could not start Handsfree");
 }
 
