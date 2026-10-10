@@ -207,3 +207,34 @@ exit 0
 ```
 
 Remaining limitation: these browser checks use fake camera/microphone inputs and injected pointer samples. They make no physical accuracy or comfort claim. The prior live Jev paraphrase concern remains unchanged. The single dashboard setup timeout observed before the fixture correction did not recur in either subsequent complete run; all authorization assertions passed in the final run.
+
+## Review fix round 2 (base 8e11cc7)
+
+Read the new Important finding in `task-1-rereview.md`. Reproduced the exact A-to-B race: B's controlled activation echo is emitted, window focus remains deferred, the user activates original tab A, then focus resolves. The previous current-target shortcut ignored A, leaving the provider valid and incorrectly committing B.
+
+Narrow correction in `background.ts`: an expected activation whose ID is in `tabActivations` remains suppressed. A current-target activation is ignored only when no controlled transition is active. If the user returns to the current target while a different controlled activation is pending, `target(tabId)` immediately aborts provider work and advances the page revision before any asynchronous browser reads. The stale helper therefore fails validity when focus resolves and cannot commit B. Late echoes of an already-committed current target remain harmless. Production tracking and confirmation gates are unchanged.
+
+Added a focused regression that emits B's own echo, defers window focus, emits user A activation, then resolves focus. It asserts that A remains the target, no successful-switch feedback is published, and no page state is dispatched to B. The previous positive own-echo regression remains in the same focused suite.
+
+RED/GREEN and final verification:
+
+```text
+npm test --prefix extension -- tests/background.test.ts --reporter=dot
+RED: Test Files 1 failed (1); Tests 1 failed | 39 passed (40)
+Failure: expected targetTabId 1, received 2 after focus resolved.
+GREEN: Test Files 1 passed (1); Tests 40 passed (40)
+
+npm test --prefix extension
+Test Files 9 passed (9)
+Tests 183 passed (183)
+Duration 1.26s
+
+npm run typecheck --prefix extension
+tsc --noEmit
+exit 0
+
+git diff --check
+exit 0
+```
+
+Self-review confirmed `target` aborts/invalidates synchronously before its first await, only the expected controlled-tab echo is suppressed during an in-progress switch, and valid self-generated transitions still complete. Changes are limited to `extension/src/background.ts`, `extension/tests/background.test.ts` and this report. No new browser/live-provider runs were needed for this narrow unit-reproduced event race; the previous 9/9 browser evidence belongs to 8e11cc7. Existing live Jev paraphrase limitation remains unchanged.

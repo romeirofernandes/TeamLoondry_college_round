@@ -744,7 +744,13 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
   void ready.then(async () => {
     // Controlled activation commits its target once, after focus completes.
     // Do not let Chrome's echo event cancel that same in-flight action.
-    if (tabActivations.has(tabId) || tabId === state.targetTabId) return;
+    if (tabActivations.has(tabId)) return;
+    if (tabId === state.targetTabId) {
+      // Returning to the old target while another tab is being activated is a
+      // user choice, not an echo. Invalidate that transition before any reads.
+      if (tabActivations.size) await target(tabId);
+      return;
+    }
     const tab = await chrome.tabs.get(tabId);
     if (isDashboard(tab.url)) { await connectDashboard(tabId); return; }
     if (!state.running || tabId === controllerTabId || tab.url?.startsWith(chrome.runtime.getURL(""))) return;

@@ -761,3 +761,33 @@ describe('tab activation transition validity', () => {
     expect(await send({ type: 'GET_STATE' })).toMatchObject({ targetTabId: 2, feedback: 'Switched tab.' });
   });
 });
+
+describe('user tab activation supersedes controlled switching', () => {
+  it('keeps the original tab after the user returns during deferred window focus', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    const activated = browser.tabs.onActivated.addListener.mock.calls[0][0] as (info: { tabId: number }) => void;
+    browser.tabs.update.mockImplementation(async id => {
+      activated({ tabId: id });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      return {};
+    });
+    let releaseFocus!: () => void;
+    const focusing = new Promise<void>(resolve => browser.windows.update.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { releaseFocus = () => resolver({}); });
+    }));
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"next-tab"}}' } }] }) });
+    const provider = send({ type: 'HEARD', text: 'hey handsfree switch tabs' });
+    await focusing;
+    // B's own activation echo has already been emitted. Selecting A is a real
+    // competing user action even though A remains the session's current target.
+    activated({ tabId: 1 });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    releaseFocus();
+    await provider;
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    const state = await send({ type: 'GET_STATE' });
+    expect(state.targetTabId).toBe(1);
+    expect(state.feedback).not.toBe('Switched tab.');
+    expect(browser.tabs.sendMessage.mock.calls.some(([id, message]) => id === 2 && message.type === 'PAGE_STATE')).toBe(false);
+  });
+});
