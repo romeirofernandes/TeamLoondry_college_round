@@ -40,15 +40,38 @@ Command+Shift+Space clicks once at the current pointer. Command+Shift+Up/Down sc
 
 The first package is unsigned by Apple Developer ID. macOS may ask the user to approve opening Handsfree in Privacy & Security. Camera and native input grants are separate. A CI pass on a hosted Mac does not grant permissions on a user's Mac.
 
-## Install the Mac runner candidate
+## Install the macOS preview
 
-Download and extract the `handsfree-macos-preview` artifact from the [successful Mac run](https://github.com/romeirofernandes/TeamLoondry_college_round/actions/runs/38085545874). Keep the DMG, `install-app.sh`, `update-app.sh`, and `SHA256SUMS` together. On an Apple Silicon Mac running macOS 26 or newer, install the exact tested package with:
+The current preview targets Apple Silicon and macOS 26 or newer. It is unsigned by Apple Developer ID and is not notarized. The installer requires an explicit opt-in, checks the package checksum and app identity, and installs into `~/Applications` by default. Use the exact pinned version below; preview releases are not resolved through GitHub's `/releases/latest` URL.
+
+Download the installer and run it from Terminal:
 
 ```bash
-HANDSFREE_ALLOW_UNSIGNED_MAC=1 bash install-app.sh --local-package Handsfree_0.1.0_aarch64.dmg
+curl -fsSL https://github.com/romeirofernandes/TeamLoondry_college_round/releases/download/v0.1.0-preview.1/install-app.sh -o /tmp/install-handsfree.sh
+HANDSFREE_VERSION=v0.1.0-preview.1 HANDSFREE_ALLOW_UNSIGNED_MAC=1 bash /tmp/install-handsfree.sh
 ```
 
-The script installs into `~/Applications` by default. If macOS blocks the first launch, open System Settings > Privacy & Security and approve Handsfree. The app then asks separately for camera and native input-control access when you use those features. Check the included `SHA256SUMS` before transferring or storing the downloaded files.
+The script fetches the pinned DMG and checksum, verifies them, installs the app, and opens it. If Gatekeeper blocks the first launch, use System Settings > Privacy & Security > Open Anyway for Handsfree. Camera and macOS input-control permissions are separate grants requested only when their features are used.
+
+To download the DMG yourself, verify it, and open it in Finder:
+
+```bash
+mkdir -p "$HOME/Downloads/Handsfree-preview"
+cd "$HOME/Downloads/Handsfree-preview"
+curl -fL https://github.com/romeirofernandes/TeamLoondry_college_round/releases/download/v0.1.0-preview.1/Handsfree_0.1.0_aarch64.dmg -o Handsfree_0.1.0_aarch64.dmg
+curl -fL https://github.com/romeirofernandes/TeamLoondry_college_round/releases/download/v0.1.0-preview.1/SHA256SUMS -o SHA256SUMS
+shasum -a 256 -c SHA256SUMS
+open Handsfree_0.1.0_aarch64.dmg
+```
+
+The DMG opens a standard macOS installer window. Drag `Handsfree.app` to Applications. If macOS blocks it, approve it in Privacy & Security before reopening. Review the [pinned preview release](https://github.com/romeirofernandes/TeamLoondry_college_round/releases/tag/v0.1.0-preview.1) for the tested build's report, screenshot, checksum, and current limitations.
+
+To reinstall/update from this pinned preview, close Handsfree and run:
+
+```bash
+curl -fsSL https://github.com/romeirofernandes/TeamLoondry_college_round/releases/download/v0.1.0-preview.1/update-app.sh -o /tmp/update-handsfree.sh
+HANDSFREE_VERSION=v0.1.0-preview.1 HANDSFREE_ALLOW_UNSIGNED_MAC=1 bash /tmp/update-handsfree.sh
+```
 
 ## Development verification
 
