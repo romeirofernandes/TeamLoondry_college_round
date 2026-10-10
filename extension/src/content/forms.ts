@@ -1,4 +1,5 @@
 import { overlayId, usable } from "./dom";
+import type { FormCommand } from "../shared";
 
 /** This model stays in the content script. It never stores or returns answer values. */
 export type FormControlType =
@@ -356,7 +357,7 @@ function completed(element: HTMLElement, type: FormControlType, members: readonl
   if (type === "select" && element instanceof HTMLSelectElement) return Boolean(element.value);
   if (type === "combobox") {
     if (element instanceof HTMLInputElement) return Boolean(element.value.trim());
-    return Boolean(element.getAttribute("aria-valuetext") || element.getAttribute("aria-valuenow") || element.getAttribute("aria-activedescendant"));
+    return Boolean(element.getAttribute("aria-valuetext") || element.getAttribute("aria-valuenow"));
   }
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) return Boolean(element.value.trim());
   return false;
@@ -531,5 +532,274 @@ export class FormModel {
     this.controls = nextControls;
     this.current = { documentId, signature, forms };
     return this.current;
+  }
+}
+
+type FormChoice =
+  | { kind: "form"; formId: string }
+  | { kind: "field"; formId: string; controlId: string }
+  | { kind: "option"; formId: string; controlId: string; optionId: string };
+type PendingFormSubmit = { formId: string; signature: string; button: HTMLElement; buttonSignature: string; url: string; expires: number };
+export interface FormResult {
+  ok: boolean;
+  feedback: string;
+  dictationTarget?: HTMLElement;
+  dictating?: boolean;
+}
+
+function speechKey(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+/** Executes explicit form commands locally. Answer values remain in this content script. */
+export class FormAssistant {
+  private model = new FormModel();
+  private selectedFormId: string | null = null;
+  private choices: FormChoice[] = [];
+  private choiceSignature = "";
+  private pending: PendingFormSubmit | null = null;
+
+  get ownsChoices() { return this.choices.length > 0; }
+  get hasPendingConfirmation() { return this.pending !== null; }
+  private clearChoices() { this.choices = []; this.choiceSignature = ""; }
+  private result(feedback: string, ok = true): FormResult { return { ok, feedback }; }
+  private signature(button: HTMLElement) {
+    return [button.tagName, button.getAttribute("type"), button.getAttribute("aria-label"), button.textContent, button.getAttribute("disabled"), button.getAttribute("aria-disabled")].join("|");
+  }
+  private selected(inventory: FormInventory) {
+    return this.selectedFormId ? inventory.forms.filter(form => form.id === this.selectedFormId) : inventory.forms;
+  }
+  private remember(inventory: FormInventory, choices: FormChoice[]) {
+    this.choices = choices.slice(0, 10);
+    this.choiceSignature = inventory.signature;
+  }
+  onMutation() {
+    if (!this.choices.length && !this.pending) return;
+    const inventory = this.model.refresh();
+    if (this.choices.length && inventory.signature !== this.choiceSignature) this.clearChoices();
+    if (this.pending) {
+      const form = inventory.forms.find(item => item.id === this.pending?.formId);
+      if (!form || form.signature !== this.pending.signature || !this.pending.button.isConnected || this.signature(this.pending.button) !== this.pending.buttonSignature) this.pending = null;
+    }
+  }
+  pageChanged() {
+    this.model = new FormModel();
+    this.selectedFormId = null;
+    this.pending = null;
+    this.clearChoices();
+  }
+  cancel() { this.pending = null; this.clearChoices(); }
+  onUserEdit() { this.pending = null; }
+  private formsFor(query: string, inventory: FormInventory) {
+    const key = speechKey(query);
+    const exact = inventory.forms.filter(form => speechKey(form.name) === key);
+    return exact.length ? exact : inventory.forms.filter(form => speechKey(form.name).includes(key) || key.includes(speechKey(form.name)));
+  }
+  private fieldsFor(forms: readonly FormEntry[], query: string) {
+    const key = speechKey(query);
+    const controls = forms.flatMap(form => form.controls).filter(control => control.supported && control.sensitivity.status === "safe");
+    const exact = controls.filter(control => speechKey(control.name) === key);
+    return exact.length ? exact : controls.filter(control => speechKey(control.name).includes(key) || key.includes(speechKey(control.name)));
+  }
+  private selectForm(form: FormEntry) {
+    this.selectedFormId = form.id;
+    this.clearChoices();
+    return this.result("Selected " + form.name + ".");
+  }
+  private currentControl(inventory: FormInventory, id: string) {
+    const control = this.model.control(id);
+    const form = inventory.forms.find(entry => entry.id === control?.formId);
+    return form && control?.element.isConnected && control.supported && control.sensitivity.status === "safe" && !control.disabled && !control.readOnly ? control : undefined;
+  }
+  private ambiguousFields(inventory: FormInventory, controls: FormControl[]) {
+    this.remember(inventory, controls.map(control => ({ kind: "field", formId: control.formId, controlId: control.id })));
+    const options = controls.slice(0, 10).map((control, index) => (index + 1) + ": " + control.name).join(". ");
+    return this.result("Several fields match. " + options + ". Say choose followed by the number, then repeat the field command.");
+  }
+  private setValue(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
+    const proto = element instanceof HTMLInputElement ? HTMLInputElement.prototype : element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLSelectElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (!setter) return false;
+    setter.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    return element.value === value;
+  }
+  private write(control: FormControl, value: string) {
+    const element = control.element;
+    if (!element.isConnected || control.sensitivity.status !== "safe" || control.disabled || control.readOnly) return false;
+    if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return false;
+    if (element instanceof HTMLInputElement && !["text", "email", "tel", "url", "number", "search", "date", "time", "datetime-local", "month", "week"].includes(element.type)) return false;
+    if (element instanceof HTMLInputElement && element.type === "number" && value && !Number.isFinite(Number(value))) return false;
+    if (!this.setValue(element, value)) return false;
+    return !value || element.checkValidity();
+  }
+  private async activateOption(control: FormControl, option: FormOption) {
+    if (option.disabled || !option.element.isConnected || control.disabled || control.readOnly || control.sensitivity.status !== "safe") return false;
+    if (control.element instanceof HTMLSelectElement && option.element instanceof HTMLOptionElement)
+      return this.setValue(control.element, option.element.value) && control.element.selectedOptions[0] === option.element;
+    if (control.type === "radio-group" || control.type === "combobox") {
+      option.element.click();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      if (control.type === "radio-group")
+        return option.element instanceof HTMLInputElement ? option.element.checked : option.element.getAttribute("aria-checked") === "true";
+      this.model.refresh();
+      const updated = this.model.control(control.id);
+      const activeId = updated?.element.getAttribute("aria-activedescendant");
+      const selected = option.element.getAttribute("aria-selected") === "true" || activeId === option.element.id;
+      const value = updated?.element instanceof HTMLInputElement ? updated.element.value : updated?.element.getAttribute("aria-valuetext");
+      return selected || speechKey(value || "") === speechKey(option.label);
+    }
+    return false;
+  }
+  private async selectOption(control: FormControl, query: string) {
+    let current = control;
+    let found = current.options.filter(option => !option.disabled && speechKey(option.label) === speechKey(query));
+    if (!found.length && current.type === "combobox") {
+      current.element.click();
+      await new Promise(resolve => setTimeout(resolve, 100));
+      this.model.refresh();
+      current = this.model.control(control.id) || current;
+      found = current.options.filter(option => !option.disabled && speechKey(option.label) === speechKey(query));
+    }
+    return found.length === 1 ? this.activateOption(current, found[0]) : false;
+  }
+  private submitButtons(form: FormEntry) {
+    return all('button,input[type="submit"],input[type="image"],[role="button"]', form.root)
+      .filter(button => rendered(button) && !isDisabled(button))
+      .filter(button => {
+        const label = speechKey(button instanceof HTMLInputElement ? button.value : (button.getAttribute("aria-label") || "") + " " + staticText(button));
+        return /\b(submit|send|finish|complete|submit form|send response)\b/.test(label) && (nativeSubmit(button) || button.getAttribute("role") === "button");
+      });
+  }
+  private invalid(control: FormControl) {
+    const element = control.element;
+    if (element.getAttribute("aria-invalid") === "true") return true;
+    return (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) && !element.validity.valid;
+  }
+  private prepareSubmit(inventory: FormInventory): FormResult {
+    const forms = this.selected(inventory);
+    if (forms.length !== 1) {
+      if (forms.length > 1) {
+        this.remember(inventory, forms.map(form => ({ kind: "form", formId: form.id })));
+        return this.result("Several forms are available. " + forms.map((form, index) => (index + 1) + ": " + form.name).join(". ") + ". Say choose followed by the number.");
+      }
+      return this.result("No supported form was found.", false);
+    }
+    const buttons = this.submitButtons(forms[0]);
+    if (buttons.length !== 1) return this.result(buttons.length ? "Several possible submit buttons were found; I will not guess." : "No safe submit button was found.", false);
+    const button = buttons[0];
+    this.pending = { formId: forms[0].id, signature: forms[0].signature, button, buttonSignature: this.signature(button), url: location.href, expires: Date.now() + 15000 };
+    const incomplete = forms[0].controls.filter(field => field.required && !field.completed && field.sensitivity.status === "safe").length;
+    const blocked = forms[0].controls.filter(field => field.required && (!field.supported || field.sensitivity.status !== "safe")).length;
+    const summary = (incomplete ? incomplete + " required field" + (incomplete === 1 ? " is" : "s are") + " incomplete. " : "All visible safe required fields appear complete. ") +
+      (blocked ? blocked + " protected or unsupported required field" + (blocked === 1 ? " needs" : "s need") + " manual review. " : "");
+    return this.result("Ready to submit " + forms[0].name + ". " + summary + "Say confirm within 15 seconds, or cancel.");
+  }
+  async confirm(): Promise<FormResult | null> {
+    const pending = this.pending;
+    if (!pending) return null;
+    this.pending = null;
+    const inventory = this.model.refresh();
+    const form = inventory.forms.find(entry => entry.id === pending.formId);
+    if (Date.now() > pending.expires || location.href !== pending.url || !form || form.signature !== pending.signature || !pending.button.isConnected || isDisabled(pending.button) || this.signature(pending.button) !== pending.buttonSignature)
+      return this.result("The form changed or confirmation expired. Nothing was submitted.", false);
+    pending.button.click();
+    await new Promise(resolve => setTimeout(resolve, 350));
+    const submitted = /\b(response (?:has been )?recorded|successfully submitted|thank you for (?:your )?response|your response has been recorded|form submitted)\b/i.test(staticText(document.body, 2400));
+    return this.result(submitted ? "The page indicates the form was submitted." : "The submit action ran once, but I could not verify the result. I will not retry automatically.", submitted);
+  }
+  async handle(command: FormCommand): Promise<FormResult> {
+    if (this.pending && command.type !== "submit") this.pending = null;
+    const inventory = this.model.refresh();
+    if (this.choices.length && this.choiceSignature !== inventory.signature) this.clearChoices();
+    if (command.type === "choose") {
+      const choice = this.choices[command.index - 1];
+      this.clearChoices();
+      if (!choice) return this.result("That form choice expired. List the forms or fields again.", false);
+      if (choice.kind === "form") {
+        const form = inventory.forms.find(item => item.id === choice.formId);
+        return form ? this.selectForm(form) : this.result("That form is no longer available.", false);
+      }
+      const field = this.currentControl(inventory, choice.controlId);
+      if (!field) return this.result("That field is no longer available or safe to edit.", false);
+      if (choice.kind === "option") {
+        const option = field.options.find(item => item.id === choice.optionId);
+        if (!option || option.disabled) return this.result("That option is no longer available.", false);
+        const ok = await this.activateOption(field, option);
+        return this.result(ok ? "Selected " + option.label + " for " + field.name + "." : "That option could not be selected safely.", ok);
+      }
+      this.selectedFormId = field.formId;
+      return this.result("Selected " + field.name + ". Repeat the command for this field.");
+    }
+    if (command.type === "list-forms" || command.type === "select-form") {
+      const forms = command.type === "list-forms" ? inventory.forms : "index" in command ? [inventory.forms[command.index - 1]].filter((form): form is FormEntry => !!form) : this.formsFor(command.query, inventory);
+      if (!forms.length) return this.result("No matching supported form was found.", false);
+      if (forms.length === 1) return this.selectForm(forms[0]);
+      this.remember(inventory, forms.map(form => ({ kind: "form", formId: form.id })));
+      return this.result("Forms: " + forms.map((form, index) => (index + 1) + ": " + form.name).join(". ") + ". Say choose followed by the number.");
+    }
+    if (command.type === "submit") return this.prepareSubmit(inventory);
+    if (["list-fields", "list-required", "missing", "review"].includes(command.type)) {
+      const forms = this.selected(inventory);
+      if (forms.length !== 1) return this.result(forms.length ? "Select one form first." : "No supported form was found. Sensitive and unclear fields are excluded.", false);
+      const safe = forms[0].controls.filter(field => field.supported && field.sensitivity.status === "safe");
+      const list = command.type === "list-required" ? safe.filter(field => field.required)
+        : command.type === "missing" ? safe.filter(field => field.required && !field.completed || this.invalid(field))
+        : safe;
+      if (!list.length) return this.result(command.type === "missing" ? "No required fields appear to be missing." : "No matching safe fields were found.");
+      this.remember(inventory, list.map(field => ({ kind: "field", formId: field.formId, controlId: field.id })));
+      return this.result((command.type === "missing" ? "Missing or invalid fields: " : command.type === "review" ? "Form review: " : "") + list.map((field, index) => (index + 1) + ": " + field.name + " (" + field.type + ")" + (field.required ? " (required)" : "") + (this.invalid(field) ? " (invalid)" : field.completed ? " (filled)" : command.type === "review" ? " (empty)" : command.type === "missing" ? " (missing)" : "")).join(". ") + ".");
+    }
+    if (command.type === "next-section" || command.type === "previous-section") {
+      const forms = this.selected(inventory);
+      if (forms.length !== 1) return this.result("Select one form before moving sections.", false);
+      const names = command.type === "next-section" ? ["next", "continue", "next section"] : ["previous", "back", "previous section"];
+      const buttons = all('button,[role="button"],input[type="button"],input[type="submit"]', forms[0].root).filter(button => rendered(button) && !isDisabled(button)).filter(button => names.includes(speechKey(button instanceof HTMLInputElement ? button.value : (button.getAttribute("aria-label") || "") + " " + staticText(button))));
+      if (buttons.length !== 1) return this.result(buttons.length ? "Several section controls match; I will not guess." : "No matching section control was found.", false);
+      buttons[0].click();
+      this.clearChoices();
+      await new Promise(resolve => setTimeout(resolve, 150));
+      this.model.refresh();
+      return this.result("Section control activated. Review the displayed section before continuing.");
+    }
+    if (!("query" in command)) return this.result("That form command is unsupported.", false);
+    const forms = this.selected(inventory);
+    if (!forms.length) return this.result("No supported form was found. Sensitive and unclear fields are excluded.", false);
+    const fields = this.fieldsFor(forms, command.query);
+    if (!fields.length) return this.result("No safe, clearly labelled field matched that name.", false);
+    if (fields.length > 1) return this.ambiguousFields(inventory, fields);
+    const field = this.currentControl(inventory, fields[0].id);
+    if (!field) return this.result("That field is disabled, read-only, sensitive, or unavailable.", false);
+    this.clearChoices();
+    if (command.type === "dictate") {
+      field.element.focus({ preventScroll: true });
+      this.selectedFormId = field.formId;
+      return { ...this.result("Ready to dictate into " + field.name + ". Say stop typing to finish."), dictationTarget: field.element, dictating: true };
+    }
+    if (command.type === "select-option") {
+      const matches = field.options.filter(option => !option.disabled && speechKey(option.label) === speechKey(command.option));
+      if (matches.length > 1) {
+        this.remember(inventory, matches.map(option => ({ kind: "option", formId: field.formId, controlId: field.id, optionId: option.id })));
+        return this.result("Several options match " + field.name + ". " + matches.map((option, index) => (index + 1) + ": " + option.label).join(". ") + ". Say choose followed by the number.");
+      }
+      if (!matches.length && field.type !== "combobox") return this.result("That exact option was not found.", false);
+      const ok = await this.selectOption(field, command.option);
+      return this.result(ok ? "Selected " + command.option + " for " + field.name + "." : "That field type could not select and verify the requested option.", ok);
+    }
+    if (command.type === "check" || command.type === "uncheck") {
+      if (field.type !== "checkbox") return this.result(field.name + " is not a checkbox.", false);
+      const element = field.element;
+      const desired = command.type === "check";
+      const checked = element instanceof HTMLInputElement ? element.checked : element.getAttribute("aria-checked") === "true";
+      if (checked !== desired) element.click();
+      const result = element instanceof HTMLInputElement ? element.checked : element.getAttribute("aria-checked") === "true";
+      return this.result(result === desired ? (desired ? "Checked " : "Unchecked ") + field.name + "." : "Could not verify " + field.name + ".", result === desired);
+    }
+    if (command.type === "fill" || command.type === "change" || command.type === "clear") {
+      const ok = this.write(field, command.type === "clear" ? "" : command.value);
+      return this.result(ok ? (command.type === "clear" ? "Cleared " : "Filled ") + field.name + "." : "Could not safely set " + field.name + "; check its format and constraints.", ok);
+    }
+    return this.result("That form command is unsupported.", false);
   }
 }

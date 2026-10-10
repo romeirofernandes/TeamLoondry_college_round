@@ -670,6 +670,7 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     return;
   }
   if (intent.type === "form-command") {
+    if (intent.command.type !== "choose") tabChoices = [];
     if (intent.command.type === "choose" && tabChoices.length) {
       await action({ type: "choose", index: intent.command.index }, current);
       return;

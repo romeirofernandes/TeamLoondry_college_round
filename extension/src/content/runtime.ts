@@ -24,6 +24,7 @@ import {
 import { Overlay } from "./overlay";
 import { ScrollMotion, scrollPixels } from "./scroll";
 import { mediaControl } from "./media";
+import { FormAssistant } from "./forms";
 
 type Pending = {
   target: HTMLElement;
@@ -48,6 +49,7 @@ export class ContentRuntime {
   private dictating = false;
   private sites = new SiteExecutor(undefined, () => Date.now(), () => this.settings.testWriteTargets.some(prefix => location.href.replace(/\/$/, "") === prefix.replace(/\/$/, "") || location.href.startsWith(prefix.replace(/\/$/, "") + "/")), (site, recipients) => recipients.length > 0 && recipients.every(recipient => this.settings.testMessageRecipients.includes(`${site}:${recipient}`.toLowerCase())));
   private typingTarget: HTMLElement | null = null;
+  private forms = new FormAssistant();
   private target: HTMLElement | null = null;
   private pointerTarget = false;
   private pending: Pending | null = null;
@@ -76,6 +78,7 @@ export class ContentRuntime {
     private autoTick = true,
   ) {
     this.observer = new MutationObserver(() => {
+      this.forms.onMutation();
       if (
         this.pending &&
         (!this.pending.target.isConnected ||
@@ -105,6 +108,15 @@ export class ContentRuntime {
         "method",
         "formaction",
         "formmethod",
+        "aria-label",
+        "aria-labelledby",
+        "aria-describedby",
+        "aria-required",
+        "aria-readonly",
+        "aria-disabled",
+        "aria-checked",
+        "aria-controls",
+        "aria-owns",
       ],
     });
     addEventListener("popstate", this.pageChanged);
@@ -113,6 +125,8 @@ export class ContentRuntime {
     addEventListener("scroll", this.onScroll, { passive: true });
     document.addEventListener("submit", this.onSubmit, true);
     document.addEventListener("focusin", this.onFocus, true);
+    document.addEventListener("input", this.onFormEdit, true);
+    document.addEventListener("change", this.onFormEdit, true);
     if (this.autoTick) this.frame = requestAnimationFrame(this.loop);
   }
   private feedback(text: string) {
@@ -140,6 +154,7 @@ export class ContentRuntime {
   }
   private pageChanged = () => {
     this.sites.invalidate();
+    this.forms.pageChanged();
     this.scrollMotion.cancel();
     this.edge = null;
     this.cancelPending("The page changed. Submission cancelled.");
@@ -181,6 +196,12 @@ export class ContentRuntime {
       !this.typingTarget.contains(event.target)
     )
       this.stopTyping("Focus changed. Dictation stopped.");
+  };
+  private onFormEdit = (event: Event) => {
+    if (event.target instanceof HTMLElement && event.target.matches('input,textarea,select,[role="combobox"],[role="radio"],[role="checkbox"]')) {
+      this.forms.onUserEdit();
+      if (this.pending) this.cancelPending("The form changed. Submission cancelled.");
+    }
   };
   private onSubmit = (event: SubmitEvent) => {
     if (
@@ -350,6 +371,7 @@ export class ContentRuntime {
         this.overlay.style(this.settings.cursorStyle);
         if (!this.running || this.paused) {
           this.sites.invalidate();
+          this.forms.cancel();
           this.cancelPending();
           this.stopTyping();
           this.edge = null;
@@ -464,6 +486,36 @@ export class ContentRuntime {
         if (message.intent.type === "confirm" && this.running && !this.paused && !this.dictating) {
           const result=await this.sites.dialogue("confirm");
           if(result){this.feedback(result.feedback);return result;}
+          const formResult = await this.forms.confirm();
+          if (formResult) { this.feedback(formResult.feedback); return formResult; }
+        }
+        if (message.intent.type === "form-command") {
+          if (!this.running || this.paused || this.dictating) return { ok: false, error: "Resume Handsfree before using form commands." };
+          // Registered site adapters own their site actions and safety rules.
+          if (this.sites.snapshot()?.site) {
+            const result = { ok: false, feedback: "Use the site's dedicated commands here; generic form controls are disabled on supported sites." };
+            this.feedback(result.feedback);
+            return result;
+          }
+          this.cancelPending("Previous form confirmation cancelled.");
+          if (message.intent.command.type === "choose" && !this.forms.ownsChoices) {
+            const ok = this.action({ type: "choose", index: message.intent.command.index });
+            return { ok, dictating: this.dictating };
+          }
+          const result = await this.forms.handle(message.intent.command);
+          if (result.dictationTarget) {
+            const element = result.dictationTarget;
+            if (!element.isConnected || !editable(element)) return { ok: false, error: "That field is no longer available for dictation." };
+            this.cancelPending();
+            this.typingTarget = element;
+            this.dictating = true;
+            element.focus({ preventScroll: true });
+            this.select(element);
+            this.gate.reset();
+            void this.send({ type: "SET_STATE", patch: { dictating: true } }).catch(() => {});
+          }
+          this.feedback(result.feedback);
+          return { ...result, dictating: this.dictating };
         }
         if (message.intent.type === "site-action") {
           if (!this.running || this.paused || this.dictating) return { state: "unavailable", feedback: "Resume Handsfree before using page commands." };
@@ -579,6 +631,7 @@ export class ContentRuntime {
   }
   private action(intent: Intent): boolean {
     if (intent.type === "cancel") {
+      this.forms.cancel();
       this.cancelPending();
       this.choices = [];
       this.choiceDisposition = undefined;
@@ -899,5 +952,7 @@ export class ContentRuntime {
     removeEventListener("scroll", this.onScroll);
     document.removeEventListener("submit", this.onSubmit, true);
     document.removeEventListener("focusin", this.onFocus, true);
+    document.removeEventListener("input", this.onFormEdit, true);
+    document.removeEventListener("change", this.onFormEdit, true);
   }
 }
