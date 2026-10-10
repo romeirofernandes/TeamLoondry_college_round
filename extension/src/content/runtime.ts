@@ -11,6 +11,7 @@ import {
   formFor,
   insertText,
   PageTargets,
+  pageContext,
   sensitive,
   submitControl,
   targetLabel,
@@ -336,6 +337,12 @@ export class ContentRuntime {
         this.tick();
         return { ok: true };
       }
+      case "GET_PAGE_CONTEXT":
+        return pageContext();
+      case "ANSWER":
+        if (!this.running || this.paused || typeof message.text !== "string" || message.text.length > 6000) return { ok: false };
+        this.feedback(message.text);
+        return { ok: true };
       case "GET_TARGETS":
         return this.targets.scan();
       case "TRANSCRIPT":
@@ -496,6 +503,22 @@ export class ContentRuntime {
         `Selected ${targetLabel(choice)}. Say click this to activate.`,
       );
       return true;
+    }
+    if (intent.type === "click-target") {
+      if (this.dictating) return false;
+      const ids = this.targets.named(intent.query);
+      if (ids.length !== 1) {
+        void this.handle({ type: "FIND_RESULT", ids });
+        return true;
+      }
+      const target = this.targets.get(ids[0]);
+      if (!target) return false;
+      this.choices = [];
+      this.overlay.options([]);
+      this.select(target, false);
+      target.scrollIntoView({ block: "center", behavior: "instant" });
+      if (!this.voiceAllowed()) return false;
+      return this.activate(target, "voice");
     }
     if (intent.type === "scroll") {
       this.cancelPending();

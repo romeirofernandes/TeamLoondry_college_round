@@ -109,8 +109,14 @@ export type Intent =
   | { type: "search"; query: string; background: boolean }
   | { type: "named-tab"; name: string }
   | { type: "find"; query: string }
+  | { type: "click-target"; query: string }
   | { type: "choose"; index: number }
   | { type: "unknown"; heard: string };
+export interface PageContext {
+  title: string;
+  url: string;
+  text: string;
+}
 export interface TargetText {
   id: string;
   text: string;
@@ -159,6 +165,8 @@ export type Message =
   | { type: "PAGE_ACTION"; intent: Intent }
   | { type: "DICTATE"; text: string }
   | { type: "GET_TARGETS" }
+  | { type: "GET_PAGE_CONTEXT" }
+  | { type: "ANSWER"; text: string }
   | { type: "FIND_RESULT"; ids: string[] }
   | { type: "METRIC"; event: MetricEvent }
   | { type: "GET_LOGS" }

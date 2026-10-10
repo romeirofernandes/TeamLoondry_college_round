@@ -25,7 +25,7 @@ export class Overlay {
       circle{fill:none;stroke:#c1ef53;stroke-width:4;stroke-dasharray:100;stroke-dashoffset:100}
       .outline{position:fixed;border:3px solid #c1ef53;border-radius:7px;box-shadow:0 0 0 2px #20231b;display:none}
       .label,.feedback,.choice{position:fixed;background:#20231b;color:#f6f7f2;border:1px solid #c1ef53;border-radius:9px;font:600 14px/1.5 system-ui,sans-serif;padding:8px 12px;max-width:min(430px,calc(100vw - 24px));overflow-wrap:anywhere}
-      .label{display:none}.feedback{bottom:18px;left:18px}.feedback:empty{display:none}
+      .label{display:none}.feedback{bottom:18px;left:18px}.feedback:empty{display:none}.feedback{max-height:45vh;overflow:auto;white-space:pre-wrap}
       .choice{padding:4px 8px;transform:translateY(-100%)}
       .transcription{position:fixed;right:20px;bottom:20px;width:min(320px,calc(100vw - 40px));padding:16px 18px;background:#20231b;color:#f6f7f2;border:1px solid #49533a;border-radius:16px;box-shadow:0 8px 32px #0003;font:500 14px/1.5 system-ui,sans-serif;overflow-wrap:anywhere;display:none}
       .spoken-label{color:#c1ef53;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}.spoken-text:empty:after{content:'Say a command, or start typing.';color:#bfc4b6}

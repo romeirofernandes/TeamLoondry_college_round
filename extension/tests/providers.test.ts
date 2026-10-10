@@ -177,34 +177,11 @@ describe("Jev finite command mapping", () => {
       ).type,
     ).toBe("unknown");
   });
-  it("retains parsed arguments only through a listed candidate and sends no page data to Jev", async () => {
-    request.mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        answers: {
-          command: {
-            type: "choice",
-            choice: "parsed-command",
-            confidence: 1,
-            probabilities: { "parsed-command": 1 },
-          },
-          direct: { type: "noul", noul: 1 },
-        },
-      }),
+  it("retains exact parsed arguments locally without sending page data to Jev", async () => {
+    expect(await mapCommand("search for accessible design", { jevKey: "fixture-key", language: "en-US" })).toEqual({
+      type: "search", query: "accessible design", background: false,
     });
-    expect(
-      await mapCommand("search for accessible design", {
-        jevKey: "fixture-key",
-        language: "en-US",
-      }),
-    ).toEqual({
-      type: "search",
-      query: "accessible design",
-      background: false,
-    });
-    expect(
-      Object.keys(JSON.parse(request.mock.calls[0][1].body).state),
-    ).toEqual(["utterance", "language"]);
+    expect(request).not.toHaveBeenCalled();
   });
 });
 
@@ -277,8 +254,8 @@ describe("Groq bounded actions and target IDs", () => {
     );
     expect(
       request.mock.calls.map(([, options]) => options.headers.Authorization),
-    ).toEqual([...keys, keys[0]].map((key) => "Bearer " + key));
-    expect(index).toBe(1);
+    ).toEqual([keys[0], keys[1], keys[2], keys[3], keys[0], keys[1]].map((key) => "Bearer " + key));
+    expect(index).toBe(2);
   });
 
   it("accepts the full page target bound and rejects oversized target lists before network access", async () => {
@@ -373,5 +350,31 @@ describe("explicit cloud speech transcription", () => {
         language: "en-US",
       }),
     ).toBe("");
+  });
+});
+
+describe('local priority and textual assistance regressions', () => {
+  it.each(['scroll down', 'click this', 'please scroll up', 'open Careers', 'next tab', 'search for cats in a new tab in background'])(
+    'executes %s without a functioning provider', async text => {
+      request.mockRejectedValue(new Error('offline'));
+      const result = await mapCommand(text, { jevKey: 'fixture-key', language: 'en-US' });
+      expect(result.type).not.toBe('unknown');
+      expect(request).not.toHaveBeenCalled();
+    });
+  it('returns a bounded answer as data with safe page context', async () => {
+    request.mockResolvedValue(completion({ ids: [], intent: null, answer: '<b>Public summary</b>' }));
+    const pageContext = { title: 'Article', url: 'https://example.test/', text: 'Public article' };
+    expect(await resolveArbitrary('summarize this page', [], { groqKeys: keys }, undefined, pageContext)).toEqual({ ids: [], answer: '<b>Public summary</b>' });
+    expect(JSON.parse(JSON.parse(request.mock.calls[0][1].body).messages[1].content).page).toEqual(pageContext);
+  });
+  it.each([
+    { ids: ['careers'], answer: 'text' },
+    { ids: [], intent: { type: 'click' }, answer: 'text' },
+    { ids: [], answer: 'x'.repeat(6001) },
+    { ids: [], answer: 42 },
+    { ids: [], intent: { type: 'click-target', query: 'Careers' } },
+  ])('rejects malformed or combined answer results', async output => {
+    request.mockResolvedValue(completion(output));
+    await expect(resolveArbitrary('answer me', targets, { groqKeys: keys })).rejects.toThrow(/invalid|unsupported/i);
   });
 });

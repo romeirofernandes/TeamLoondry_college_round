@@ -1,10 +1,20 @@
-import type { TargetText } from "../shared";
+import type { PageContext, TargetText } from "../shared";
 
 export const interactiveSelector =
   'a[href],button,input:not([type="hidden"]),textarea,select,[contenteditable="true"],[contenteditable=""],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex]:not([tabindex="-1"])';
 export const overlayId = "handsfree-assist-overlay";
 const privateTextSelector =
-  'input,textarea,[contenteditable="true"],[contenteditable=""],[role="textbox"]';
+  'input,textarea,[contenteditable]:not([contenteditable="false"]),[role="textbox"],script,style,noscript,template,[data-private],[data-handsfree-ignore],#handsfree-assist-overlay';
+
+function publicText(element: Element): boolean {
+  if (element.closest(privateTextSelector + ',[hidden],[inert],[aria-hidden="true"]')) return false;
+  for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
+    const style = getComputedStyle(ancestor);
+    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || Number(style.opacity || "1") <= 0) return false;
+    if (ancestor instanceof HTMLElement && sensitive(ancestor)) return false;
+  }
+  return true;
+}
 
 function staticText(element: Element | null): string {
   if (!element || element.closest(privateTextSelector)) return "";
@@ -12,10 +22,23 @@ function staticText(element: Element | null): string {
   const pieces: string[] = [];
   let node: Node | null;
   while ((node = walker.nextNode())) {
-    if (!node.parentElement?.closest(privateTextSelector))
+    if (node.parentElement && publicText(node.parentElement))
       pieces.push(node.textContent ?? "");
   }
   return pieces.join(" ");
+}
+
+/** Public rendered document text only; never read form values or editable content. */
+export function pageContext(): PageContext {
+  const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+  let text = "";
+  let node: Node | null;
+  while (text.length < 12000 && (node = walker.nextNode())) {
+    if (!node.parentElement || !publicText(node.parentElement)) continue;
+    const piece = (node.textContent || "").replace(/\s+/g, " ").trim();
+    if (piece) text += (text ? " " : "") + piece.slice(0, 12000 - text.length - (text ? 1 : 0));
+  }
+  return { title: document.title.slice(0, 500), url: location.href.slice(0, 2000), text };
 }
 
 export function usable(element: Element): element is HTMLElement {
@@ -242,12 +265,34 @@ export class PageTargets {
     this.elements.clear();
     return Array.from(document.querySelectorAll(interactiveSelector))
       .filter(usable)
+      .filter(element => !sensitive(element) && !element.closest('[data-private],[data-handsfree-ignore]'))
       .slice(0, 1500)
       .map((element) => ({
         id: this.id(element),
         text: targetLabel(element),
         role: element.getAttribute("role") || element.tagName.toLowerCase(),
       }));
+  }
+  named(query: string): string[] {
+    const normalize = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+    const needle = normalize(query);
+    if (!needle || needle.length > 500) return [];
+    const ranked = this.scan().map(target => {
+      const label = normalize(target.text);
+      const offset = label.indexOf(needle);
+      if (offset < 0) return { id: target.id, score: 0 };
+      const word = (character: string | undefined) => !!character && /[\p{L}\p{N}_]/u.test(character);
+      let whole = false;
+      for (let match = offset; match >= 0; match = label.indexOf(needle, match + 1)) {
+        if (!word(label[match - 1]) && !word(label[match + needle.length])) {
+          whole = true;
+          break;
+        }
+      }
+      return { id: target.id, score: label === needle ? 3 : whole ? 2 : 1 };
+    });
+    const best = Math.max(0, ...ranked.map(target => target.score));
+    return best ? ranked.filter(target => target.score === best).map(target => target.id).slice(0, 10) : [];
   }
   snap(x: number, y: number): HTMLElement | null {
     const direct = document

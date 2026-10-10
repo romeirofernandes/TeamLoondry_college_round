@@ -7,6 +7,7 @@ import {
   type Intent,
   type MetricEvent,
   type TargetText,
+  type PageContext,
 } from "./shared";
 import { parseIntent } from "./core/parser";
 import { bundledProviders } from "./provider-config";
@@ -27,7 +28,7 @@ const keyIndexStore = {
   async get(): Promise<number> { const value = (await chrome.storage.local.get("groqKeyIndex")).groqKeyIndex; return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0; },
   async set(next: number) { await chrome.storage.local.set({ groqKeyIndex: next }); },
 };
-function groqOptions() { return { groqKeys: providers.groqKeys ?? bundledProviders.groqKeys, groqModel: "qwen/qwen3.8-27b", keyIndexStore }; }
+function groqOptions() { return { groqKeys: (providers.groqKeys ?? bundledProviders.groqKeys).slice(0, 4), groqModel: "qwen/qwen3.8-27b", keyIndexStore }; }
 function jevOptions() { return { jevKey: providers.jevKey ?? bundledProviders.jevKey, jevProvider: settings.jevProvider, language: settings.language }; }
 function isDashboard(url?: string) {
   try { const candidate = new URL(url || ""); const configured = new URL(settings.dashboardUrl); return candidate.origin === configured.origin && candidate.pathname === configured.pathname; } catch { return false; }
@@ -136,6 +137,7 @@ async function attach(tabId: number) {
   }
 }
 async function target(tabId: number) {
+  activeProvider?.abort();
   pageRevision++;
   if (state.targetTabId !== null && state.targetTabId !== tabId)
     await page({
@@ -165,6 +167,7 @@ async function controller(command: "start" | "stop" | "pause" | "resume" | "cali
   await chrome.runtime.sendMessage({ type: "OFFSCREEN_COMMAND", command, settings: pageSettings() }).catch(() => {});
 }
 async function stop() {
+  activeProvider?.abort();
   pageRevision++;
   pendingClose = null;
   tabChoices = [];
@@ -191,6 +194,7 @@ async function stop() {
   await chrome.storage.local.set({ logs });
 }
 async function pause() {
+  activeProvider?.abort();
   pageRevision++;
   pendingClose = null;
   tabChoices = [];
@@ -253,9 +257,10 @@ async function needTabs() {
   });
   return true;
 }
-async function tabAction(intent: Intent) {
-  if (await needTabs()) return;
+async function tabAction(intent: Intent, current: () => boolean) {
+  if (await needTabs() || !current()) return;
   const tabs = await chrome.tabs.query({});
+  if (!current()) return;
   const browse = tabs.filter(
     (t) => !dashboardTabs.has(t.id ?? -1) && t.id !== controllerTabId && t.id !== undefined,
   );
@@ -333,32 +338,44 @@ async function activateTab(id: number) {
   await target(id);
   await publish({ feedback: "Switched tab." });
 }
-async function arbitraryFind(query: string) {
+async function arbitraryFind(query: string, signal?: AbortSignal) {
   if (!groqOptions().groqKeys.length) { await publish({ feedback: "Add a Groq key in the website dashboard to use hey handsfree commands." }); return; }
   const requestRevision = pageRevision;
   const snapshotTab = state.targetTabId;
   const targets = await page({ type: "GET_TARGETS" });
   const chosen: TargetText[] = Array.isArray(targets) ? targets.slice(0, 1500).map(t => ({ id: String(t.id), text: String(t.text).slice(0, 160), role: String(t.role) })) : [];
+  const context = await page({ type: "GET_PAGE_CONTEXT" });
+  const safeContext: PageContext | undefined = context && typeof context.title === "string" && typeof context.url === "string" && typeof context.text === "string"
+    ? { title: context.title.slice(0, 500), url: context.url.slice(0, 2000), text: context.text.slice(0, 12000) } : undefined;
+  const current = () => !signal?.aborted && pageRevision === requestRevision && !state.paused && state.running && state.targetTabId === snapshotTab;
+  if (!current()) return;
   await publish({ feedback: "Understanding your request with Groq…" });
   record("find-request");
   try {
-    const result = await resolveArbitrary(query, chosen, groqOptions(), AbortSignal.timeout(12000));
-    if (pageRevision !== requestRevision || state.paused || !state.running || state.targetTabId !== snapshotTab) return;
-    if (result.intent) { await action(result.intent); return; }
+    const result = await resolveArbitrary(query, chosen, groqOptions(), signal, safeContext);
+    if (!current()) return;
+    if (result.answer) {
+      const response = await page({ type: "ANSWER", text: result.answer });
+      if (current()) await publish({ feedback: response?.error || result.answer });
+      return;
+    }
+    if (result.intent) { await action(result.intent, current); return; }
     let ids = result.ids;
     if (ids.length === 1) {
       const selected = chosen.find(target => target.id === ids[0]);
       const label = selected?.text.toLowerCase().replace(/\s+/g, " ").trim();
       if (label) ids = chosen.filter(target => target.role === selected?.role && target.text.toLowerCase().replace(/\s+/g, " ").trim() === label).map(target => target.id);
     }
-    await page({ type: "FIND_RESULT", ids: ids.slice(0, 10) });
+    const response = await page({ type: "FIND_RESULT", ids: ids.slice(0, 10) });
+    if (current() && response?.error) await publish({ feedback: response.error });
     record(ids.length ? "find-match" : "find-no-match");
   } catch (error) {
-    if (pageRevision === requestRevision) await publish({ feedback: error instanceof Error ? error.message : "Groq failed. Check your connection and retry." });
+    if (current()) await publish({ feedback: error instanceof Error ? error.message : "Groq failed. Check your connection and retry." });
     record("find-error");
   }
 }
-async function action(intent: Intent) {
+async function action(intent: Intent, current: () => boolean = () => true) {
+  if (!current()) return;
   if (intent.type === "stop") {
     await stop();
     return;
@@ -427,11 +444,11 @@ async function action(intent: Intent) {
       "settings",
     ].includes(intent.type)
   ) {
-    await tabAction(intent);
+    await tabAction(intent, current);
     return;
   }
   if (intent.type === "find") {
-    await arbitraryFind(intent.query);
+    await providerWork(signal => arbitraryFind(intent.query, signal));
     return;
   }
   const result = await page({ type: "PAGE_ACTION", intent });
@@ -440,7 +457,26 @@ async function action(intent: Intent) {
   if (result?.error) await publish({ feedback: result.error });
 }
 let commandQueue = Promise.resolve();
-let activeCommand: Intent["type"] | null = null;
+let urgentCommand = Promise.resolve();
+let activeProvider: AbortController | null = null;
+let pendingTypingCommands = 0;
+
+/** Release the speech queue on cancellation even if a transport ignores abort. */
+async function providerWork(work: (signal: AbortSignal) => Promise<void>) {
+  const controller = new AbortController();
+  activeProvider = controller;
+  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]);
+  let cancelled: (() => void) | undefined;
+  const cancellation = new Promise<void>(resolve => {
+    cancelled = () => resolve();
+    signal.addEventListener("abort", cancelled, { once: true });
+  });
+  try { await Promise.race([work(signal), cancellation]); }
+  finally {
+    if (cancelled) signal.removeEventListener("abort", cancelled);
+    if (activeProvider === controller) activeProvider = null;
+  }
+}
 async function routeHeard(text: string, parsed: Intent, revision: number) {
   if (revision !== pageRevision || !state.running || state.paused) return;
   await publish({ lastHeard: text, interimTranscript: "" });
@@ -451,13 +487,13 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     return;
   }
   const wake = /^hey[\s,]+hands[\s-]*free[\s,:.!-]+(.+)$/i.exec(text.trim());
-  activeCommand = wake ? "find" : parsed.type;
-  try {
-    if (wake) { await arbitraryFind(wake[1]); return; }
-    const intent = await mapCommand(text, jevOptions(), AbortSignal.timeout(8000));
-    if (revision !== pageRevision || !state.running || state.paused) return;
-    await action(intent);
-  } finally { activeCommand = null; }
+  if (wake) { await providerWork(signal => arbitraryFind(wake[1], signal)); return; }
+  if (parsed.type !== "unknown" && parsed.type !== "find") { await action(parsed); return; }
+  await providerWork(async signal => {
+    const intent = await mapCommand(text, jevOptions(), signal);
+    if (signal.aborted || revision !== pageRevision || !state.running || state.paused) return;
+    await action(intent, () => !signal.aborted && revision === pageRevision && state.running && !state.paused);
+  });
 }
 async function handle(message: Message, sender: chrome.runtime.MessageSender) {
   await ready;
@@ -485,7 +521,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     case "GET_PROVIDER_STATUS":
       return { groqKeyCount: groqOptions().groqKeys.length, jevConfigured: !!jevOptions().jevKey, activeProvider: jevOptions().jevKey ? "Jev via " + settings.jevProvider : null, sharedKeys: !providers.groqKeys && bundledProviders.groqKeys.length > 0 };
     case "SAVE_PROVIDERS":
-      if (message.groqKeys !== undefined) providers.groqKeys = message.groqKeys.map(key => String(key).trim()).filter(Boolean).slice(0, 5);
+      if (message.groqKeys !== undefined) providers.groqKeys = message.groqKeys.map(key => String(key).trim()).filter(Boolean).slice(0, 4);
       if (message.jevKey !== undefined) providers.jevKey = String(message.jevKey).trim();
       await chrome.storage.local.set({ providers });
       return { ok: true };
@@ -557,6 +593,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     case "OPEN_DASHBOARD":
       return openController(message.tabId, message.hash);
     case "START":
+      activeProvider?.abort();
       pageRevision++;
       if (message.tabId !== undefined && !isDashboard((await chrome.tabs.get(message.tabId)).url)) await target(message.tabId);
       if (state.targetTabId === null) {
@@ -630,29 +667,32 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       if (!state.running || state.paused) return { ok: true };
       const revision = pageRevision;
       const intent = parseIntent(message.text);
-      // A provider request can take seconds. Interrupt it immediately in command
-      // mode, while ordinary transcripts keep their order across typing changes.
+      // Typing transitions remain serialized. A click can cancel slow provider
+      // work only when no earlier transcript may enter or leave dictation.
       if (
-        activeCommand !== null &&
-        !state.dictating &&
-        (intent.type === "pause" || intent.type === "stop")
+        activeProvider && !state.dictating && pendingTypingCommands === 0 &&
+        ["click", "open", "click-target", "pause", "stop", "cancel"].includes(intent.type)
       ) {
-        await publish({ lastHeard: message.text });
-        if (revision === pageRevision && !state.dictating) await action(intent);
+        const provider = activeProvider;
+        urgentCommand = urgentCommand.then(() => routeHeard(message.text, intent, revision));
+        provider.abort();
+        await urgentCommand;
         return { ok: true };
       }
+      const typing = intent.type === "start-typing" || intent.type === "stop-typing";
+      if (typing) pendingTypingCommands++;
       commandQueue = commandQueue
-        .then(() => routeHeard(message.text, intent, revision))
-        .catch(async (error) =>
-          publish({
-            feedback:
-              error instanceof Error ? error.message : "Command failed.",
-          }),
-        );
+        .then(async () => { await urgentCommand; await routeHeard(message.text, intent, revision); })
+        .catch(async error => {
+          if (revision === pageRevision && state.running && !state.paused)
+            await publish({ feedback: error instanceof Error ? error.message : "Command failed." });
+        })
+        .finally(() => { if (typing) pendingTypingCommands--; });
       await commandQueue;
       return { ok: true };
     }
     case "ACTION":
+      activeProvider?.abort();
       await action(message.intent);
       return { ok: true };
     case "METRIC":
@@ -694,6 +734,7 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
     if (change.status === "complete") await connectDashboard(tabId);
     if (tabId !== state.targetTabId) return;
     if (change.status === "loading") {
+      activeProvider?.abort();
       pageRevision++;
       pendingClose = null;
       tabChoices = [];
@@ -707,6 +748,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     dashboardTabs.delete(tabId);
     await chrome.storage.session.set({ dashboardTabs: [...dashboardTabs] });
     if (tabId === state.targetTabId) {
+      activeProvider?.abort();
+      pageRevision++;
       pendingClose = null;
       await publish({ targetTabId: null, dictating: false, confidence: 0 });
     }

@@ -445,3 +445,65 @@ describe("page interactions", () => {
     expect(click).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('named targets and safe page answers', () => {
+  it('activates a literal exact label ahead of broader matches and hidden controls', async () => {
+    document.body.insertAdjacentHTML('beforeend', '<button id="literal">C++ (Guide)</button><button id="broader">C++ (Guide) archive</button><button hidden>C++ (Guide)</button>');
+    const clicked: string[] = [];
+    for (const id of ['literal', 'broader']) document.getElementById(id)!.addEventListener('click', () => clicked.push(id));
+    await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'click-target', query: 'C++ (Guide)' } });
+    expect(clicked).toEqual(['literal']);
+  });
+  it('requires a numbered choice for duplicate labels and preserves submit confirmation', async () => {
+    document.body.insertAdjacentHTML('beforeend', '<button id="other-send">Send</button>');
+    const submitted = vi.fn((event: Event) => event.preventDefault());
+    document.getElementById('form')!.addEventListener('submit', submitted);
+    await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'click-target', query: 'Send' } });
+    expect(submitted).not.toHaveBeenCalled();
+    expect(sent.some(m => m.type === 'SET_STATE' && m.patch.feedback?.includes('Several targets'))).toBe(true);
+    await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'choose', index: 1 } });
+    await action('click');
+    expect(submitted).not.toHaveBeenCalled();
+    await action('confirm');
+    expect(submitted).toHaveBeenCalledOnce();
+  });
+  it('ranks whole words before substrings without interpreting regex metacharacters', async () => {
+    document.body.insertAdjacentHTML('beforeend', '<button id="substring">Supporter</button><button id="word">Get support</button><button id="pattern">Anything</button>');
+    const clicked: string[] = [];
+    for (const id of ['substring', 'word', 'pattern']) document.getElementById(id)!.addEventListener('click', () => clicked.push(id));
+    await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'click-target', query: 'support' } });
+    await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'click-target', query: '.*' } });
+    expect(clicked).toEqual(['word']);
+  });
+  it('bounds page context and excludes hidden, private, editable, script and extension text', async () => {
+    document.title = 'Public article';
+    document.body.insertAdjacentHTML('beforeend', '<p>Public explanation</p><div hidden>HIDDEN_SECRET</div><div style="display:none">STYLE_SECRET</div><textarea>TEXTAREA_SECRET</textarea><div contenteditable="plaintext-only">EDITOR_SECRET</div><script>SCRIPT_SECRET</script><div data-private>PRIVATE_SECRET</div><p>' + 'a'.repeat(13000) + '</p>');
+    document.getElementById('password')!.setAttribute('value', 'PASSWORD_SECRET');
+    const context = await runtime.handle({ type: 'GET_PAGE_CONTEXT' }) as { title: string; url: string; text: string };
+    expect(context.title).toBe('Public article');
+    expect(context.text).toContain('Public explanation');
+    expect(context.text.length).toBeLessThanOrEqual(12000);
+    expect(context.text).not.toMatch(/SECRET|Draft|Handsfree is ready/);
+  });
+  it('renders answer markup literally and does not activate interim transcripts', async () => {
+    const clicked = vi.fn();
+    document.getElementById('button')!.addEventListener('click', clicked);
+    await runtime.handle(pointer());
+    await runtime.handle({ type: 'TRANSCRIPT', text: 'click this', final: false });
+    await runtime.handle({ type: 'ANSWER', text: '<img src=x onerror=alert(1)> Answer' });
+    const shadow = document.getElementById('handsfree-assist-overlay')!.shadowRoot!;
+    expect(shadow.querySelector('.feedback')!.textContent).toBe('<img src=x onerror=alert(1)> Answer');
+    expect(shadow.querySelector('img')).toBeNull();
+    expect(clicked).not.toHaveBeenCalled();
+  });
+});
+
+describe('literal ranking boundaries', () => {
+  it('recognizes a later whole-word occurrence ahead of a substring-only label', async () => {
+    document.body.insertAdjacentHTML('beforeend', '<button id="later-word">Supporters get support</button><button id="substring-only">Supporter</button><button id="private-label" data-private>Support</button>');
+    const clicked: string[] = [];
+    for (const id of ['later-word', 'substring-only', 'private-label']) document.getElementById(id)!.addEventListener('click', () => clicked.push(id));
+    await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'click-target', query: 'support' } });
+    expect(clicked).toEqual(['later-word']);
+  });
+});

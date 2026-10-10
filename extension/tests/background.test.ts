@@ -553,3 +553,131 @@ describe("arbitrary find boundary", () => {
     expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: "PAGE_ACTION", intent: { type: "scroll", direction: "down" } });
   });
 });
+
+describe('final speech routing regressions', () => {
+  it('dispatches local commands with Jev unavailable and retains background search arguments', async () => {
+    const { browser, send, fetch } = await setup({ jevKey: 'fixture-jev' });
+    fetch.mockRejectedValue(new Error('offline'));
+    await send({ type: 'HEARD', text: 'scroll down' });
+    await send({ type: 'HEARD', text: 'search for accessible design in a new tab in background' });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'scroll', direction: 'down' } });
+    expect(browser.tabs.create).toHaveBeenCalledWith({ url: 'https://www.google.com/search?q=accessible%20design', active: false });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('clicks immediately during provider work and suppresses its stale action', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let finish!: (response: unknown) => void;
+    const started = new Promise<void>(resolve => fetch.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { finish = resolver; });
+    }));
+    const pending = send({ type: 'HEARD', text: 'hey handsfree move down a little' });
+    await started;
+    let clickDone = false;
+    const clicked = send({ type: 'HEARD', text: 'click this' }).then(() => { clickDone = true; });
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(clickDone).toBe(true);
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'click' } });
+    finish({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"scroll","direction":"down"}}' } }] }) });
+    await Promise.all([pending, clicked]);
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'scroll', direction: 'down' } });
+  });
+  it('answers a wake question even when target scanning is unavailable', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    const original = browser.tabs.sendMessage.getMockImplementation()!;
+    browser.tabs.sendMessage.mockImplementation(async (id, message) => {
+      if (message.type === 'GET_TARGETS') return { ok: false, error: 'No targets available' } as any;
+      if (message.type === 'GET_PAGE_CONTEXT') return { title: 'Article', url: 'https://example.test/', text: 'Public text' } as any;
+      return original(id, message);
+    });
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"answer":"A useful answer"}' } }] }) });
+    await send({ type: 'HEARD', text: 'hey handsfree what does this page explain?' });
+    expect((await send({ type: 'GET_STATE' })).feedback).toBe('A useful answer');
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'ANSWER', text: 'A useful answer' });
+    expect(JSON.parse(JSON.parse(fetch.mock.calls[0][1].body).messages[1].content).page.text).toBe('Public text');
+  });
+  it('surfaces failed page dispatch and never executes interim text', async () => {
+    const { browser, send } = await setup();
+    await send({ type: 'TRANSCRIPT', text: 'click this', final: false });
+    expect(browser.tabs.sendMessage.mock.calls.some(([,m]) => m.type === 'PAGE_ACTION')).toBe(false);
+    browser.tabs.sendMessage.mockRejectedValue(new Error('Disconnected'));
+    await send({ type: 'HEARD', text: 'click this' });
+    expect((await send({ type: 'GET_STATE' })).feedback).toContain('page is unavailable');
+  });
+});
+
+describe('provider cancellation ordering', () => {
+  it('keeps a click behind an earlier start-typing transcript during provider work', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let finish!: (response: unknown) => void;
+    const started = new Promise<void>(resolve => fetch.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { finish = resolver; });
+    }));
+    const provider = send({ type: 'HEARD', text: 'hey handsfree help' });
+    await started;
+    const typing = send({ type: 'HEARD', text: 'start typing' });
+    const clicking = send({ type: 'HEARD', text: 'click this' });
+    finish({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[]}' } }] }) });
+    await Promise.all([provider, typing, clicking]);
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'DICTATE', text: 'click this' });
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'click' } });
+  });
+  it.each(['PAUSE', 'STOP', 'cancel'] as const)('discards a pending answer after %s', async change => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let finish!: (response: unknown) => void;
+    const started = new Promise<void>(resolve => fetch.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { finish = resolver; });
+    }));
+    const provider = send({ type: 'HEARD', text: 'hey handsfree what is two plus two?' });
+    await started;
+    await send(change === 'cancel' ? { type: 'HEARD', text: 'cancel' } : { type: change });
+    finish({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"answer":"Stale answer"}' } }] }) });
+    await provider;
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: 'ANSWER', text: 'Stale answer' });
+    expect((await send({ type: 'GET_STATE' })).feedback).not.toBe('Stale answer');
+  });
+  it('cancels pending provider actions when controls enter dictation directly', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let finish!: (response: unknown) => void;
+    const started = new Promise<void>(resolve => fetch.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { finish = resolver; });
+    }));
+    const provider = send({ type: 'HEARD', text: 'hey handsfree select this' });
+    await started;
+    await send({ type: 'ACTION', intent: { type: 'start-typing' } });
+    finish({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"click"}}' } }] }) });
+    await provider;
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'click' } });
+  });
+  it('rechecks cancellation after tab permission resolves', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let allow!: (value: boolean) => void;
+    const waiting = new Promise<void>(resolve => browser.permissions.contains.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { allow = resolver; });
+    }));
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"new-tab"}}' } }] }) });
+    const provider = send({ type: 'HEARD', text: 'hey handsfree open a fresh tab' });
+    await waiting;
+    await send({ type: 'PAUSE' });
+    allow(true);
+    await provider;
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(browser.tabs.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('local tab switching', () => {
+  it('switches next, previous and named tabs with Jev offline', async () => {
+    const { browser, send, fetch } = await setup({ jevKey: 'fixture-jev' });
+    fetch.mockRejectedValue(new Error('offline'));
+    await send({ type: 'HEARD', text: 'switch to the next tab' });
+    expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(2);
+    await send({ type: 'HEARD', text: 'switch to previous tab' });
+    expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(1);
+    await send({ type: 'HEARD', text: 'switch to tab Inbox' });
+    expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(2);
+    expect(browser.tabs.update).toHaveBeenCalledWith(2, { active: true });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});

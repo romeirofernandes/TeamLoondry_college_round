@@ -60,6 +60,8 @@ const numberNames = [
 /** Only call in command mode. Dictation bypasses this parser altogether. */
 export function parseIntent(text: string): Intent {
   const normalized = normalizeSpeech(text);
+  const politeScroll = /^(?:(?:could|can|would) you )?(?:please )?scroll (up|down)(?: please)?$/.exec(normalized);
+  if (politeScroll) return { type: "scroll", direction: politeScroll[1] as "up" | "down" };
   if (Object.hasOwn(fixed, normalized)) return { ...fixed[normalized] };
 
   const selection =
@@ -73,7 +75,10 @@ export function parseIntent(text: string): Intent {
     if (index >= 1 && index <= 10) return { type: "choose", index };
   }
 
-  const namedTab = /^(?:go to (?:named )?tab|switch to tab|go to) (.+)$/.exec(
+  const adjacentTab = /^(?:(?:switch|go) to (?:the )?)?(next|previous) tab$/.exec(normalized);
+  if (adjacentTab) return { type: adjacentTab[1] === "next" ? "next-tab" : "previous-tab" };
+
+  const namedTab = /^(?:go to (?:the |named )?tab|switch to (?:the )?tab|go to) (.+)$/.exec(
     normalized,
   );
   if (namedTab) return { type: "named-tab", name: namedTab[1] };
@@ -81,16 +86,21 @@ export function parseIntent(text: string): Intent {
   const find = /^find (.+)$/.exec(normalized);
   if (find) return { type: "find", query: find[1] };
 
-  const search =
-    /^(background search|search in background|search)(?: for)? (.+)$/.exec(
-      normalized,
-    );
-  if (search && search[2] !== "for")
-    return {
-      type: "search",
-      query: search[2],
-      background: search[1] !== "search",
-    };
+  const search = /^(background search|search in (?:the )?background|in (?:the )?background search|search)(?: for)? (.+)$/.exec(normalized);
+  if (search) {
+    let query = search[2];
+    let background = search[1] !== "search";
+    if (/ in (?:the )?background$/.test(query)) {
+      background = true;
+      query = query.replace(/ in (?:the )?background$/, "");
+    }
+    query = query.replace(/ in (?:a |the )?new tab$/, "");
+    if (query && query !== "for") return { type: "search", query, background };
+  }
+
+  const namedTarget = /^(?:click(?: on)?|open) (.+)$/.exec(normalized);
+  if (namedTarget && !/^(?:this|that|it)(?: |$)/.test(namedTarget[1]))
+    return { type: "click-target", query: namedTarget[1] };
 
   return { type: "unknown", heard: text.trim() };
 }
