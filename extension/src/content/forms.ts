@@ -54,9 +54,9 @@ const sensitivePatterns = [
   /\b(?:password|passwd|passcode|one[ -]?time(?:[ -]?(?:code|password))?|otp|verification[ -]?code|security[ -]?code)\b/i,
   /\b(?:credit|debit|payment|card(?:[ -]?(?:number|holder|expiry|expiration|details?))?|cvv|cvc|cc[ -]?(?:number|name|exp|csc|type)|bank|routing|iban|swift|account[ -]?number|upi[ -]?id)\b/i,
   /\b(?:passport|aadh?aar|social[ -]?security|ssn|national[ -]?(?:id|identifier|identification|insurance[ -]?number|number)|(?:government|govt)[ -]?(?:issued[ -]?)?(?:id|identifier|identification|number)|state[ -]?id|driver'?s?[ -]?licen[cs]e|birth[ -]?certificate|citizenship[ -]?(?:id|number)|tax(?:payer)?[ -]?(?:id|identifier|identification|number|reference|code|registration)|tin|ein|gstin|gst[ -]?(?:number|id|registration)|vat[ -]?(?:number|id|registration)|pan[ -]?(?:card|number)|voter[ -]?(?:id|number))\b/i,
-  /\b(?:medical|health|diagnos(?:is|es|tic)|medications?|prescription|symptoms?|patients?|disabilit(?:y|ies)|allerg(?:y|ies)|blood[ -]?(?:type|group|pressure|sugar|glucose)|hiv|aids|pregnan(?:cy|t)|mental[ -]?health|chronic|illness|disease|treatment|therapy|surgery|vaccin(?:e|ation|ated)|immuni[sz]ation|cholesterol|glucose|bmi)\b/i,
+  /\b(?:medical|health|diagnos(?:is|es|tic)|medications?|prescription|symptoms?|patients?|disabilit(?:y|ies)|allerg(?:y|ies)|blood[ -]?(?:type|group|pressure|sugar|glucose)|hiv|aids|pregnan(?:cy|t)|mental[ -]?(?:health|illness|disorder)|chronic|illness|disease|treatment|therapy|surgery|surgical|vaccin(?:e|ation|ated)|immuni[sz]ation|cholesterol|glucose|bmi|cancers?|tumou?rs?|oncolog(?:y|ical|ist)|malignan(?:t|cy)|diabet(?:es|ic)|asthma|hypertension|stroke|cardiac|heart[ -]?(?:disease|condition)|kidney[ -]?(?:disease|condition)|clinical|psychiatr(?:ic|y|ist)|addiction|infection|hepatitis|hospitali[sz]ation|family[ -]?history|(?:health|disease|surgical|treatment|patient)[ -]?history|history[ -]?of[ -]?(?:illness|disease|cancer|surgery|treatment))\b/i,
 ];
-const vagueName = /^(?:other|answer|response|field|input|text|select|choose|option|yes|no|please specify|untitled|id|identifier|number|code|reference|details?|information|history|status|condition|date|expiry|expiration|secret|confidential|sensitive|identity|personal (?:details|information|data))(?:\s*\d+)?$/i;
+const vagueName = /^(?:other|answer|response|field|input|text|select|choose|option|yes|no|please specify|untitled|id|identifier|number|code|reference|details?|information|history|status|condition|date|expiry|expiration|secret|confidential|sensitive|identity|personal (?:details|information|data)|(?:please )?(?:enter|describe|specify)(?: here)?|additional (?:details|information)|question\s*\d+)(?:\s*\d+)?$/i;
 const unqualifiedName = /^(?:id|identifier|number|code|reference|details?|information|history|status|condition|date|expiry|expiration)$/i;
 
 function bounded(value: string, length = 180): string {
@@ -66,6 +66,16 @@ function bounded(value: string, length = 180): string {
 /** Attribute names often carry meaning as camelCase, snake_case, or kebab-case. */
 function semanticText(value: string): string {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_./-]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function contactKind(value: string): "email" | "phone" | "url" | null {
+  const normalized = semanticText(value).toLowerCase();
+  const kinds = [
+    /\b(?:email|e mail)\b/.test(normalized) ? "email" : null,
+    /\b(?:phone|telephone|mobile|tel)\b/.test(normalized) ? "phone" : null,
+    /\b(?:website|web site|url)\b/.test(normalized) ? "url" : null,
+  ].filter(Boolean);
+  return kinds.length === 1 ? kinds[0] as "email" | "phone" | "url" : null;
 }
 
 function parentOf(element: Element): Element | null {
@@ -223,7 +233,18 @@ function classify(element: HTMLElement, members: readonly HTMLElement[], name: s
   const context = semanticText([name, questionContext, formName, ...descriptors, ...ancestorContext].join(" "));
   if (sensitivePatterns.some(pattern => pattern.test(context)) || /^(?:pan|nhs|nino)$/i.test(name.trim()))
     return { status: "blocked", reason: "sensitive" };
+  const labelKind = contactKind(name);
+  const metadata = [...members, element].flatMap(item => [
+    item.getAttribute("autocomplete") || "", item.getAttribute("name") || "",
+    item instanceof HTMLInputElement ? item.type : "",
+  ]);
+  if (labelKind && metadata.some(value => contactKind(value) && contactKind(value) !== labelKind))
+    return { status: "blocked", reason: "uncertain" };
   const clarification = semanticText([groupName(group), ...ancestorContext].join(" "));
+  const meaning = semanticText([name, clarification].join(" "));
+  if (/\b(?:history|conditions?|screening|test results?|records?)\b/i.test(meaning) &&
+      !/\b(?:employment|work|job|education|school|academic|exam|quiz|order|purchase|travel|project|product|item|shipping|weather|terms|road|browser|search)\b/i.test(meaning))
+    return { status: "blocked", reason: "uncertain" };
   const qualified = clarification.toLowerCase().includes(name.toLowerCase()) && clarification.length > name.length + 2;
   const unclearName = unqualifiedName.test(name) ? !qualified :
     vagueName.test(name) && (!clarification || vagueName.test(clarification) || clarification.toLowerCase() === name.toLowerCase());
@@ -304,23 +325,7 @@ function submitCandidates(scope: ParentNode = document): HTMLElement[] {
 function fallbackGroup(elements: readonly HTMLElement[]): boolean {
   if (elements.length === 1) return true;
   const shared = ancestors(elements[0]).find(ancestor => elements.every(element => ancestors(element).includes(ancestor)));
-  if (!(shared instanceof HTMLElement) || shared.matches('html,body,main,[role="main"]')) return false;
-  if (shared.matches('fieldset,[role="group"],[data-form],[data-form-id]')) return true;
-  const branches = [...new Set(elements.map(element =>
-    ancestors(element).find(ancestor => parentOf(ancestor) === shared)).filter((branch): branch is Element => !!branch))];
-  const separateGroups = branches.filter(branch => branch.matches('section,article,fieldset,[role="group"],[role="region"]') ||
-    !!branch.querySelector('legend,h1,h2,h3,h4,h5,h6,[role="heading"]'));
-  if (separateGroups.length > 1) return false;
-  // A common layout container alone is insufficient: require a single submit action.
-  const submitters = submitCandidates(shared).filter(element =>
-    nativeSubmit(element) || /\b(?:submit|send|finish)\b/i.test(
-      element.getAttribute("aria-label") || staticText(element)));
-  if (submitters.length !== 1) return false;
-  const submitBranch = ancestors(submitters[0]).find(ancestor => parentOf(ancestor) === shared);
-  // A submit nested inside one field group does not establish ownership of siblings.
-  if (submitBranch && elements.some(element => submitBranch.contains(element)) &&
-      !elements.every(element => submitBranch.contains(element))) return false;
-  return true;
+  return shared instanceof HTMLElement && shared.matches('fieldset,[role="group"],[role="radiogroup"]') && !!groupName(shared);
 }
 
 const documentId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `doc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
