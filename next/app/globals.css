@@ -52,6 +52,7 @@
   --ring: #54721e;
   --radius: 0.875rem;
   --art-grid: #bec4b5;
+  --page-grid: rgb(118 124 111 / 9%);
   color-scheme: light;
 }
 :root.dark {
@@ -66,7 +67,42 @@
   --border: #383f2f;
   --ring: #c1ef53;
   --art-grid: #404934;
+  --page-grid: rgb(190 198 180 / 11%);
   color-scheme: dark;
+}
+
+:root {
+  --duration-theme: 2.4s;
+  --ease-theme: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+::view-transition-group(root) {
+  animation-duration: var(--duration-theme);
+  animation-timing-function: var(--ease-theme);
+}
+::view-transition-old(root) {
+  animation: none;
+}
+::view-transition-new(root) {
+  animation: var(--duration-theme) var(--ease-theme) both pitch-sweep-to-dark;
+}
+::view-transition-image-pair(root) {
+  isolation: isolate;
+}
+html[data-pitch-direction="to-light"]::view-transition-new(root) {
+  animation-name: pitch-sweep-to-light;
+}
+@keyframes pitch-sweep-to-dark {
+  0% { clip-path: polygon(130% 0, 100% 0, 100% 100%, 112% 100%); }
+  15% { clip-path: polygon(110% 0, 100% 0, 100% 100%, 92% 100%); }
+  80% { clip-path: polygon(-10% 0, 100% 0, 100% 100%, -28% 100%); }
+  100% { clip-path: polygon(-30% 0, 100% 0, 100% 100%, -48% 100%); }
+}
+@keyframes pitch-sweep-to-light {
+  0% { clip-path: polygon(0 0, -30% 0, -12% 100%, 0 100%); }
+  15% { clip-path: polygon(0 0, -10% 0, 8% 100%, 0 100%); }
+  80% { clip-path: polygon(0 0, 110% 0, 128% 100%, 0 100%); }
+  100% { clip-path: polygon(0 0, 130% 0, 148% 100%, 0 100%); }
 }
 
 @layer base {
@@ -80,6 +116,30 @@
   body {
     @apply bg-background text-foreground;
     margin: 0;
+    position: relative;
+    isolation: isolate;
+  }
+  body::before {
+    position: fixed;
+    z-index: -1;
+    inset: 0;
+    content: "";
+    pointer-events: none;
+    background-image:
+      linear-gradient(to right, var(--page-grid) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--page-grid) 1px, transparent 1px);
+    background-size: 56px 56px;
+    filter: blur(0.3px);
+    mask-image: radial-gradient(
+      ellipse 110% 90% at 50% 18%,
+      #000 22%,
+      rgb(0 0 0 / 48%) 70%,
+      transparent 100%
+    );
+  }
+  body,
+  body::before {
+    transition: background-color 180ms ease, color 180ms ease;
   }
   h1,
   h2,
@@ -536,6 +596,101 @@ h2 {
   max-width: 320px;
   margin-top: 24px;
 }
+.testimonials-section {
+  padding-block: 20px 104px;
+}
+.testimonials-intro {
+  max-width: 660px;
+  margin: 0 auto 36px;
+  text-align: center;
+}
+.testimonials-intro > p {
+  margin-top: 15px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.testimonials-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 13px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.testimonials-marquee {
+  width: 100%;
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 6%,
+    #000 94%,
+    transparent
+  );
+}
+.testimonials-track,
+.testimonials-set {
+  display: flex;
+  width: max-content;
+}
+.testimonials-track {
+  animation: testimonials-marquee 36s linear infinite;
+  will-change: transform;
+}
+.testimonials-set {
+  gap: 18px;
+  padding-right: 18px;
+}
+.testimonials-marquee:hover .testimonials-track,
+.testimonials-marquee:focus-within .testimonials-track {
+  animation-play-state: paused;
+}
+@keyframes testimonials-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.testimonial-card {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 clamp(280px, 31vw, 380px);
+  min-height: 225px;
+  padding: 26px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--card) 66%, transparent);
+  box-shadow: 0 18px 45px rgb(24 28 18 / 5%);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+}
+.testimonial-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--ring) 38%, var(--border));
+  box-shadow: 0 22px 50px rgb(24 28 18 / 10%);
+}
+.testimonial-quote-mark {
+  color: var(--ring);
+}
+.testimonial-card blockquote {
+  margin-top: 17px;
+  font-size: 16px;
+  line-height: 1.75;
+}
+.testimonial-card figcaption {
+  margin-top: auto;
+  padding-top: 20px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+.testimonial-card figcaption span {
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+  font-weight: 400;
+}
 .site-footer {
   padding-top: 35px;
   border-top: 1px solid var(--border);
@@ -758,6 +913,20 @@ h2 {
   .section-spacing {
     padding-block: 66px;
   }
+  .testimonials-section {
+    padding-block: 0 66px;
+  }
+  .testimonials-intro {
+    margin-bottom: 25px;
+  }
+  .testimonials-set {
+    gap: 12px;
+    padding-right: 12px;
+  }
+  .testimonial-card {
+    padding: 22px;
+    flex-basis: min(86vw, 340px);
+  }
   h2 {
     font-size: clamp(34px, 8.5vw, 46px);
   }
@@ -911,6 +1080,11 @@ h2 {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(root),
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
+  }
   *,
   *::before,
   *::after {
@@ -918,5 +1092,20 @@ h2 {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+  .testimonials-marquee {
+    overflow-x: auto;
+    mask-image: none;
+    scroll-snap-type: x mandatory;
+  }
+  .testimonials-track {
+    animation: none;
+    transform: none;
+  }
+  .testimonials-set[aria-hidden="true"] {
+    display: none;
+  }
+  .testimonial-card {
+    scroll-snap-align: start;
   }
 }

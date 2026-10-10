@@ -5,6 +5,7 @@ import {
   HandWaving,
   HeadCircuit,
   Microphone,
+  Quotes,
   ShieldCheck,
   SlidersHorizontal,
   Webcam,
@@ -101,6 +102,49 @@ const faq = [
       "This is the project landing page, not the extension. The controls described here reflect the spec and are still planned. This website does not activate your camera or microphone.",
   },
 ];
+
+const testimonialPerspectives = [
+  {
+    quote:
+      "I want to browse at my own pace, with a cursor that follows my head and settles when I need it to.",
+    title: "A steadier way to point",
+    detail: "Designed for head movement with smoothing and dwell.",
+  },
+  {
+    quote:
+      "When I say what I mean, I need the page to act only when the target and my intention are clear.",
+    title: "Confidence before action",
+    detail: "Designed around visible targets and deliberate confirmation.",
+  },
+  {
+    quote:
+      "My camera and microphone should help me browse without sending their audio or video away.",
+    title: "Privacy by design",
+    detail: "Frames and audio stay local, as described in the project spec.",
+  },
+];
+
+function TestimonialCards({ clone = false }: { clone?: boolean }) {
+  return testimonialPerspectives.map((testimonial) => (
+    <figure
+      className="testimonial-card"
+      key={testimonial.title}
+      tabIndex={clone ? -1 : 0}
+    >
+      <Quotes
+        className="testimonial-quote-mark"
+        size={26}
+        weight="fill"
+        aria-hidden="true"
+      />
+      <blockquote>“{testimonial.quote}”</blockquote>
+      <figcaption>
+        {testimonial.title}
+        <span>{testimonial.detail}</span>
+      </figcaption>
+    </figure>
+  ));
+}
 
 export default function HandsfreeLanding() {
   return (
@@ -317,6 +361,39 @@ export default function HandsfreeLanding() {
               </AccordionItem>
             ))}
           </Accordion>
+        </section>
+        <section
+          className="testimonials-section page-width"
+          aria-labelledby="testimonials-heading"
+        >
+          <div className="testimonials-intro">
+            <h2 id="testimonials-heading">
+              Designed around
+              <br />
+              <span className="muted-heading">real needs.</span>
+            </h2>
+            <p>
+              A few experiences Handsfree aims to support as the project takes
+              shape.
+            </p>
+            <span className="testimonials-note">
+              Illustrative perspectives · not user reviews
+            </span>
+          </div>
+          <div
+            className="testimonials-marquee"
+            role="region"
+            aria-label="Illustrative Handsfree experiences"
+          >
+            <div className="testimonials-track">
+              <div className="testimonials-set">
+                <TestimonialCards />
+              </div>
+              <div className="testimonials-set" aria-hidden="true">
+                <TestimonialCards clone />
+              </div>
+            </div>
+          </div>
         </section>
       </main>
       <footer className="site-footer page-width">

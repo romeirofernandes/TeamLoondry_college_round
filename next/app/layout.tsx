@@ -88,7 +88,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           attribute="class"
           defaultTheme="system"
           enableSystem
-          disableTransitionOnChange
           storageKey="handsfree-theme"
         >
           {children}
