@@ -10,7 +10,7 @@ const {chromium}=require('@playwright/test');
 const binary=process.argv[2],bridgeDir=process.env.HANDSFREE_BRIDGE_DIR;
 if(process.platform!=='darwin'||!binary||!bridgeDir)throw Error('This check needs the installed Mac app and isolated bridge directory.');
 const temporary=await mkdtemp(path.join(os.tmpdir(),'handsfree-chrome-'));
-const registries=['Google/Chrome','Microsoft Edge','Chromium'].map(browser=>path.join(os.homedir(),'Library/Application Support',browser,'NativeMessagingHosts/com.handsfree.desktop.json'));
+const registries=['Google/Chrome','Google/Chrome for Testing','Microsoft Edge','Chromium'].map(browser=>path.join(os.homedir(),'Library/Application Support',browser,'NativeMessagingHosts/com.handsfree.desktop.json'));
 const previous=new Map();for(const file of registries){previous.set(file,await readFile(file).catch(()=>null));}
 const idFile=path.join(bridgeDir,'extension-id'),launcher=path.join(bridgeDir,'native-host.sh');
 const oldId=await readFile(idFile),oldLauncher=await readFile(launcher);
@@ -26,6 +26,8 @@ try{
  const worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker');
  const id=new URL(worker.url()).host;
  execFileSync(binary,['--register-extension',id],{env:process.env});
+ // Playwright distributes Chrome for Testing, whose host registry differs from normal Chrome.
+ await writeFile(registries[1],await readFile(registries[0])).catch(async()=>{const {mkdir}=await import('node:fs/promises');await mkdir(path.dirname(registries[1]),{recursive:true});await writeFile(registries[1],await readFile(registries[0]));});
  const shellQuote=value=>"'"+value.replaceAll("'","'\\''")+"'";
  // A PID marker belongs only to this isolated generated launcher, not the distributed app.
  const source=await readFile(launcher,'utf8');await writeFile(launcher,source.replace('#!/bin/sh\n',`#!/bin/sh\necho $$ > ${shellQuote(path.join(bridgeDir,'chrome-native-host.pid'))}\n`));
@@ -35,6 +37,8 @@ try{
  const tabId=await worker.evaluate(async url=>(await chrome.tabs.query({url}))[0].id,page.url());
  const settings=await message({type:'GET_SETTINGS'});
  const saved=await message({type:'SAVE_SETTINGS',settings:{...settings,enabledInputs:['face'],voiceOnly:false,speechMode:'local',dwellEnabled:false,edgeScroll:false}});if(!saved?.ok)throw Error(JSON.stringify(saved));
+ const nativeProbe=await worker.evaluate(()=>new Promise(resolve=>{const host=chrome.runtime.connectNative('com.handsfree.desktop');host.onMessage.addListener(value=>{host.disconnect();resolve(value);});host.onDisconnect.addListener(()=>resolve({error:chrome.runtime.lastError?.message||'Native host closed'}));host.postMessage({id:crypto.randomUUID(),type:'hello'});}));
+ if(!nativeProbe?.ok)throw Error('Chrome host registration/launch: '+JSON.stringify(nativeProbe));
  const connected=await message({type:'DESKTOP_CONNECT'});if(!connected?.ok)throw Error('Actual Chrome native connection failed: '+JSON.stringify(connected));
  const connectedPid=Number((await readFile(path.join(bridgeDir,'chrome-native-host.pid'),'utf8')).trim());
  async function until(predicate,label){const deadline=Date.now()+30000;while(Date.now()<deadline){if(await predicate())return;await new Promise(resolve=>setTimeout(resolve,100));}throw Error('Timed out: '+label);}
