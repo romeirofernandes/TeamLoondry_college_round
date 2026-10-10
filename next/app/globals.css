@@ -377,6 +377,140 @@ h1 span::after {
   gap: 10px;
   margin-top: 30px;
 }
+.read-aloud-nav {
+  display: inline-flex;
+  align-items: center;
+}
+.read-aloud-trigger {
+  min-height: 48px;
+  gap: 8px;
+  padding-inline: 13px;
+  font-size: 12px;
+}
+.read-aloud-trigger svg {
+  color: var(--ring);
+}
+.read-aloud-player {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 8;
+  width: min(420px, calc(100vw - 32px));
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--card) 82%, transparent);
+  box-shadow: 0 14px 36px rgb(24 28 18 / 6%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.read-aloud-player[hidden] {
+  display: none;
+}
+.read-aloud-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.read-aloud-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.read-aloud-icon {
+  display: grid;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 13px;
+  background: var(--secondary);
+  color: var(--ring);
+}
+.read-aloud-heading h2 {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.3px;
+}
+.read-aloud-heading p {
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.read-aloud-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 15px;
+}
+.read-aloud-controls button {
+  min-height: 44px;
+}
+.read-aloud-settings {
+  margin-top: 13px;
+  border-top: 1px solid var(--border);
+  padding-top: 11px;
+}
+.read-aloud-settings summary {
+  width: fit-content;
+  min-height: 36px;
+  align-content: center;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.read-aloud-options {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px 14px;
+  padding-top: 10px;
+}
+.read-aloud-options label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.read-aloud-options output {
+  margin-left: 6px;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+.read-aloud-options select {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+}
+.read-aloud-options input[type="range"] {
+  width: 150px;
+  accent-color: var(--ring);
+}
+.read-aloud-privacy {
+  grid-column: 1 / -1;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.read-aloud-status {
+  min-height: 17px;
+  margin-top: 9px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.is-being-read {
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  box-shadow: inset 3px 0 var(--ring);
+}
 .hero-art {
   position: relative;
   display: grid;
@@ -931,6 +1065,14 @@ html.reading-comfort {
     font-size: 24px;
     letter-spacing: -1.1px;
     gap: 8px;
+  }
+  .read-aloud-trigger {
+    width: 44px;
+    min-height: 44px;
+    padding-inline: 0;
+  }
+  .read-aloud-trigger span {
+    display: none;
   }
   .brand-mark {
     width: 32px;

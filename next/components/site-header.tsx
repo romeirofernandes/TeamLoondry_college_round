@@ -5,6 +5,7 @@ import { ArrowUpRight, List, X } from "@phosphor-icons/react";
 import BrandLogo from "@/components/brand-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ReadingComfortToggle } from "@/components/reading-comfort-toggle";
+import { ReadAloudPlayer } from "@/components/read-aloud-player";
 import { Button } from "@/components/ui/button";
 
 const links = [
@@ -40,6 +41,7 @@ export function SiteHeader() {
         ))}
       </nav>
       <div className="flex items-center gap-2">
+        <ReadAloudPlayer />
         <ReadingComfortToggle />
         <ThemeToggle />
         <Button asChild className="header-guide">
