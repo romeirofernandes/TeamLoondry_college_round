@@ -423,3 +423,48 @@ describe("wake named control actions", () => {
     await expect(resolveArbitrary("open Careers", targets, { groqKeys: keys })).rejects.toThrow(/invalid|combined/i);
   });
 });
+
+describe("independent Jev rotation and bounded failover", () => {
+  const output = { answers: { command: { type: "choice", choice: "scroll-down", confidence: 0.99, probabilities: { "scroll-down": 1 } }, direct: { type: "noul", noul: 0.99 } } };
+  const ok = () => ({ ok: true, json: async () => output });
+  it("deduplicates legacy and list keys and persists separate round-robin slots", async () => {
+    let slot = 0; const jevKeyIndexStore = { get: async () => slot, set: async (n: number) => { slot = n; } };
+    request.mockImplementation(async () => ok());
+    for (let n = 0; n < 3; n++) await mapCommand("a little lower", { jevKey: "dummy-a", jevKeys: ["dummy-a", "dummy-b"], jevKeyIndexStore, language: "en-US" });
+    expect(request.mock.calls.map(([, init]) => init.headers.Authorization)).toEqual(["Bearer dummy-a", "Bearer dummy-b", "Bearer dummy-a"]); expect(slot).toBe(1);
+  });
+  it.each([401, 403, 429, 500, 503])("fails over once per key for HTTP %s", async status => {
+    request.mockResolvedValueOnce({ ok: false, status }).mockResolvedValueOnce(ok());
+    expect(await mapCommand("lower please", { jevKey: "dummy-a", jevKeys: ["dummy-b"], language: "en-US" })).toEqual({ type: "scroll", direction: "down" }); expect(request).toHaveBeenCalledTimes(2);
+  });
+  it("does not retry semantic output or non-transient errors", async () => {
+    request.mockResolvedValue({ ok: true, json: async () => ({ answers: {} }) });
+    expect((await mapCommand("lower please", { jevKey: "dummy-a", jevKeys: ["dummy-b"], language: "en-US" })).type).toBe("unknown"); expect(request).toHaveBeenCalledTimes(1);
+    request.mockClear().mockResolvedValue({ ok: false, status: 400 });
+    await expect(mapCommand("lower please", { jevKey: "dummy-a", jevKeys: ["dummy-b"], language: "en-US" })).rejects.toThrow(); expect(request).toHaveBeenCalledTimes(1);
+  });
+  it("cancels before failover and never sends exact navigation to Jev", async () => {
+    const abort = new AbortController(); request.mockImplementation(async () => { abort.abort(); return { ok: false, status: 429 }; });
+    await expect(mapCommand("lower please", { jevKey: "dummy-a", jevKeys: ["dummy-b"], language: "en-US" }, abort.signal)).rejects.toThrow(); expect(request).toHaveBeenCalledTimes(1);
+    request.mockClear(); await mapCommand("click the first link", { jevKey: "dummy-a", jevKeys: ["dummy-b"], language: "en-US" }); expect(request).not.toHaveBeenCalled();
+  });
+});
+describe("Jev transport failure bounds", () => {
+  it("tries each deduplicated key at most once and hides network details", async () => {
+    request.mockRejectedValue(new TypeError("dummy-secret-from-network"));
+    await expect(mapCommand("lower please", { jevKey: "dummy-a", jevKeys: ["dummy-a", "dummy-b"], language: "en-US" })).rejects.toThrow("Jev request unavailable");
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+  it("never consumes a Jev slot when already cancelled", async () => {
+    const abort = new AbortController(); abort.abort();
+    const store = { get: vi.fn(async () => 0), set: vi.fn(async () => {}) };
+    await expect(mapCommand("lower please", { jevKeys: ["dummy-a"], jevKeyIndexStore: store, language: "en-US" }, abort.signal)).rejects.toThrow();
+    expect(store.set).not.toHaveBeenCalled(); expect(request).not.toHaveBeenCalled();
+  });
+  it("validates navigation arguments and discards provider URL fields", () => {
+    expect(validateIntent({ type: "click-link", index: 2, disposition: "background", url: "javascript:alert(1)" })).toEqual({ type: "click-link", index: 2, disposition: "background" });
+    expect(validateIntent({ type: "click-link", index: 11 })).toBeNull();
+    expect(validateIntent({ type: "click-target", query: "ChatGPT", disposition: "privileged" })).toBeNull();
+    expect(validateIntent({ type: "focus-target", query: "search" })).toEqual({ type: "focus-target", query: "search" });
+  });
+});

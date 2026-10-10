@@ -16,7 +16,8 @@ http
       if (range) { res.statusCode = 206; res.setHeader("Content-Range", `bytes ${start}-${end}/${wav.length}`); }
       res.setHeader("Content-Length", end - start + 1); res.end(wav.subarray(start, end + 1)); return;
     }
-    const name = req.url === "/second" ? "second.html" : req.url === "/media" ? "media.html" : "page.html";
+    const pathname = new URL(req.url, "http://127.0.0.1:4177").pathname;
+    const name = pathname === "/results" ? "results.html" : ["/second", "/guide"].includes(pathname) ? "second.html" : pathname === "/media" ? "media.html" : "page.html";
     res.setHeader("Content-Type", "text/html");
     res.end(fs.readFileSync(path.join(__dirname, "fixtures", name)));
   })

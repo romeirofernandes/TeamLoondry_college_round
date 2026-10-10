@@ -16,6 +16,9 @@ import {
   submitControl,
   targetLabel,
   usable,
+  voiceUsable,
+  voiceExposed,
+  linkUrl,
 } from "./dom";
 import { Overlay } from "./overlay";
 import { ScrollMotion, scrollPixels } from "./scroll";
@@ -47,6 +50,9 @@ export class ContentRuntime {
   private pointerTarget = false;
   private pending: Pending | null = null;
   private choices: HTMLElement[] = [];
+  private choiceSnapshots = new Map<HTMLElement, string>();
+  private selectedSnapshot: string | null = null;
+  private preparedLink: { id: string; url: string; pageUrl: string } | null = null;
   private sample: PointerSample | null = null;
   private receivedAt = 0;
   private x = 0;
@@ -116,6 +122,17 @@ export class ContentRuntime {
       type: "METRIC",
       event: { type, detail, at: Date.now() },
     }).catch(() => {});
+  }
+  private selectionSignature(element: HTMLElement): string {
+    const href = element.getAttribute("href");
+    let destination: string | null = null;
+    if (href !== null) {
+      try { destination = new URL(href, document.baseURI).href; } catch { /* Invalid links retain their raw-href signature. */ }
+    }
+    return [location.href, targetLabel(element), href, destination, element.getAttribute("role"), element.getAttribute("type")].join("|");
+  }
+  private rememberChoices() {
+    this.choiceSnapshots = new Map(this.choices.map(element => [element, this.selectionSignature(element)]));
   }
   private pageChanged = () => {
     this.scrollMotion.cancel();
@@ -204,6 +221,8 @@ export class ContentRuntime {
       this.target = element;
       this.pointerTarget = fromPointer ?? false;
     } else if (fromPointer !== undefined) this.pointerTarget = fromPointer;
+    this.selectedSnapshot = element && !this.pointerTarget ? this.selectionSignature(element) : null;
+    this.preparedLink = null;
     this.overlay.target(element);
   }
   tick() {
@@ -386,7 +405,8 @@ export class ContentRuntime {
         }
         if (matches.length > 1) {
           this.select(null);
-          this.choices = matches.slice(0, 5);
+          this.choices = matches.slice(0, 10);
+          this.rememberChoices();
           this.choices[0].scrollIntoView({
             block: "center",
             behavior: "instant",
@@ -406,6 +426,10 @@ export class ContentRuntime {
         }
         return { ok: true };
       }
+      case "VALIDATE_LINK": {
+        const link = this.preparedLink;
+        return { ok: !!link && this.running && !this.paused && !this.dictating && message.id === link.id && message.url === link.url && message.pageUrl === location.href && message.pageUrl === link.pageUrl && !!this.target && this.targets.get(link.id) === this.target && this.selectedSnapshot === this.selectionSignature(this.target) && linkUrl(this.target) === message.url && voiceExposed(this.target) };
+      }
       case "PAGE_ACTION": {
         if (message.intent.type.startsWith("media-")) {
           if (!this.running || this.paused || this.dictating) return { ok: false };
@@ -413,8 +437,9 @@ export class ContentRuntime {
           this.feedback(result.error || "Player updated.");
           return result;
         }
+        this.preparedLink = null;
         const ok = this.action(message.intent);
-        return { ok, dictating: this.dictating };
+        return { ok, dictating: this.dictating, ...(this.preparedLink ? { link: this.preparedLink } : {}) };
       }
       case "DICTATE": {
         if (
@@ -483,6 +508,7 @@ export class ContentRuntime {
       return true;
     }
     if (!this.running || this.paused) return false;
+    if (this.dictating && ["click-link", "click-target", "focus-target", "show-links", "choose"].includes(intent.type)) return false;
     if (intent.type === "confirm") {
       const pending = this.pending;
       if (
@@ -494,6 +520,7 @@ export class ContentRuntime {
         !pending.form.isConnected ||
         !usable(pending.target) ||
         sensitive(pending.target) ||
+        (this.selectedSnapshot !== null && (this.selectedSnapshot !== this.selectionSignature(pending.target) || !voiceExposed(pending.target))) ||
         this.formSignature(pending.target, pending.form) !== pending.signature
       ) {
         this.cancelPending();
@@ -516,7 +543,7 @@ export class ContentRuntime {
     }
     if (intent.type === "choose") {
       const choice = this.choices[intent.index - 1];
-      if (!choice || !choice.isConnected || !usable(choice)) {
+      if (!choice || !choice.isConnected || !voiceUsable(choice) || this.choiceSnapshots.get(choice) !== this.selectionSignature(choice)) {
         this.feedback(
           "That option is not available. Say choose followed by a listed number.",
         );
@@ -532,9 +559,17 @@ export class ContentRuntime {
       );
       return true;
     }
-    if (intent.type === "click-target") {
-      if (this.dictating) return false;
-      const ids = this.targets.named(intent.query);
+    if (intent.type === "show-links") {
+      this.choices = this.targets.links().slice(0, 10).map(id => this.targets.get(id)).filter((element): element is HTMLElement => !!element);
+      this.select(null);
+      this.cancelPending();
+      this.rememberChoices();
+      this.overlay.options(this.choices);
+      this.feedback(this.choices.length ? `Links: ${this.choices.map((element, index) => `${index + 1}: ${targetLabel(element)}`).join(". ")}. Say choose followed by a number, then click this.` : "No links found on this page.");
+      return true;
+    }
+    if (intent.type === "click-target" || intent.type === "click-link" || intent.type === "focus-target") {
+      const ids = intent.type === "click-link" ? this.targets.links().slice(intent.index - 1, intent.index) : intent.type === "focus-target" ? this.targets.fields(intent.query) : this.targets.named(intent.query);
       if (ids.length !== 1) {
         void this.handle({ type: "FIND_RESULT", ids });
         return true;
@@ -545,7 +580,25 @@ export class ContentRuntime {
       this.overlay.options([]);
       this.select(target, false);
       target.scrollIntoView({ block: "center", behavior: "instant" });
-      if (!this.voiceAllowed()) return false;
+      if (!voiceExposed(target) || !this.voiceAllowed()) {
+        this.feedback("That target is covered or unavailable.");
+        return false;
+      }
+      if (intent.type === "focus-target") {
+        if (!editable(target)) return false;
+        target.focus({ preventScroll: true });
+        this.feedback(`Focused ${targetLabel(target)}.`);
+        return true;
+      }
+      if (intent.disposition) {
+        const url = linkUrl(target);
+        if (!url || !target.matches('a[href],[role="link"]')) {
+          this.feedback("Only HTTP or HTTPS links can open in another tab.");
+          return false;
+        }
+        this.preparedLink = { id: this.targets.id(target), url, pageUrl: location.href };
+        return true;
+      }
       return this.activate(target, "voice");
     }
     if (intent.type === "scroll") {
@@ -667,6 +720,9 @@ export class ContentRuntime {
           "No target selected. Point at a link, button, or field, or use find.",
         );
         return false;
+      }
+      if (this.selectedSnapshot && (this.selectedSnapshot !== this.selectionSignature(this.target) || !voiceExposed(this.target))) {
+        this.select(null); this.feedback("The selected target changed. Select it again."); return false;
       }
       if (!this.voiceAllowed()) return false;
       return this.activate(this.target, "voice");

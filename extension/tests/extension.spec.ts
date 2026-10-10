@@ -486,3 +486,101 @@ test("visible aria-hidden YouTube thumbnails retain dwell across the title area"
     expect(await page.evaluate(() => location.pathname)).toBe("/");
   } finally { await message({ type: "SAVE_SETTINGS", settings: original }); }
 });
+
+test("final transcripts navigate generic result links and focus fields without pointer samples", async () => {
+  await message({ type: "OFFSCREEN_COMMAND", command: "pause" });
+  const originalPage = page;
+  const opened: Page[] = [];
+  // Replace only the search network response with a localhost fixture redirect.
+  const searchPattern = "https://www.google.com/search?**";
+  await context.route(searchPattern, route => route.fulfill({ status: 302, headers: { location: "http://127.0.0.1:4177/results?q=accessible%20design" } }));
+  try {
+    const searchOpened = context.waitForEvent("page");
+    await heard("search for accessible design");
+    page = await searchOpened; opened.push(page);
+    await page.waitForURL("**/results?q=accessible%20design");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("click the first link");
+    await page.waitForURL("**/second");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("go back");
+    await page.waitForURL("**/results?q=accessible%20design");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("click the ChatGPT link");
+    await page.waitForURL("**/second");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("go back");
+    await page.waitForURL("**/results?q=accessible%20design");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("click the second result");
+    await page.waitForURL("**/guide");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("go back");
+    await page.waitForURL("**/results?q=accessible%20design");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    const before = await message({ type: "GET_STATE" });
+    const foregroundOpened = context.waitForEvent("page");
+    await heard("open the first link in a new tab");
+    const foreground = await foregroundOpened; opened.push(foreground);
+    await foreground.waitForURL("**/second");
+    await expect.poll(async () => (await message({ type: "GET_STATE" })).targetTabId).not.toBe(before.targetTabId);
+    await heard("go to tab generic fixture results");
+    await expect.poll(async () => (await message({ type: "GET_STATE" })).targetTabId).toBe(before.targetTabId);
+    const backgroundOpened = context.waitForEvent("page");
+    await heard("open the second result in a background tab");
+    const background = await backgroundOpened; opened.push(background);
+    await background.waitForURL("**/guide");
+    expect((await message({ type: "GET_STATE" })).targetTabId).toBe(before.targetTabId);
+    const active = await worker.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0].id);
+    expect(active).toBe(before.targetTabId);
+    await heard("focus the search box");
+    await expect(page.locator("#result-search")).toBeFocused();
+    await expect(page.locator("#result-search")).toHaveValue("");
+    await heard("show links");
+    await expect(page.locator("#handsfree-assist-overlay .choice")).toHaveCount(2);
+    await heard("choose two");
+    expect(new URL(page.url()).pathname).toBe("/results");
+    await heard("click this");
+    await page.waitForURL("**/guide");
+  } finally {
+    await context.unroute(searchPattern);
+    page = originalPage;
+    for (const tab of opened.reverse()) if (!tab.isClosed()) await tab.close();
+  }
+});
+
+test("final transcripts activate real multiline fragments and reject changed base destinations", async () => {
+  await message({ type: "OFFSCREEN_COMMAND", command: "pause" });
+  const geometry = await page.evaluate(() => {
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "width:140px;font:16px/40px sans-serif";
+    wrapper.innerHTML = '<a id="wrapping-voice-link" href="/second" style="display:inline;margin:0">Wrapping inline navigation link</a>';
+    document.body.prepend(wrapper);
+    const link = wrapper.querySelector("a")!;
+    link.addEventListener("click", event => { event.preventDefault(); document.body.dataset.fragmentClicks = String(Number(document.body.dataset.fragmentClicks || 0) + 1); });
+    const box = link.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return { fragments: link.getClientRects().length, unionCenterExposed: hit === link || !!hit && link.contains(hit) };
+  });
+  expect(geometry.fragments).toBe(2);
+  expect(geometry.unionCenterExposed).toBe(false);
+  await heard("click Wrapping inline navigation link");
+  await expect(page.locator("body")).toHaveAttribute("data-fragment-clicks", "1");
+  await page.evaluate(() => {
+    const cover = document.createElement("div"); cover.id = "fragment-cover";
+    cover.style.cssText = "position:fixed;inset:0;z-index:999999;background:white"; document.body.append(cover);
+  });
+  await heard("click Wrapping inline navigation link");
+  await expect(page.locator("body")).toHaveAttribute("data-fragment-clicks", "1");
+  await page.evaluate(() => {
+    document.getElementById("fragment-cover")!.remove(); document.getElementById("wrapping-voice-link")!.remove();
+    const base = document.createElement("base"); base.href = "http://127.0.0.1:4177/original/"; document.head.append(base);
+    const main = document.createElement("main"); main.innerHTML = '<h2><a id="relative-voice-link" href="destination">Relative destination</a></h2>'; document.body.prepend(main);
+    main.querySelector("a")!.addEventListener("click", event => { event.preventDefault(); document.body.dataset.relativeActivated = "true"; });
+  });
+  await heard("show links"); await heard("choose one");
+  await page.evaluate(() => { document.querySelector("base")!.href = "http://127.0.0.1:4177/replacement/"; });
+  await heard("click this");
+  expect(await page.locator("body").getAttribute("data-relative-activated")).toBeNull();
+  await expect(page.locator("#handsfree-assist-overlay .feedback")).toContainText("changed");
+});
