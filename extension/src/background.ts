@@ -202,6 +202,8 @@ async function ensureOffscreen() {
   if (!creatingOffscreen) creatingOffscreen = chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.AUDIO_PLAYBACK], justification: "Keep camera tracking and microphone recognition responsive while browsing other tabs." }).finally(() => { creatingOffscreen = null; });
   await creatingOffscreen;
 }
+const captureChecks=new Set<chrome.runtime.Port>();
+async function releaseIdleDesktop(){if(!state.running&&uiVoiceTab===null&&!captureChecks.size)await releaseDesktop();}
 let captureRevision=0;
 async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>["command"], options: { gesture?: import("./shared").HandGesture; presets?: GesturePreset[] } = {}) {
   if (command === "start" || command === "ui-start") {
@@ -212,9 +214,10 @@ async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>
   }
   if (command !== "start" && command !== "ui-start") {
     const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
-    if (!contexts.length) return;
+    if (!contexts.length) {if(command==="ui-stop")await releaseIdleDesktop();return;}
   }
   await chrome.runtime.sendMessage({ type: "OFFSCREEN_COMMAND", command, settings: pageSettings(), ...options }).catch(() => {});
+  if(command==="ui-stop")await releaseIdleDesktop();
 }
 async function stop() {
   captureRevision++;
@@ -247,7 +250,7 @@ async function stop() {
   await controller("stop");
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
   if (contexts.length) await chrome.offscreen.closeDocument();
-  await releaseDesktop();
+  await releaseIdleDesktop();
   await chrome.storage.local.set({ logs });
 }
 async function pause() {
@@ -827,9 +830,10 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     return;
   }
   if (isCancellation(text)) { await action({type:"cancel"},current); return; }
-  const openSite = /^(?:open|take me to) (wikipedia|github|reddit|amazon|spotify|netflix|x|twitter|whatsapp|gmail|google meet|meet|linkedin|irctc|google maps|maps)$/i.exec(text.trim().replace(/[.!?]+$/,""));
+  const openSite = /^(?:open|take me to) (wikipedia|github|reddit|amazon|spotify|netflix|youtube|chatgpt|chat gpt|ai chat|x|twitter|whatsapp|gmail|google meet|meet|linkedin|irctc|google maps|maps)$/i.exec(text.trim().replace(/[.!?]+$/,""));
   if (openSite) {
-    const site = openSite[1].toLowerCase() === "twitter" ? "x" : openSite[1].toLowerCase().replace(/^google /, "") as keyof typeof siteHomes;
+    const spokenSite = openSite[1].toLowerCase();
+    const site = (spokenSite === "twitter" ? "x" : ["chat gpt", "ai chat"].includes(spokenSite) ? "chatgpt" : spokenSite.replace(/^google /, "")) as keyof typeof siteHomes;
     if (await needTabs() || !current()) return;
     await chrome.tabs.create({url:siteHomes[site]});
     if(current()) await publish({feedback:`Opening ${site}.`});
@@ -987,7 +991,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return presets;
     }
     case "GET_GESTURE_DESTINATIONS": {
-      const labels: Record<string, string> = { wikipedia: "Wikipedia", github: "GitHub", reddit: "Reddit", amazon: "Amazon", spotify: "Spotify", netflix: "Netflix", x: "X", whatsapp: "WhatsApp Web", gmail: "Gmail", meet: "Google Meet", linkedin: "LinkedIn Jobs", irctc: "IRCTC", maps: "Google Maps" };
+      const labels: Record<string, string> = { wikipedia: "Wikipedia", github: "GitHub", reddit: "Reddit", amazon: "Amazon", spotify: "Spotify", netflix: "Netflix", youtube: "YouTube", chatgpt: "ChatGPT", x: "X", whatsapp: "WhatsApp Web", gmail: "Gmail", meet: "Google Meet", linkedin: "LinkedIn Jobs", irctc: "IRCTC", maps: "Google Maps" };
       const destinations = Object.entries(siteHomes).map(([id, url]) => ({ id: `site:${id}`, label: labels[id] || id, url, source: "suggested" }));
       if (await chrome.permissions.contains({ permissions: ["tabs"] })) {
         const tabs = await chrome.tabs.query({});
@@ -1343,3 +1347,12 @@ chrome.permissions.onRemoved?.addListener(() => {
 });
 
 onDesktopLost(()=>{void stop().then(()=>publish({feedback:"Desktop disconnected. Browser capture stopped. Open Handsfree and reconnect."}));});
+
+chrome.runtime.onConnect?.addListener(port=>{
+  if(port.name!=="handsfree-capture-check")return;
+  if(!port.sender||!uiSender(port.sender)){port.disconnect();return;}
+  let active=true;captureChecks.add(port);
+  port.onDisconnect.addListener(()=>{active=false;captureChecks.delete(port);void releaseIdleDesktop();});
+  port.onMessage.addListener(message=>{if(!message?.release)return;captureChecks.delete(port);void releaseIdleDesktop().finally(()=>{if(active)port.postMessage({released:true});});});
+  void ready.then(()=>claimDesktop()).then(()=>{if(active)port.postMessage({ok:true});else void releaseIdleDesktop();}).catch(error=>{if(active)port.postMessage({ok:false,error:error instanceof Error?error.message:String(error)});});
+});

@@ -41,6 +41,12 @@ const small: Record<string, number> = {
 export function numberSlot(value: string): number | null {
   const text = normalizeSpeech(value).replace(/-/g, " ");
   if (/^\d{1,7}(?:\.\d{1,2})?$/.test(text)) return Number(text);
+  const decimal = /^(.+) point (zero|one|two|three|four|five|six|seven|eight|nine)$/.exec(text);
+  if (decimal) {
+    const whole = numberSlot(decimal[1]);
+    const fraction = small[decimal[2]];
+    return whole === null ? null : whole + fraction / 10;
+  }
   let total = 0,
     part = 0;
   for (const word of text.split(" ")) {
@@ -94,7 +100,8 @@ export function makeRequest(
   id: SiteRequest["action"],
   args: SiteArgs = {},
 ): SiteRequest {
-  const bound = adapters[snapshot.site].actions.find((a) => a.id === id)?.write
+  const spec = adapters[snapshot.site].actions.find((a) => a.id === id);
+  const bound = spec?.write && spec.operation.kind !== "prompt"
     ? snapshot.selected || snapshot.current
     : null;
   return {
@@ -115,6 +122,7 @@ function argsFor(
   text: string,
 ): SiteArgs | null {
   const args: SiteArgs = {};
+  if(spec.id === "CH07" && text === "list conversations") return {mode:"list"};
   if (spec.id === "W08" && /^(?:find|select)/.test(text)) args.mode = "select";
   if (spec.extract === "query") {
     if (spec.id === "MAP04") {
@@ -146,9 +154,11 @@ function argsFor(
   }
   if (spec.extract === "mode") args.mode = match.slice(1).find(Boolean) || text;
   if (spec.extract === "ordinal") {
-    const n = numberSlot((match[1] || "").replace(/^number /, ""));
+    const ordinal = match.slice(1).find(Boolean) || "";
+    const n = numberSlot(ordinal.replace(/^number /, ""));
     if (n === null || n < 1 || n > 100) return null;
     args.index = n;
+    if (/\b(?:in )?(?:a )?new tab\b/.test(text)) args.mode = "new-tab";
   }
   if (spec.extract === "number") {
     const segments = match
@@ -199,7 +209,10 @@ export function parseSite(
     .replace(/ please$/, "")
     .replace(/[.!?,;:]+$/, "")
     .replace(/^actually[, ]+/, "");
-  if (unsafeSpeech(normalized) || isCancellation(normalized)) return null;
+  const explicitChatGPTPrompt =
+    snapshot.site === "chatgpt" &&
+    /^(?:(?:word|would) )?(?:i want to )?ask (?:(?:chat ?gpt)|(?:the )?ai|this assistant) .+/.test(normalized);
+  if ((unsafeSpeech(normalized) && !explicitChatGPTPrompt) || isCancellation(normalized)) return null;
   // Broad named-entity patterns are considered after specific commands.
   const ordered = [...adapters[snapshot.site].actions].sort(
     (a, b) =>
@@ -252,7 +265,7 @@ export function siteCandidates(
         catalogue.find((a) => a.id === spec.id)!.description +
         ". Voice examples: " + catalogue.find(a=>a.id===spec.id)!.examples.join("; ") + ". " +
         (spec.operation.kind === "media" && spec.operation.command === "pause" ? "Hold or temporarily stop the current music, tune, song, video or episode. " : "") +
-        (spec.write
+        (spec.write && spec.operation.kind !== "prompt"
           ? "Account change: explicit confirmation is mandatory."
           : ""),
     };

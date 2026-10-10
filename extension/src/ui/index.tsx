@@ -1,3 +1,4 @@
+import {captureCheck} from "../capture-check";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { initialState, send, type Message, type SessionState } from "../shared";
@@ -87,7 +88,8 @@ function Popup() {
     }
   }
   async function start() {
-    const capture=await send<{ok:boolean;error?:string}>({type:"PREPARE_BROWSER_CAPTURE"});if(!capture?.ok)throw new Error(capture?.error||"Desktop handoff failed; capture stayed off.");
+    const release=await captureCheck();
+    try{
     // These prompts belong to this extension origin. A denied camera must not block microphone access.
     const denied: string[] = [];
     for (const kind of ["camera", "microphone"] as const) {
@@ -110,6 +112,7 @@ function Popup() {
         `${denied.join(" and ")} access denied. Available inputs can still work. Open the dashboard for setup.`,
       );
     return result;
+    }finally{await release();}
   }
 
   return (

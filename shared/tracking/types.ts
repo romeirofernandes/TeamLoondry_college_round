@@ -1,3 +1,3 @@
 export type PointerMode = "face" | "hand";
-export interface Calibration { neutralX:number; neutralY:number; rangeX:number; rangeY:number; left?:number;right?:number;up?:number;down?:number; }
+export interface Calibration { neutralX:number; neutralY:number; rangeX:number; rangeY:number; left?:number;right?:number;up?:number;down?:number;invertX?:boolean;invertY?:boolean; }
 export interface Settings {pointerMode:PointerMode;confidenceThreshold:number;deadZone:number;sensitivity:number;handSensitivity:number;}

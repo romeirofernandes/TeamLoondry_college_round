@@ -1584,14 +1584,14 @@ export function HandsfreeDashboard() {
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="test-message-recipients">
-                    Owned test recipients
+                    Owned test recipients for Gmail and Meet
                   </FieldLabel>
                   <FieldDescription id="test-recipients-help">
-                    Sending requires an exact recipient here and a separate
-                    voice confirmation. Use gmail:you@example.com,
-                    whatsapp:exact chat ID, or meet:abc-defg-hij. Only add
-                    recipients and private meetings you own or have permission
-                    to test.
+                    Gmail and Meet sending requires an exact recipient here
+                    and a separate voice confirmation. WhatsApp messages use
+                    the currently open chat and always require voice
+                    confirmation. Only add recipients and private meetings
+                    you own or have permission to test.
                   </FieldDescription>
                   <Input
                     id="test-message-recipients"
@@ -1629,7 +1629,7 @@ export function HandsfreeDashboard() {
                     }).testMessageRecipients;
                     if (next.length !== new Set(entries).size) {
                       setRecipientError(
-                        "Use a Gmail address, an exact WhatsApp chat ID, or a private Meet code with the shown prefix. Limit the list to 20 recipients.",
+                        "Use a Gmail address or a private Meet code with the shown prefix. Limit the list to 20 recipients.",
                       );
                       document
                         .getElementById("test-message-recipients")

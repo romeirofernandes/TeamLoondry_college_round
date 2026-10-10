@@ -8,7 +8,10 @@ updater = release / "update-app.sh"
 assert installer.is_file() and updater.is_file(), "release must include both tested entry points"
 checks = []
 def run(args, **kwargs):
-    return subprocess.run(args, check=True, text=True, capture_output=True, **kwargs)
+    result=subprocess.run(args, check=False, text=True, capture_output=True, **kwargs)
+    if result.returncode: print(result.stderr,file=sys.stderr)
+    result.check_returncode()
+    return result
 def record(name):
     checks.append({"name": name, "status": "passed"})
 with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as temporary:
@@ -52,9 +55,9 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as tem
     assert result.returncode != 0 and hashlib.sha256(binary.read_bytes()).hexdigest() == before
     record("checksum failure preserves installed executable")
     ready = temp / "frontend-ready.json"
-    bridge_home=temp / "Private bridge home"
-    bridge_home.mkdir()
-    ui_env = dict(env, HOME=str(bridge_home), HANDSFREE_SMOKE_REPORT=str(ready), HANDSFREE_SMOKE_HOLD="1")
+    bridge_dir=temp / "Private bridge directory"
+    bridge_dir.mkdir()
+    ui_env = dict(env, HANDSFREE_BRIDGE_DIR=str(bridge_dir), HANDSFREE_SMOKE_REPORT=str(ready), HANDSFREE_SMOKE_HOLD="1")
     process = subprocess.Popen([str(binary)], env=ui_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         deadline = time.monotonic() + 60
@@ -69,19 +72,29 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as tem
         record("updater refuses replacing a running installed app")
         extension_id="abcdefghijklmnopabcdefghijklmnop"
         run([str(binary),"--register-extension",extension_id],env=ui_env)
-        manifest=json.loads((bridge_home / "Library/Application Support/Google/Chrome/NativeMessagingHosts/com.handsfree.desktop.json").read_text())
+        manifest=json.loads((pathlib.Path(os.environ["HOME"]) / "Library/Application Support/Google/Chrome/NativeMessagingHosts/com.handsfree.desktop.json").read_text())
         assert manifest["allowed_origins"]==[f"chrome-extension://{extension_id}/"]
-        assert (bridge_home/".handsfree").stat().st_mode & 0o777 == 0o700
+        assert bridge_dir.stat().st_mode & 0o777 == 0o700
         record("native host registration binds only the selected extension origin")
         wrong=subprocess.run([str(binary),"--native-host","chrome-extension://wrong/"],env=ui_env,capture_output=True,timeout=10)
         assert wrong.returncode!=0
         record("native host rejects an unpaired browser origin")
         def screenshot_window(file):
             swift='import Foundation; import CoreGraphics; let windows=CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID)!; let data=try! JSONSerialization.data(withJSONObject:windows); print(String(data:data,encoding:.utf8)!)'
-            windows=json.loads(run(["xcrun","swift","-e",swift]).stdout)
-            candidates=[w for w in windows if w.get("kCGWindowOwnerPID")==process.pid and w.get("kCGWindowBounds",{}).get("Width",0)>=300 and w.get("kCGWindowBounds",{}).get("Height",0)>=240]
-            assert candidates, "Installed app window missing from WindowServer"
-            run(["screencapture","-x","-l",str(candidates[0]["kCGWindowNumber"]),str(file)])
+            # Layout acknowledgement can precede WindowServer's first painted frame.
+            # Check the original capture; do not edit the screenshot to conceal a blank renderer.
+            pixel_check='import AppKit; let bitmap=NSBitmapImageRep(data:try! Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[1])))!; var low=1.0, high=0.0; for y in stride(from:0,to:bitmap.pixelsHigh,by:max(1,bitmap.pixelsHigh/32)){for x in stride(from:0,to:bitmap.pixelsWide,by:max(1,bitmap.pixelsWide/32)){if let c=bitmap.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB){let v=Double((c.redComponent+c.greenComponent+c.blueComponent)*c.alphaComponent/3);low=min(low,v);high=max(high,v)}}}; exit(high>0.2 && high-low>0.15 ? 0:1)'
+            deadline=time.monotonic()+20
+            while time.monotonic()<deadline:
+                windows=json.loads(run(["xcrun","swift","-e",swift]).stdout)
+                candidates=[w for w in windows if w.get("kCGWindowOwnerPID")==process.pid and w.get("kCGWindowBounds",{}).get("Width",0)>=300 and w.get("kCGWindowBounds",{}).get("Height",0)>=240]
+                if candidates:
+                    run(["screencapture","-x","-l",str(candidates[0]["kCGWindowNumber"]),str(file)])
+                    pixels=subprocess.run(["xcrun","swift","-e",pixel_check,str(file)],capture_output=True,text=True)
+                    if pixels.returncode==0:return
+                    assert pixels.returncode==1, pixels.stderr
+                time.sleep(.5)
+            raise AssertionError("Installed app window has no visibly rendered content")
         hosts=[]
         def host():
             child=subprocess.Popen([manifest["path"],f"chrome-extension://{extension_id}/"],env=ui_env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -116,6 +129,9 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as tem
                 child.stdin.close()
                 try: child.wait(timeout=5)
                 except subprocess.TimeoutExpired: child.kill();child.wait()
+        run(["node",str(pathlib.Path(__file__).with_name("macos-browser-bridge.mjs")),str(binary)],env=ui_env)
+        record("real Chromium native messaging connects, hands off capture and fails closed on host loss")
+        run([str(binary),"--register-extension",extension_id],env=ui_env)
         # Closing a browser lease leaves capture stopped; show the compact panel for the screenshot.
         last=host()
         try: assert request(last,"showPanel")["ok"]
@@ -136,6 +152,6 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as tem
         report_path.with_name("native-app.log").write_text(stderr.decode(errors="replace"))
     assert not list(destination.glob(".Handsfree.*"))
     record("installer leaves no staging or backup directories")
-report = {"schemaVersion":2,"artifact":package.name,"sha256":hashlib.sha256(package.read_bytes()).hexdigest(),"checks":checks,"diagnostics":diagnostics,"physicalM4":"pending","cameraTracking":"pending physical device","accessibilityInput":"pending physical device","nativeFileChooser":"pending interactive physical device","nativeVoice":"helper packaged; microphone and permission qualification pending","browserIntegration":"installed native-host transport tested; live Chrome and signed-in sites pending","developerIdSigned":False,"notarized":False}
+report = {"schemaVersion":2,"artifact":package.name,"sha256":hashlib.sha256(package.read_bytes()).hexdigest(),"checks":checks,"diagnostics":diagnostics,"physicalM4":"pending","cameraTracking":"pending physical device","accessibilityInput":"pending physical device","nativeFileChooser":"pending interactive physical device","nativeVoice":"helper packaged; microphone and permission qualification pending","browserIntegration":"real Chromium native-host connection, handoff, release and loss tested with fake camera; user browser and signed-in sites pending","developerIdSigned":False,"notarized":False}
 report_path.write_text(json.dumps(report,indent=2)+"\n")
 print(json.dumps({"passed":len(checks),"artifact":package.name}))

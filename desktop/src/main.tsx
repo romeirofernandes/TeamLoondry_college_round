@@ -15,7 +15,7 @@ function App(){
   const [prefs,setPrefs]=useState<Preferences>(()=>readPreferences(localStorage.getItem("handsfree-desktop-v1")));
   const [advanced,setAdvanced]=useState(true),[camera,setCamera]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const voice=prefs.enabledInputs.includes("voice"),pointerEnabled=prefs.enabledInputs.some(i=>i==="face"||i==="hand");
-  const [compact,setCompact]=useState(localStorage.getItem("handsfree-desktop-onboarded")==="1"),[step,setStep]=useState(0),[corner,setCorner]=useState("bottom-right"),[extensionId,setExtensionId]=useState(""),[command,setCommand]=useState(""),[commandResult,setCommandResult]=useState("");
+  const [compact,setCompact]=useState(localStorage.getItem("handsfree-desktop-onboarded")==="1"),[step,setStep]=useState(0),[corner,setCorner]=useState(localStorage.getItem("handsfree-panel-corner")||"bottom-right"),[extensionId,setExtensionId]=useState(""),[command,setCommand]=useState(""),[commandResult,setCommandResult]=useState("");
   const [confidence,setConfidence]=useState(0),[fps,setFps]=useState(0),[stage,setStage]=useState<CalibrationStage|null>(null),[progress,setProgress]=useState(0),[displayId,setDisplayId]=useState(0);
   const video=useRef<HTMLVideoElement>(null),tracker=useRef(new Tracker()),filter=useRef(new PointerFilter());
   const current=useRef(session),settings=useRef(prefs),generation=useRef(0),sequence=useRef(0),sending=useRef(false);
@@ -40,7 +40,7 @@ function App(){
 
     return()=>{alive=false;clearInterval(timer);void unlisten.then(f=>f());void unerror.then(f=>f());void handoff.then(f=>f());void setup.then(f=>f());void popup.then(f=>f());tracker.current.stop();};
   },[]);
-  useEffect(()=>{if(isTauri())void invoke("panel_layout",{compact}).then(()=>invoke("frontend_ready",{view:compact?"compact":"setup"})).catch(fail);},[compact]);
+  useEffect(()=>{if(isTauri())void invoke("panel_layout",{compact,corner:compact?corner:undefined}).then(()=>invoke("frontend_ready",{view:compact?"compact":"setup"})).catch(fail);},[compact]);
   useEffect(()=>{const escape=(e:KeyboardEvent)=>{if(e.key==="Escape")void pause();};window.addEventListener("keydown",escape);return()=>window.removeEventListener("keydown",escape);},[]);
   const onPoint=(point:RawPoint|null,time:number)=>{
     setConfidence(point?.confidence??0);
@@ -80,7 +80,7 @@ function App(){
   const start=async()=>{
     setError("");setBusy(true);const token=++generation.current;
     try{const c=settings.current.calibrations[settings.current.mode];if(pointerEnabled&&!c)throw new Error("Calibrate your selected movement first.");if(pointerEnabled)await startCamera();if(generation.current!==token)return;if(c)filter.current.setCalibration(c);sequence.current=0;const active=await invoke<Session>("start",{displayId,pointerEnabled});apply(active);if(voice)await invoke("voice_start",{epoch:active.epoch});}
-    catch(e){await releaseCapture();fail(e);}finally{if(generation.current===token)setBusy(false);}
+    catch(e){await stop();fail(e);}finally{if(generation.current===token)setBusy(false);}
   };
   const switchMode=async(mode:Preferences["mode"])=>{await stop();save({...settings.current,mode});};
   const running=session.phase==="running";
@@ -99,13 +99,13 @@ function App(){
     <section className="intro"><div className="eyebrow"><span className={`dot ${running?"live":""}`}/>{running?"YOU'RE IN CONTROL":session.phase==="paused"?"TAKE YOUR TIME":"YOUR SPACE. YOUR PACE."}</div><h1>{running?(pointerEnabled?"Move naturally.":"Speak a command."):session.phase==="paused"?"A moment to pause.":"A little movement.\nA lot more freedom."}</h1><p>{running?(pointerEnabled?"Your movement is guiding the Mac pointer.":"Try open Finder or open Safari. Stop releases speech capture."):"Control your Mac with comfortable head or hand movement."}</p></section>
     {pointerEnabled&&<div className="modes" role="group" aria-label="Pointer source"><button disabled={busy||!!stage||!prefs.enabledInputs.includes("face")} className={prefs.mode==="face"?"selected":""} onClick={()=>void switchMode("face").catch(fail)}><ScanFace size={19}/>Head<Check className="check" size={15}/></button><button disabled={busy||!!stage||!prefs.enabledInputs.includes("hand")} className={prefs.mode==="hand"?"selected":""} onClick={()=>void switchMode("hand").catch(fail)}><Hand size={19}/>Hand<Check className="check" size={15}/></button></div>}
     </>}
-    <section data-tauri-drag-region={compact?true:undefined} className={`preview ${camera?"active":""}`} aria-label="Local camera preview"><video ref={video} muted playsInline/>{!compact&&<div className="preview-caption"><span><ShieldCheck size={13}/> Stays on your Mac</span>{camera&&<span>{fps} fps</span>}</div>}{!camera&&<div className="camera-empty"><Camera size={28}/><span>Your camera is off</span>{!compact&&<small>It starts when you calibrate or resume.</small>}</div>}{stage&&<div className="calibration"><span className="eyebrow">CALIBRATION · {calibrationStages.indexOf(stage)+1} / 5</span><strong>{stage==="center"?"Rest comfortably":`Move gently ${stage}`}</strong><span>Hold still. Stay within a comfortable range.</span><progress value={progress} max={1}/></div>}</section>
+    <section data-tauri-drag-region={compact?true:undefined} className={`preview ${camera?"active":""}`} aria-label="Local camera preview"><video ref={video} muted playsInline/>{!compact&&<div className="preview-caption"><span><ShieldCheck size={13}/> Stays on your Mac</span>{camera&&<span>{fps} fps</span>}</div>}{!camera&&<div className="camera-empty"><Camera size={28}/><span>Your camera is off</span>{!compact&&<small>It starts when you calibrate or resume.</small>}</div>}{compact&&error&&<p className="compact-error" role="alert">{error}</p>}{stage&&<div className="calibration"><span className="eyebrow">CALIBRATION · {calibrationStages.indexOf(stage)+1} / 5</span><strong>{stage==="center"?"Rest comfortably":`Move gently ${stage}`}</strong><span>Hold still. Stay within a comfortable range.</span><progress value={progress} max={1}/></div>}</section>
     {!compact&&<>
     <div className="status-row" role="status"><span className={`dot ${camera&&confidence>=0.7?"live":""}`}/><span>{stage?"Learning your movement":camera?(confidence>=0.7?"Movement found":"Move into view"):session.reason}</span><span className="status-meta">{calibrated?"Calibrated":"Setup needed"}</span></div>
     {!status.capabilities.nativeControl&&<p className="notice">Mac native control is available in the installed macOS app. This is a UI preview.</p>}
     {status.capabilities.nativeControl&&pointerEnabled&&!status.capabilities.inputAccess&&<div className="notice"><strong>Allow control of your Mac</strong><p>Allow Handsfree to control your Mac when macOS asks.</p><button onClick={()=>void invoke<boolean>("request_access").then(granted=>granted?undefined:invoke("open_help",{kind:"accessibility"})).catch(fail)}>Allow control access <ArrowUpRight size={14}/></button></div>}
     </>}
-    {error&&<div className="error" role="alert">{error}<button onClick={()=>setError("")} aria-label="Dismiss error">×</button></div>}
+    {error&&!compact&&<div className="error" role="alert">{error}<button onClick={()=>setError("")} aria-label="Dismiss error">×</button></div>}
     <div className="actions"><button className="primary" disabled={busy||!!stage||!status.capabilities.nativeControl||pointerEnabled&&!status.capabilities.inputAccess||compact&&!calibrated} title={compact&&!calibrated?"Open Settings and setup from the menu bar to calibrate":undefined} onClick={()=>void (running?stop():compact||calibrated?start():calibrate()).catch(fail)}>{running?<Square size={18}/>:compact||calibrated?<Play size={18}/>:<ScanFace size={18}/>} {busy?"Preparing…":running?"Stop":compact||calibrated?"Start":"Calibrate & set up"}</button>{!compact&&<button className="stop" disabled={!camera&&!busy} onClick={()=>void stop().catch(fail)}><Square size={17}/>Stop</button>}</div>
     {!compact&&<>
     {stage&&<button className="text-button" onClick={()=>void stop().catch(fail)}>Cancel calibration</button>}

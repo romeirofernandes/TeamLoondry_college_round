@@ -11,6 +11,8 @@ import { amazon } from "./amazon";
 import { spotify } from "./spotify";
 import { netflix } from "./netflix";
 import { x } from "./x";
+import { youtube } from "./youtube";
+import { chatgpt } from "./chatgpt";
 import type { Adapter, SiteId } from "./types";
 export const adapters: Record<SiteId, Adapter> = {
   whatsapp, gmail, meet, linkedin, irctc, maps,
@@ -20,5 +22,7 @@ export const adapters: Record<SiteId, Adapter> = {
   amazon,
   spotify,
   netflix,
+  youtube,
+  chatgpt,
   x,
 };

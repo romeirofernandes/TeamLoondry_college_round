@@ -65,6 +65,6 @@ This cannot promise every site's upload widget works: cross-origin frames, close
 
 ## Verification boundaries
 
-The release includes checksums, Mac validation JSON, a credential-free extension ZIP and live Mac screenshots. The runner validates installation in a path with spaces, updating, preservation, corrupt packages, signatures, startup, framing, origin restriction, session exclusion and the compact renderer. Unit and packaged Chromium tests cover the extension and file transaction failures.
+The release includes checksums, Mac validation JSON, a credential-free extension ZIP and live Mac screenshots. The runner validates installation in a path with spaces, updating, preservation, corrupt packages, signatures, startup, framing, origin restriction, session exclusion and the compact renderer. Unit and packaged Chromium tests cover the extension and file transaction failures. The installed-app smoke also runs real Chromium native messaging with a synthetic camera: permission UI completion/closure must release ownership, browser Start/Stop must release capture, and a killed native host must stop browser capture. These checks do not qualify physical camera accuracy.
 
 Still require a real M4: camera/movement comfort and accuracy; actual pointer events; permission prompts and grants; microphone speech; interactive native file selection; signed-in website upload completion; manual dragging across monitors and fullscreen Spaces; long sleep/wake and daily use. Linux native control is still pending. See [the full app plan](app-docs.md).

@@ -30,3 +30,11 @@ test("voice-only starts without requesting camera or native pointer access",asyn
  await page.goto("/");await expect(page.getByRole("button",{name:"Start",exact:true})).toBeEnabled();await page.getByRole("button",{name:"Start",exact:true}).click();await expect(page.getByRole("heading",{name:"Speak a command."})).toBeVisible();await expect(page.getByText("Your camera is off")).toBeVisible();
  const calls=await page.evaluate(()=>(window as any).calls);expect(calls.find((c:any)=>c.cmd==="start").args.pointerEnabled).toBe(false);expect(calls.some((c:any)=>c.cmd==="voice_start")).toBe(true);expect(calls.some((c:any)=>c.cmd==="capture_allowed")).toBe(false);
 });
+test("a voice startup error stops the session and keeps compact controls visible",async({page})=>{
+ await page.addInitScript(()=>{
+  localStorage.setItem("handsfree-desktop-onboarded","1");localStorage.setItem("handsfree-desktop-v1",JSON.stringify({version:1,enabledInputs:["voice"],calibrations:{}}));
+  (window as any).isTauri=true;let session={phase:"stopped",epoch:0,reason:"Ready",displayId:0};
+  (window as any).__TAURI_INTERNALS__={transformCallback:()=>1,invoke:async(cmd:string)=>{if(cmd==="start")session={...session,phase:"running",epoch:1};if(cmd==="voice_start")throw new Error("Speech helper could not start");if(cmd==="control")session={...session,phase:"stopped",epoch:2};if(cmd==="status")return {session,capabilities:{nativeControl:true,inputAccess:false,displays:[]}};return cmd==="start"||cmd==="control"?session:null;}};
+ });
+ await page.goto("/");await page.getByRole("button",{name:"Start",exact:true}).click();await expect(page.getByRole("alert")).toContainText("Speech helper could not start");await expect(page.getByRole("button",{name:"Start",exact:true})).toBeVisible();await expect(page.locator("main button")).toHaveCount(1);const box=await page.locator("main").boundingBox();expect(box!.height).toBeLessThanOrEqual(310);
+});
