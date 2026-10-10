@@ -5,6 +5,7 @@ export class Tracker {
   private stream:MediaStream|null=null;
   private timer:ReturnType<typeof setInterval>|null=null;
   private generation=0;
+  private cancelInit:(()=>void)|null=null;
   private video:HTMLVideoElement|null=null;
   private pending:Promise<void>|null=null;
   async shutdown(){this.stop();if(this.pending)await this.pending.catch(()=>{});}
@@ -23,10 +24,11 @@ export class Tracker {
     let ready=false,busy=false,lastTime=-1,frameStarted=0;
     await new Promise<void>((resolve,reject)=>{
       const timeout=setTimeout(()=>reject(new Error("Tracking model took too long to load. Stop and retry.")),20000);
+      this.cancelInit=()=>{clearTimeout(timeout);reject(new Error("Camera setup cancelled"));};
       worker.onerror=()=>{clearTimeout(timeout);reject(new Error("Tracking worker failed. Stop and retry."));onError("Tracking worker failed. Stop and retry.");};
       worker.onmessage=event=>{
         if(generation!==this.generation)return;
-        if(event.data.type==="ready"){ready=true;clearTimeout(timeout);resolve();}
+        if(event.data.type==="ready"){ready=true;clearTimeout(timeout);this.cancelInit=null;resolve();}
         if(event.data.type==="point"){busy=false;onPoint(event.data.point,event.data.time);}
         if(event.data.type==="error"){busy=false;clearTimeout(timeout);reject(new Error(event.data.message));onError(event.data.message);}
       };
@@ -43,5 +45,5 @@ export class Tracker {
     stream.getVideoTracks()[0]?.addEventListener("ended",()=>{if(generation===this.generation)onError("Camera disconnected. Stop and reconnect it.");});
     }catch(error){if(generation===this.generation)this.stop();throw error;}
   }
-  stop(){this.generation++;if(this.timer)clearInterval(this.timer);this.timer=null;this.worker?.terminate();this.worker=null;this.stream?.getTracks().forEach(t=>t.stop());this.stream=null;if(this.video)this.video.srcObject=null;}
+  stop(){this.generation++;this.cancelInit?.();this.cancelInit=null;if(this.timer)clearInterval(this.timer);this.timer=null;this.worker?.terminate();this.worker=null;this.stream?.getTracks().forEach(t=>t.stop());this.stream=null;if(this.video)this.video.srcObject=null;}
 }

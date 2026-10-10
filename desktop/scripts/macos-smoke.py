@@ -81,7 +81,7 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as tem
             data=json.dumps(dict(id=kind,type=kind,**values)).encode()
             child.stdin.write(struct.pack("=I",len(data))+data);child.stdin.flush()
             assert select.select([child.stdout],[],[],12)[0], "native host response timed out"
-            header=child.stdout.read(4);assert len(header)==4,"native host closed unexpectedly"
+            header=child.stdout.read(4);assert len(header)==4,"native host closed unexpectedly: "+child.stderr.read().decode()
             size=struct.unpack("=I",header)[0];assert size<=1024*1024
             return json.loads(child.stdout.read(size))
         try:
@@ -123,6 +123,8 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-",dir="/tmp") as tem
             process.terminate()
             try: process.wait(timeout=10)
             except subprocess.TimeoutExpired: process.kill(); process.wait()
+        stdout,stderr=process.communicate()
+        report_path.with_name("native-app.log").write_text(stderr.decode(errors="replace"))
     assert not list(destination.glob(".Handsfree.*"))
     record("installer leaves no staging or backup directories")
 report = {"schemaVersion":2,"artifact":package.name,"sha256":hashlib.sha256(package.read_bytes()).hexdigest(),"checks":checks,"diagnostics":diagnostics,"physicalM4":"pending","cameraTracking":"pending physical device","accessibilityInput":"pending physical device","nativeFileChooser":"pending interactive physical device","nativeVoice":"helper packaged; microphone and permission qualification pending","browserIntegration":"installed native-host transport tested; live Chrome and signed-in sites pending","developerIdSigned":False,"notarized":False}
