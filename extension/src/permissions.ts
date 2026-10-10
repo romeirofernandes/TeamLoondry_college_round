@@ -1,3 +1,4 @@
+import {captureCheck} from "./capture-check";
 import { installLocalSpeech } from "./speech";
 import { send, type PermissionState, type Settings } from "./shared";
 
@@ -66,10 +67,12 @@ for (const id of ["pages", "tabs"] as const) {
   });
 }
 for (const id of ["camera", "microphone"] as const) button(id, async () => {
-  const handoff=await send<{ok:boolean;error?:string}>({type:"PREPARE_BROWSER_CAPTURE"});if(!handoff?.ok)throw new Error(handoff?.error||"Desktop handoff failed. Capture stayed off.");
+  const release=await captureCheck();
+  try{
   const stream = await navigator.mediaDevices.getUserMedia(id === "camera" ? {video:true} : {audio:true});
   stream.getTracks().forEach(track => track.stop());
   return `${id === "camera" ? "Camera" : "Microphone"} allowed. Return to Handsfree when you're ready.`;
+  }finally{await release();}
 });
 button("providers", async () => await chrome.permissions.request({ origins: ["https://api.typesafe.ai/*", "https://openrouter.ai/*"] }) ? "Command service allowed." : "Access was not granted. Fixed commands are still available.");
 button("speech", async () => { const settings = await send<Settings>({ type: "GET_SETTINGS" }); await installLocalSpeech(settings.language); return "Language ready. Return to Handsfree to start listening."; });

@@ -9,7 +9,7 @@ const MAX:usize=1024*1024;
 const FILE_MAX:usize=20*1024*1024;
 #[derive(Default)]
 pub struct Bridge { pub owner:Mutex<Option<u64>>, pub released:(Mutex<bool>,Condvar) }
-fn directory()->Result<std::path::PathBuf,String>{std::env::var_os("HOME").map(|p|std::path::PathBuf::from(p).join(".handsfree")).ok_or("Home directory unavailable".into())}
+fn directory()->Result<std::path::PathBuf,String>{if let Some(value)=std::env::var_os("HANDSFREE_BRIDGE_DIR"){let path=std::path::PathBuf::from(value);if !path.is_absolute(){return Err("Bridge directory must be absolute".into());}return Ok(path);}std::env::var_os("HOME").map(|p|std::path::PathBuf::from(p).join(".handsfree")).ok_or("Home directory unavailable".into())}
 fn read_frame(r:&mut impl Read)->Result<Value,String>{let mut n=[0;4];r.read_exact(&mut n).map_err(|e|e.to_string())?;let n=u32::from_ne_bytes(n) as usize;if n==0||n>MAX{return Err("Invalid native message length".into());}let mut body=vec![0;n];r.read_exact(&mut body).map_err(|e|e.to_string())?;serde_json::from_slice(&body).map_err(|e|e.to_string())}
 fn write_frame(w:&mut impl Write,v:&Value)->Result<(),String>{let body=serde_json::to_vec(v).map_err(|e|e.to_string())?;if body.len()>MAX{return Err("Native response too large".into());}w.write_all(&(body.len() as u32).to_ne_bytes()).and_then(|_|w.write_all(&body)).and_then(|_|w.flush()).map_err(|e|e.to_string())}
 pub fn native_host()->Result<(),String>{
@@ -28,7 +28,7 @@ pub fn register(id:&str)->Result<(),String>{
  let dir=directory()?;std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;std::fs::set_permissions(&dir,std::fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
  let binary=std::env::current_exe().map_err(|e|e.to_string())?;
  let launcher=dir.join("native-host.sh");let escaped=binary.to_string_lossy().replace('\'',"'\\''");
- std::fs::write(&launcher,format!("#!/bin/sh\nexec '{}' --native-host \"$@\"\n",escaped)).map_err(|e|e.to_string())?;
+ std::fs::write(&launcher,format!("#!/bin/sh\nexport HANDSFREE_BRIDGE_DIR='{}'\nexec '{}' --native-host \"$@\"\n",dir.to_string_lossy().replace('\'',"'\\''"),escaped)).map_err(|e|e.to_string())?;
  std::fs::set_permissions(&launcher,std::fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
  std::fs::write(dir.join("extension-id"),id).map_err(|e|e.to_string())?;
  let manifest=json!({"name":"com.handsfree.desktop","description":"Handsfree session and file chooser bridge","path":launcher,"type":"stdio","allowed_origins":[format!("chrome-extension://{id}/")]});

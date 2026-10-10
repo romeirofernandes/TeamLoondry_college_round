@@ -120,7 +120,7 @@ pub fn run(){
             });
             Ok(())
         })
-        .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{..}=event{speech::stop(window.app_handle());if let Ok(mut s)=window.state::<Core>().lock(){s.stop();}}})
+        .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{api.prevent_close();speech::stop(window.app_handle());if let Ok(mut s)=window.state::<Core>().lock(){let _=window.emit("session",s.stop());}let _=window.hide();}})
         .run(tauri::generate_context!()).expect("Could not start Handsfree");
 }
 

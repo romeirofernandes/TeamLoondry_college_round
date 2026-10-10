@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
+const capturePort=()=>{let receive:(m:any)=>void=()=>{};return {onMessage:{addListener:(f:any)=>{receive=f;queueMicrotask(()=>f({ok:true}));}},onDisconnect:{addListener:vi.fn()},postMessage:()=>queueMicrotask(()=>receive({released:true})),disconnect:vi.fn()};};
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -11,7 +12,7 @@ it("reflects denied, granted and externally revoked permissions instead of the c
   const devices = { camera: { state: "granted", addEventListener: vi.fn() }, microphone: { state: "denied", addEventListener: vi.fn() } };
   vi.stubGlobal("navigator", { permissions: { query: vi.fn(async ({ name }: { name: "camera" | "microphone" }) => devices[name]) } });
   vi.stubGlobal("chrome", {
-    runtime: { sendMessage: vi.fn(async (message: { type: string }) => message.type === "GET_PERMISSIONS" ? { pages, tabs: false, provider: true } : { ok: true }) },
+    runtime: {connect:capturePort, sendMessage: vi.fn(async (message: { type: string }) => message.type === "GET_PERMISSIONS" ? { pages, tabs: false, provider: true } : { ok: true }) },
     permissions: {
       request: vi.fn(async () => { pages = grant; return grant; }),
       remove: vi.fn(async () => { pages = false; return true; }),
@@ -40,7 +41,7 @@ it("requests only a selected microphone and releases the permission-check stream
   vi.stubGlobal("location", {search:"?kind=devices&camera=false&microphone=true&return=%23setup"});
   const stop = vi.fn(); const getUserMedia = vi.fn(async () => ({getTracks:()=>[{stop}]}));
   vi.stubGlobal("navigator", {mediaDevices:{getUserMedia},permissions:{query:vi.fn(async()=>({state:"prompt",addEventListener:vi.fn()}))}});
-  vi.stubGlobal("chrome",{runtime:{sendMessage:vi.fn(async(message)=>message.type==="PREPARE_BROWSER_CAPTURE"?{ok:true}:{pages:false,tabs:false,provider:false})},permissions:{onAdded:{addListener:vi.fn()},onRemoved:{addListener:vi.fn()}}});
+  vi.stubGlobal("chrome",{runtime:{connect:capturePort,sendMessage:vi.fn(async(message)=>message.type==="PREPARE_BROWSER_CAPTURE"?{ok:true}:{pages:false,tabs:false,provider:false})},permissions:{onAdded:{addListener:vi.fn()},onRemoved:{addListener:vi.fn()}}});
   await import("../src/permissions");await flush();
   expect(document.querySelector<HTMLElement>('[data-kind="camera"]')!.hidden).toBe(true);
   expect(document.querySelector<HTMLElement>('[data-kind="microphone"]')!.hidden).toBe(false);
