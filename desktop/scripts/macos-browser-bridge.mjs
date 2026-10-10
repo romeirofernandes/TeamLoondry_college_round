@@ -1,6 +1,6 @@
 /** Exercise the packaged extension and installed app through real Chrome pipes. */
 import {createRequire} from 'node:module';
-import {mkdtemp,cp,readFile,writeFile,rm,unlink} from 'node:fs/promises';
+import {mkdtemp,mkdir,cp,readFile,writeFile,rm,unlink} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import {createServer} from 'node:http';
 import path from 'node:path';
@@ -10,7 +10,7 @@ const {chromium}=require('@playwright/test');
 const binary=process.argv[2],bridgeDir=process.env.HANDSFREE_BRIDGE_DIR;
 if(process.platform!=='darwin'||!binary||!bridgeDir)throw Error('This check needs the installed Mac app and isolated bridge directory.');
 const temporary=await mkdtemp(path.join(os.tmpdir(),'handsfree-chrome-'));
-const registries=['Google/Chrome','Google/Chrome for Testing','Microsoft Edge','Chromium'].map(browser=>path.join(os.homedir(),'Library/Application Support',browser,'NativeMessagingHosts/com.handsfree.desktop.json'));
+const registries=['Google/Chrome','Google/ChromeForTesting','Microsoft Edge','Chromium'].map(browser=>path.join(os.homedir(),'Library/Application Support',browser,'NativeMessagingHosts/com.handsfree.desktop.json'));
 const previous=new Map();for(const file of registries){previous.set(file,await readFile(file).catch(()=>null));}
 const idFile=path.join(bridgeDir,'extension-id'),launcher=path.join(bridgeDir,'native-host.sh');
 const oldId=await readFile(idFile),oldLauncher=await readFile(launcher);
@@ -26,8 +26,10 @@ try{
  const worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker');
  const id=new URL(worker.url()).host;
  execFileSync(binary,['--register-extension',id],{env:process.env});
- // Playwright distributes Chrome for Testing, whose host registry differs from normal Chrome.
- await writeFile(registries[1],await readFile(registries[0])).catch(async()=>{const {mkdir}=await import('node:fs/promises');await mkdir(path.dirname(registries[1]),{recursive:true});await writeFile(registries[1],await readFile(registries[0]));});
+ // The test browser uses --user-data-dir; Chrome looks inside that profile for user-level hosts.
+ const profileHosts=path.join(temporary,'profile','NativeMessagingHosts');
+ await mkdir(profileHosts,{recursive:true});
+ await writeFile(path.join(profileHosts,'com.handsfree.desktop.json'),await readFile(registries[0]));
  const shellQuote=value=>"'"+value.replaceAll("'","'\\''")+"'";
  // A PID marker belongs only to this isolated generated launcher, not the distributed app.
  const source=await readFile(launcher,'utf8');await writeFile(launcher,source.replace('#!/bin/sh\n',`#!/bin/sh\necho $$ > ${shellQuote(path.join(bridgeDir,'chrome-native-host.pid'))}\n`));
