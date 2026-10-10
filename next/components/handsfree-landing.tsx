@@ -21,46 +21,46 @@ import {
 
 const modes = [
   {
-    name: "Voice",
-    icon: Microphone,
-    action: "Say it. Do it.",
+    name: "Face movements",
+    icon: HeadCircuit,
+    action: "Your head leads the way.",
     description:
-      "Click, scroll, open links, and put your thoughts into words. A few words can take you a long way.",
-    capability: "Navigate + dictate",
+      "Guide an in-page cursor with head movements. Smoothing filters small shakes, while slow posture adaptation keeps your neutral position comfortable.",
+    capability: "Primary pointer · adjustable sensitivity",
   },
   {
     name: "Hand gestures",
     icon: HandWaving,
-    action: "A little movement. A new direction.",
+    action: "Broad movements. Clear intentions.",
     description:
-      "Guide the cursor with deliberate hand movements. Point and select in a way that feels natural to you.",
-    capability: "Point + select",
+      "Use broad hand movements as a second pointer, then hold to confirm. No pinch or precise finger control required.",
+    capability: "Point + hold · no pinch required",
   },
   {
-    name: "Face movements",
-    icon: HeadCircuit,
-    action: "Go at your own pace.",
+    name: "Voice",
+    icon: Microphone,
+    action: "Say where you want to go.",
     description:
-      "Move your face to guide the cursor. Adjustable sensitivity is designed to work with your range of movement.",
-    capability: "Move + navigate",
+      "Say “scroll down,” “click this,” or “next tab.” Start typing to dictate into a field; dictation stays separate from navigation commands.",
+    capability: "Navigate + dictate · confirm to submit",
   },
 ];
 
 const steps = [
   {
-    title: "Get comfortable.",
+    title: "Start from Chrome.",
     description:
-      "Your usual position. Your everyday webcam and microphone. Nothing special to buy.",
+      "Open the extension popup. Camera and microphone permissions come with a plain explanation and a live preview. If camera access is denied, keep going with voice.",
   },
   {
-    title: "Make it feel like you.",
+    title: "Set your comfortable range.",
     description:
-      "Choose your control mode and adjust sensitivity. Quick calibration is designed to take under 30 seconds.",
+      "Calibrate your neutral position and movement range, with a setup goal of under 30 seconds. Adjust sensitivity and dwell time, or recalibrate in one click.",
   },
   {
-    title: "Find your way around.",
+    title: "Point. Confirm. Browse.",
     description:
-      "Speak, gesture, or move your face. Combine the modes and pause whenever you need a moment.",
+      "The cursor snaps to a link, button, or input and highlights the target. Hold for dwell selection or say “click this.” Instant pause stops pointing, voice, and dictation together.",
   },
 ];
 
@@ -68,27 +68,37 @@ const faq = [
   {
     question: "Who is Handsfree for?",
     answer:
-      "Anyone who finds a mouse or keyboard difficult or uncomfortable to use, including people with motor impairments, temporary injuries, or repetitive strain. Handsfree is being designed around different needs and different ways of moving.",
+      "People who find mouse and keyboard input difficult because of motor limits, injury, or strain. The planned Chrome extension combines head movement, broad hand gestures, and voice without specialist hardware.",
   },
   {
-    question: "Do I need any special equipment?",
+    question: "What stays on my device?",
     answer:
-      "The planned experience uses a standard webcam and microphone, including the ones built into your laptop. No dedicated tracking device is part of the design.",
+      "The spec keeps camera frames and audio on your machine. Calibration, settings, and run logs stay local. Optional arbitrary find sends only link text and your phrase to an LLM; it requires a locally stored key and is disabled without one. Handsfree has no backend or cloud store.",
   },
   {
-    question: "How will accidental clicks be prevented?",
+    question: "What can I say?",
     answer:
-      "Moving the cursor should not click anything on its own. Adjustable dwell selection, deliberate gestures, and voice confirmation are designed to make each action intentional.",
+      "Core commands include “scroll up,” “scroll down,” “go back,” “go forward,” “click this,” “open this,” “start typing,” and “stop typing.” Tab commands cover new tabs, background searches, next or previous tab, switching by title, and Chrome history, downloads, settings, or incognito. Closing a tab requires confirmation. Unknown phrases show what was heard and take no action.",
   },
   {
-    question: "Can I install or use Handsfree yet?",
+    question: "How does “find careers page” work?",
     answer:
-      "Handsfree is in development. This page introduces the project. The browser extension, camera tracking, and speech controls are still being built.",
+      "Optional arbitrary find checks the live page, including content outside the viewport, then scrolls to and highlights a match. It asks you to choose when matches tie and takes no action when nothing matches. A missing key disables this feature with a clear message; fixed voice commands do not use an LLM.",
   },
   {
-    question: "What about lighting and background noise?",
+    question: "Will dictated text submit a form?",
     answer:
-      "Adapting to lighting, posture, and background noise is a project goal. We plan to evaluate reliability, command accuracy, task completion time, selection errors, and accidental activations in real conditions.",
+      "No. Dictation only inserts text and never runs navigation commands. You explicitly stop typing, make manual corrections, and separately confirm submission. Wake-word activation and automatic form filling are later work, not part of the core experience.",
+  },
+  {
+    question: "Where will Handsfree work?",
+    answer:
+      "Inside supported webpages in Chrome. It does not control your operating system, and protected browser pages show a clear out-of-scope message. Read aloud and wake-word activation are deferred; offline speech is not promised.",
+  },
+  {
+    question: "Can I use the extension yet?",
+    answer:
+      "This is the project landing page, not the extension. The controls described here reflect the spec and are still planned. This website does not activate your camera or microphone.",
   },
 ];
 
@@ -107,8 +117,8 @@ export default function HandsfreeLanding() {
         >
           <div className="hero-copy">
             <p className="hero-eyebrow">
-              <span className="eyebrow-line" aria-hidden="true" />
-              The web, on your terms.
+              <span className="eyebrow-line" aria-hidden="true" />A Chrome
+              extension. Built around you.
             </p>
             <h1 id="hero-heading">
               Less clicking.
@@ -116,8 +126,8 @@ export default function HandsfreeLanding() {
               <span>More living.</span>
             </h1>
             <p className="hero-description">
-              Browse with your voice, hand gestures, or face movements. Find the
-              way that works for you.
+              Point with face movements or hand gestures. Navigate and dictate
+              with your voice. One considered way to browse in Chrome.
             </p>
             <div className="hero-actions">
               <Button asChild size="lg">
@@ -179,8 +189,8 @@ export default function HandsfreeLanding() {
               <span className="muted-heading">More ways in.</span>
             </h2>
             <p>
-              Choose what feels right. Mix things up. Handsfree is designed to
-              meet you where you are.
+              Face movements lead. Broad hand gestures offer another pointer.
+              Voice turns your intention into an action.
             </p>
           </div>
           <div className="mode-list">
@@ -215,13 +225,13 @@ export default function HandsfreeLanding() {
           <div className="freedom-copy">
             <HandWaving size={44} weight="duotone" aria-hidden="true" />
             <h2 id="freedom-heading">
-              Different needs.
+              You point.
               <br />
-              Same possibilities.
+              You decide.
             </h2>
             <p>
-              For motor impairments, an injury, or simply a little less strain.
-              The web should fit your life.
+              A highlighted target makes the next action clear. Selection stays
+              deliberate, even when movement is uncertain.
             </p>
           </div>
           <div className="freedom-details">
@@ -229,16 +239,19 @@ export default function HandsfreeLanding() {
               <ShieldCheck size={28} aria-hidden="true" />
               <h3>Every action, intentional.</h3>
               <p>
-                Dwell selection, deliberate gestures, and voice confirmation.
-                Designed to keep accidental clicks out of your way.
+                A visible dwell ring gives you time to decide, with a default
+                around 800 ms. Moving away cancels it. Low tracking confidence
+                blocks dwell and hand confirmation; tracking loss freezes the
+                cursor.
               </p>
             </div>
             <div>
               <SlidersHorizontal size={28} aria-hidden="true" />
-              <h3>Your comfort sets the pace.</h3>
+              <h3>A pause means everything pauses.</h3>
               <p>
-                Adjustable sensitivity, a choice of controls, and the freedom to
-                pause. You decide what works for you.
+                Instant pause stops the cursor, voice, and dictation together.
+                Closing a tab and submitting a form always need a separate
+                confirmation.
               </p>
             </div>
           </div>
@@ -260,7 +273,7 @@ export default function HandsfreeLanding() {
               move.
             </p>
             <span className="planned-note">
-              The planned browser experience.
+              Planned Chrome extension · in development.
             </span>
           </div>
           <ol className="setup-steps">
@@ -289,7 +302,10 @@ export default function HandsfreeLanding() {
               <br />
               <span className="muted-heading">Clear answers.</span>
             </h2>
-            <p>A quick guide to Handsfree, and what comes next.</p>
+            <p>
+              Privacy, voice commands, and the boundaries of the planned
+              extension.
+            </p>
           </div>
           <Accordion type="single" collapsible>
             {faq.map((item, index) => (

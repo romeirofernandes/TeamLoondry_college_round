@@ -56,7 +56,7 @@ const spaceGrotesk = localFont({
 export const metadata: Metadata = {
   title: "Handsfree · The web, on your terms.",
   description:
-    "Meet Handsfree: accessible browsing through voice, hand gestures, and face movements, using your everyday webcam and microphone. Your web, on your terms.",
+    "Handsfree is a planned Chrome extension for browsing with face movements, broad hand gestures, and voice. Intentional selection, separate dictation, and local tracking.",
   icons: {
     icon: [
       { url: "/brand/handsfree-icon.svg", type: "image/svg+xml" },
