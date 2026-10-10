@@ -833,3 +833,72 @@ describe("legacy preference migration and wake named clicks", () => {
     expect(browser.tabs.sendMessage.mock.calls.some(([,m]) => m.type === "PAGE_ACTION")).toBe(false);
   });
 });
+
+describe("trusted selected-link tab authorization", () => {
+  async function selected(url = "https://example.test/second", valid = true) {
+    const env = await setup();
+    const original = env.browser.tabs.sendMessage.getMockImplementation()!;
+    env.browser.tabs.sendMessage.mockImplementation(async (id, message) => {
+      if (message.type === "PAGE_ACTION" && message.intent.type === "click-link") return { ok: true, link: { id: "link-2", url, pageUrl: "https://example.test/" } };
+      if (message.type === "VALIDATE_LINK") return { ok: valid };
+      return original(id, message);
+    });
+    return env;
+  }
+  it("opens a revalidated selected link in background without retargeting", async () => {
+    const { browser, send } = await selected();
+    await send({ type: "HEARD", text: "open the second result in a background tab" });
+    expect(browser.tabs.create).toHaveBeenCalledExactlyOnceWith({ url: "https://example.test/second", active: false });
+    expect((await send({ type: "GET_STATE" })).targetTabId).toBe(1);
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: "VALIDATE_LINK", id: "link-2", url: "https://example.test/second", pageUrl: "https://example.test/" });
+  });
+  it.each(["javascript:alert(1)", "data:text/html,bad", "chrome://settings", "file:///tmp/test", "https://user:pass@example.test/"])("rejects unsafe selected URL %s", async url => {
+    const { browser, send } = await selected(url);
+    await send({ type: "HEARD", text: "open first link in a new tab" });
+    expect(browser.tabs.create).not.toHaveBeenCalled();
+  });
+  it("does not open when content invalidates the selected destination", async () => {
+    const { browser, send } = await selected(undefined, false);
+    await send({ type: "HEARD", text: "open first link in a new tab" });
+    expect(browser.tabs.create).not.toHaveBeenCalled();
+  });
+  it("cancels tab opening if navigation occurs during revalidation", async () => {
+    const { browser, send } = await selected();
+    let release!: (value: any) => void;
+    const original = browser.tabs.sendMessage.getMockImplementation()!;
+    browser.tabs.sendMessage.mockImplementation(async (id, message) => message.type === "VALIDATE_LINK" ? new Promise(resolve => { release = resolve; }) : original(id, message));
+    const pending = send({ type: "HEARD", text: "open first link in a new tab" });
+    for (let i = 0; i < 100 && !release; i++) await Promise.resolve();
+    expect(release).toBeTypeOf("function");
+    const update = browser.tabs.onUpdated.addListener.mock.calls[0][0] as any;
+    await update(1, { status: "loading", url: "https://example.test/new" });
+    release({ ok: true }); await pending;
+    expect(browser.tabs.create).not.toHaveBeenCalled();
+  });
+  it.each(["ACTION", "HEARD"] as const)("cancels authorization when %s cancel arrives during revalidation", async source => {
+    const { browser, send } = await selected();
+    let release!: (value: any) => void;
+    const original = browser.tabs.sendMessage.getMockImplementation()!;
+    browser.tabs.sendMessage.mockImplementation(async (id, message) => message.type === "VALIDATE_LINK" ? new Promise(resolve => { release = resolve; }) : original(id, message));
+    const pending = send({ type: "HEARD", text: "open first link in a new tab" });
+    for (let i = 0; i < 100 && !release; i++) await Promise.resolve();
+    expect(release).toBeTypeOf("function");
+    const cancelling = send(source === "ACTION" ? { type: "ACTION", intent: { type: "cancel" } } : { type: "HEARD", text: "cancel" });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    release({ ok: true }); await pending; await cancelling;
+    expect(browser.tabs.create).not.toHaveBeenCalled();
+  });
+  it("rejects page-initiated navigation intents and exposes counts only", async () => {
+    const { browser, send } = await selected();
+    expect(await send({ type: "ACTION", intent: { type: "click-link", index: 1, disposition: "background" } }, pageSender(1))).toMatchObject({ ok: false });
+    expect(browser.tabs.create).not.toHaveBeenCalled();
+    await send({ type: "SAVE_PROVIDERS", jevKey: "dummy-old", jevKeys: ["dummy-old", "dummy-new"] });
+    const status = await send({ type: "GET_PROVIDER_STATUS" });
+    expect(status.jevKeyCount).toBe(2);
+    expect(JSON.stringify(status)).not.toContain("dummy");
+    await send({ type: "SAVE_PROVIDERS", jevKey: "dummy-third" });
+    expect((await send({ type: "GET_PROVIDER_STATUS" })).jevKeyCount).toBe(3);
+    await send({ type: "SAVE_PROVIDERS", jevKey: "" });
+    expect((await send({ type: "GET_PROVIDER_STATUS" })).jevKeyCount).toBe(0);
+  });
+});

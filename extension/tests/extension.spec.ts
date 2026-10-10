@@ -437,3 +437,65 @@ test("visible aria-hidden YouTube thumbnails retain dwell across the title area"
     expect(await page.evaluate(() => location.pathname)).toBe("/");
   } finally { await message({ type: "SAVE_SETTINGS", settings: original }); }
 });
+
+test("final transcripts navigate generic result links and focus fields without pointer samples", async () => {
+  await message({ type: "OFFSCREEN_COMMAND", command: "pause" });
+  const originalPage = page;
+  const opened: Page[] = [];
+  // Replace only the search network response with a localhost fixture redirect.
+  const searchPattern = "https://www.google.com/search?**";
+  await context.route(searchPattern, route => route.fulfill({ status: 302, headers: { location: "http://127.0.0.1:4177/results?q=accessible%20design" } }));
+  try {
+    const searchOpened = context.waitForEvent("page");
+    await heard("search for accessible design");
+    page = await searchOpened; opened.push(page);
+    await page.waitForURL("**/results?q=accessible%20design");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("click the first link");
+    await page.waitForURL("**/second");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("go back");
+    await page.waitForURL("**/results?q=accessible%20design");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("click the ChatGPT link");
+    await page.waitForURL("**/second");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("go back");
+    await page.waitForURL("**/results?q=accessible%20design");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("click the second result");
+    await page.waitForURL("**/guide");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    await heard("go back");
+    await page.waitForURL("**/results?q=accessible%20design");
+    await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+    const before = await message({ type: "GET_STATE" });
+    const foregroundOpened = context.waitForEvent("page");
+    await heard("open the first link in a new tab");
+    const foreground = await foregroundOpened; opened.push(foreground);
+    await foreground.waitForURL("**/second");
+    await expect.poll(async () => (await message({ type: "GET_STATE" })).targetTabId).not.toBe(before.targetTabId);
+    await heard("go to tab generic fixture results");
+    await expect.poll(async () => (await message({ type: "GET_STATE" })).targetTabId).toBe(before.targetTabId);
+    const backgroundOpened = context.waitForEvent("page");
+    await heard("open the second result in a background tab");
+    const background = await backgroundOpened; opened.push(background);
+    await background.waitForURL("**/guide");
+    expect((await message({ type: "GET_STATE" })).targetTabId).toBe(before.targetTabId);
+    const active = await worker.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0].id);
+    expect(active).toBe(before.targetTabId);
+    await heard("focus the search box");
+    await expect(page.locator("#result-search")).toBeFocused();
+    await expect(page.locator("#result-search")).toHaveValue("");
+    await heard("show links");
+    await expect(page.locator("#handsfree-assist-overlay .choice")).toHaveCount(2);
+    await heard("choose two");
+    expect(new URL(page.url()).pathname).toBe("/results");
+    await heard("click this");
+    await page.waitForURL("**/guide");
+  } finally {
+    await context.unroute(searchPattern);
+    page = originalPage;
+    for (const tab of opened.reverse()) if (!tab.isClosed()) await tab.close();
+  }
+});

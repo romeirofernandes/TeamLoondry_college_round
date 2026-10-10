@@ -4,10 +4,11 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 const root = path.resolve(import.meta.dirname, "..");
 const dist = path.join(root, "dist");
-let providerConfig = { groqKeys: [], jevKey: "" };
+let providerConfig = { groqKeys: [], jevKey: "", jevKeys: [] };
 try {
   providerConfig = JSON.parse(await readFile(path.join(root, "config/providers.local.json"), "utf8"));
-  if (!Array.isArray(providerConfig.groqKeys) || providerConfig.groqKeys.length > 5 || providerConfig.groqKeys.some(key => typeof key !== "string")) throw new Error("Expected at most five Groq keys.");
+  if (!Array.isArray(providerConfig.groqKeys) || providerConfig.groqKeys.length > 4 || providerConfig.groqKeys.some(key => typeof key !== "string")) throw new Error("Expected at most four Groq keys.");
+  if (providerConfig.jevKey !== undefined && typeof providerConfig.jevKey !== "string" || providerConfig.jevKeys !== undefined && (!Array.isArray(providerConfig.jevKeys) || providerConfig.jevKeys.some(key => typeof key !== "string"))) throw new Error("Invalid Jev configuration.");
 } catch (error) {
   if (error.code !== "ENOENT") throw new Error("Invalid local provider configuration. Check config/providers.local.json.");
 }

@@ -149,6 +149,7 @@ describe("page interactions", () => {
     const submit = vi.fn((event) => event.preventDefault());
     document.getElementById("form")!.addEventListener("submit", submit);
     await find("submit");
+    vi.mocked(document.elementFromPoint).mockReturnValue(document.getElementById("submit"));
     await action("click");
     expect(submit).not.toHaveBeenCalled();
     await action("confirm");
@@ -162,6 +163,7 @@ describe("page interactions", () => {
     const submit = vi.fn((event) => event.preventDefault());
     document.getElementById("form")!.addEventListener("submit", submit);
     await find("submit");
+    vi.mocked(document.elementFromPoint).mockReturnValue(document.getElementById("submit"));
     await action("click");
     time = 10001;
     await action("confirm");
@@ -456,6 +458,7 @@ describe('named targets and safe page answers', () => {
     document.body.insertAdjacentHTML('beforeend', '<button id="literal">C++ (Guide)</button><button id="broader">C++ (Guide) archive</button><button hidden>C++ (Guide)</button>');
     const clicked: string[] = [];
     for (const id of ['literal', 'broader']) document.getElementById(id)!.addEventListener('click', () => clicked.push(id));
+    vi.mocked(document.elementFromPoint).mockReturnValue(document.getElementById('literal'));
     await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'click-target', query: 'C++ (Guide)' } });
     expect(clicked).toEqual(['literal']);
   });
@@ -467,6 +470,7 @@ describe('named targets and safe page answers', () => {
     expect(submitted).not.toHaveBeenCalled();
     expect(sent.some(m => m.type === 'SET_STATE' && m.patch.feedback?.includes('Several targets'))).toBe(true);
     await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'choose', index: 1 } });
+    vi.mocked(document.elementFromPoint).mockReturnValue(document.getElementById('submit'));
     await action('click');
     expect(submitted).not.toHaveBeenCalled();
     await action('confirm');
@@ -476,6 +480,7 @@ describe('named targets and safe page answers', () => {
     document.body.insertAdjacentHTML('beforeend', '<button id="substring">Supporter</button><button id="word">Get support</button><button id="pattern">Anything</button>');
     const clicked: string[] = [];
     for (const id of ['substring', 'word', 'pattern']) document.getElementById(id)!.addEventListener('click', () => clicked.push(id));
+    vi.mocked(document.elementFromPoint).mockReturnValue(document.getElementById('word'));
     await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'click-target', query: 'support' } });
     await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'click-target', query: '.*' } });
     expect(clicked).toEqual(['word']);
@@ -508,6 +513,7 @@ describe('literal ranking boundaries', () => {
     document.body.insertAdjacentHTML('beforeend', '<button id="later-word">Supporters get support</button><button id="substring-only">Supporter</button><button id="private-label" data-private>Support</button>');
     const clicked: string[] = [];
     for (const id of ['later-word', 'substring-only', 'private-label']) document.getElementById(id)!.addEventListener('click', () => clicked.push(id));
+    vi.mocked(document.elementFromPoint).mockReturnValue(document.getElementById('later-word'));
     await runtime.handle({ type: 'PAGE_ACTION', intent: { type: 'click-target', query: 'support' } });
     expect(clicked).toEqual(['later-word']);
   });

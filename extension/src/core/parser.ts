@@ -12,6 +12,7 @@ export function normalizeSpeech(text: string): string {
 }
 
 const fixed: Record<string, Intent> = {
+  "show links": { type: "show-links" },
   "scroll up": { type: "scroll", direction: "up" },
   "scroll down": { type: "scroll", direction: "down" },
   "go back": { type: "back" },
@@ -98,9 +99,22 @@ export function parseIntent(text: string): Intent {
     if (query && query !== "for") return { type: "search", query, background };
   }
 
-  const namedTarget = /^(?:click(?: on)?|open) (.+)$/.exec(normalized);
+  const navigation = normalized.replace(/^(?:(?:could|can|would) you )?(?:please )?/, "").replace(/ please$/, "");
+  const focus = /^focus (?:on )?(?:the )?(.+)$/.exec(navigation);
+  if (focus) return { type: "focus-target", query: focus[1].replace(/^search (?:box|field)$/, "search") };
+  if (navigation === "show links" || navigation === "show the links") return { type: "show-links" };
+  const suffix = / in (?:(?:a|the) )?(background(?: (?:new )?tab)?|new tab)(?: in (?:the )?background)?$/.exec(navigation);
+  const disposition = suffix ? (suffix[1].startsWith("background") || suffix[0].endsWith("background") ? "background" : "new-tab") as "background" | "new-tab" : undefined;
+  const command = suffix ? navigation.slice(0, suffix.index) : navigation;
+  const ordinal = /^(?:click(?: on)?|open) (?:the )?(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|[1-9](?:st|nd|rd|th)?|10(?:th)?) (?:link|result)$/.exec(command);
+  if (ordinal) {
+    const names = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
+    const index = /^\d/.test(ordinal[1]) ? parseInt(ordinal[1], 10) : names.indexOf(ordinal[1]) + 1;
+    return { type: "click-link", index, ...(disposition ? { disposition } : {}) };
+  }
+  const namedTarget = /^(?:click(?: on)?|open) (.+)$/.exec(command);
   if (namedTarget && !/^(?:this|that|it)(?: |$)/.test(namedTarget[1]))
-    return { type: "click-target", query: namedTarget[1] };
+    return { type: "click-target", query: namedTarget[1], ...(disposition ? { disposition } : {}) };
 
   return { type: "unknown", heard: text.trim() };
 }

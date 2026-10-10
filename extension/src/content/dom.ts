@@ -146,6 +146,25 @@ export function editable(element: HTMLElement | null): boolean {
   );
 }
 
+/** Additional voice privacy rules do not alter native pointer hit targets. */
+export function voiceUsable(element: Element): element is HTMLElement {
+  return usable(element) && !sensitive(element) && !element.closest('[aria-hidden="true"],[data-private],[data-handsfree-ignore]');
+}
+export function voiceExposed(element: HTMLElement): boolean {
+  if (!element.isConnected || !voiceUsable(element)) return false;
+  const box = element.getBoundingClientRect();
+  const left = Math.max(0, box.left), right = Math.min(innerWidth, box.right);
+  const top = Math.max(0, box.top), bottom = Math.min(innerHeight, box.bottom);
+  if (right <= left || bottom <= top) return false;
+  const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+  return !!hit && (hit === element || element.contains(hit));
+}
+export function linkUrl(element: HTMLElement): string | null {
+  const raw = element.getAttribute("href");
+  if (!raw) return null;
+  try { const url = new URL(raw, document.baseURI); return /^https?:$/.test(url.protocol) && !url.username && !url.password ? url.href : null; } catch { return null; }
+}
+
 export function submitControl(element: HTMLElement): boolean {
   return (
     (element instanceof HTMLButtonElement &&
@@ -276,11 +295,39 @@ export class PageTargets {
         role: element.getAttribute("role") || element.tagName.toLowerCase(),
       }));
   }
+  /** Fresh top-document voice candidates; pointer indexing is intentionally independent. */
+  links(): string[] {
+    const links = Array.from(document.querySelectorAll('a[href],[role="link"]')).filter(voiceUsable).slice(0, 1500);
+    const outsideNavigation = (element: HTMLElement) => !element.closest('nav,header,footer,[role="navigation"],[role="menu"],[role="menubar"],[role="contentinfo"],[role="banner"]');
+    const headings = links.filter(element => outsideNavigation(element) && (element.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]') || element.closest('h1,h2,h3,h4,h5,h6,[role="heading"]')));
+    const mainHeadings = headings.filter(element => element.closest('main,[role="main"]'));
+    const ranked = mainHeadings.length ? mainHeadings : headings.length ? headings : links;
+    const seen = new Set<string>();
+    return ranked.filter(element => {
+      const href = linkUrl(element);
+      if (!href) return true; // Role links can perform DOM activation without an href.
+      if (seen.has(href)) return false;
+      seen.add(href); return true;
+    }).map(element => this.id(element));
+  }
+  fields(query: string): string[] {
+    const candidates = Array.from(document.querySelectorAll(interactiveSelector)).filter(voiceUsable).filter(editable);
+    const needle = query.normalize("NFKC").toLowerCase().trim();
+    const exact = candidates.filter(element => targetLabel(element).toLowerCase() === needle);
+    const matches = exact.length ? exact : needle === "search" ? candidates.filter(element => element.matches('input[type="search"],[role="searchbox"]') || /\bsearch\b/i.test(targetLabel(element))) : candidates.filter(element => targetLabel(element).toLowerCase().includes(needle));
+    return needle ? matches.slice(0, 10).map(element => this.id(element)) : [];
+  }
   named(query: string): string[] {
+    const literal = this.matchName(query);
+    if (literal.length) return literal;
+    const stripped = query.replace(/^the\s+/i, "").replace(/\s+(?:link|button|control)$/i, "");
+    return stripped === query ? [] : this.matchName(stripped);
+  }
+  private matchName(query: string): string[] {
     const normalize = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
     const needle = normalize(query);
     if (!needle || needle.length > 500) return [];
-    const ranked = this.scan().map(target => {
+    const ranked = this.scan().filter(target => { const element = this.get(target.id); return !!element && voiceUsable(element); }).map(target => {
       const label = normalize(target.text);
       const offset = label.indexOf(needle);
       if (offset < 0) return { id: target.id, score: 0 };

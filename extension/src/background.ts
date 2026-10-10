@@ -12,15 +12,16 @@ import {
 } from "./shared";
 import { parseIntent } from "./core/parser";
 import { bundledProviders } from "./provider-config";
-import { mapCommand, resolveArbitrary, transcribeAudio } from "./providers";
+import { mapCommand, resolveArbitrary, transcribeAudio, jevKeys } from "./providers";
 import { rankTabs, adjacentTabId } from "./core/ranking";
 import { appendMetric, summarizeMetrics } from "./core/metrics";
 
 let state: SessionState = { ...initialState };
 let settings: Settings = { ...defaults };
 let pageRevision = 0;
+let linkAuthorizationRevision = 0;
 let controllerTabId: number | null = null;
-let providers: { groqKeys?: string[]; jevKey?: string } = {};
+let providers: { groqKeys?: string[]; jevKey?: string; jevKeys?: string[] } = {};
 let dashboardTabs = new Set<number>();
 let creatingOffscreen: Promise<void> | null = null;
 let lastBroadcast = 0;
@@ -30,7 +31,14 @@ const keyIndexStore = {
   async set(next: number) { await chrome.storage.local.set({ groqKeyIndex: next }); },
 };
 function groqOptions() { return { groqKeys: (providers.groqKeys ?? bundledProviders.groqKeys).slice(0, 4), groqModel: "qwen/qwen3.8-27b", keyIndexStore }; }
-function jevOptions() { return { jevKey: providers.jevKey ?? bundledProviders.jevKey, jevProvider: settings.jevProvider, language: settings.language }; }
+const jevKeyIndexStore = {
+  async get(): Promise<number> { const value = (await chrome.storage.local.get("jevKeyIndex")).jevKeyIndex; return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0; },
+  async set(next: number) { await chrome.storage.local.set({ jevKeyIndex: next }); },
+};
+function jevOptions() {
+  const configured = providers.jevKey !== undefined || providers.jevKeys !== undefined ? providers : bundledProviders;
+  return { jevKey: configured.jevKey ?? "", jevKeys: configured.jevKeys ?? [], jevKeyIndexStore, jevProvider: settings.jevProvider, language: settings.language };
+}
 function isDashboard(url?: string) {
   try { const candidate = new URL(url || ""); const configured = new URL(settings.dashboardUrl); return candidate.origin === configured.origin && candidate.pathname === configured.pathname; } catch { return false; }
 }
@@ -419,6 +427,7 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     return;
   }
   if (intent.type === "cancel") {
+    linkAuthorizationRevision++;
     pendingClose = null;
     tabChoices = [];
     await page({ type: "PAGE_ACTION", intent });
@@ -471,7 +480,24 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     await providerWork(signal => arbitraryFind(intent.query, signal));
     return;
   }
+  const snapshotTab = state.targetTabId;
+  const revision = pageRevision;
+  const authorizationRevision = linkAuthorizationRevision;
+  const stillCurrent = () => authorizationRevision === linkAuthorizationRevision && current() && state.running && !state.paused && !state.dictating && state.targetTabId === snapshotTab && pageRevision === revision;
   const result = await page({ type: "PAGE_ACTION", intent });
+  if ((intent.type === "click-link" || intent.type === "click-target") && intent.disposition && result?.ok && result.link && snapshotTab !== null) {
+    if (!stillCurrent() || await needTabs() || !stillCurrent()) return;
+    const link = result.link;
+    let url: URL;
+    try { url = new URL(link.url); } catch { return; }
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password || typeof link.id !== "string" || typeof link.pageUrl !== "string") return;
+    const tab = await chrome.tabs.get(snapshotTab);
+    if (!stillCurrent() || tab.url !== link.pageUrl) return;
+    const valid = await page({ type: "VALIDATE_LINK", id: link.id, url: url.href, pageUrl: link.pageUrl }, snapshotTab);
+    if (!stillCurrent() || valid?.ok !== true) return;
+    await chrome.tabs.create({ url: url.href, active: intent.disposition !== "background" });
+    return;
+  }
   if (typeof result?.dictating === "boolean")
     await publish({ dictating: result.dictating });
   if (result?.error) await publish({ feedback: result.error });
@@ -539,10 +565,19 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     case "GET_SETTINGS":
       return pageSettings();
     case "GET_PROVIDER_STATUS":
-      return { groqKeyCount: groqOptions().groqKeys.length, jevConfigured: !!jevOptions().jevKey, activeProvider: jevOptions().jevKey ? "Jev via " + settings.jevProvider : null, sharedKeys: !providers.groqKeys && bundledProviders.groqKeys.length > 0 };
+      return { groqKeyCount: groqOptions().groqKeys.length, jevKeyCount: jevKeys(jevOptions()).length, jevConfigured: jevKeys(jevOptions()).length > 0, activeProvider: jevKeys(jevOptions()).length ? "Jev via " + settings.jevProvider : null, sharedKeys: !providers.groqKeys && bundledProviders.groqKeys.length > 0 };
     case "SAVE_PROVIDERS":
       if (message.groqKeys !== undefined) providers.groqKeys = message.groqKeys.map(key => String(key).trim()).filter(Boolean).slice(0, 4);
-      if (message.jevKey !== undefined) providers.jevKey = String(message.jevKey).trim();
+      if (message.jevKeys !== undefined) {
+        if (!Array.isArray(message.jevKeys) || message.jevKeys.some(key => typeof key !== "string")) return { ok: false, error: "Invalid Jev key list." };
+        providers.jevKey = message.jevKey !== undefined ? String(message.jevKey).trim() : "";
+        providers.jevKeys = jevKeys({ jevKey: providers.jevKey, jevKeys: message.jevKeys });
+      } else if (message.jevKey !== undefined) {
+        const key = String(message.jevKey).trim();
+        const previous = jevKeys(jevOptions());
+        providers.jevKey = key;
+        providers.jevKeys = key ? jevKeys({ jevKeys: [...previous, key] }) : [];
+      }
       await chrome.storage.local.set({ providers });
       return { ok: true };
     case "GET_CALIBRATION":
@@ -678,11 +713,12 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       if (!state.running || state.paused) return { ok: true };
       const revision = pageRevision;
       const intent = parseIntent(message.text);
+      if (["cancel", "pause", "stop"].includes(intent.type)) linkAuthorizationRevision++;
       // Typing transitions remain serialized. A click can cancel slow provider
       // work only when no earlier transcript may enter or leave dictation.
       if (
         activeProvider && !state.dictating && pendingTypingCommands === 0 &&
-        ["click", "open", "click-target", "pause", "stop", "cancel"].includes(intent.type)
+        ["click", "open", "click-target", "click-link", "focus-target", "show-links", "pause", "stop", "cancel"].includes(intent.type)
       ) {
         const provider = activeProvider;
         urgentCommand = urgentCommand.then(() => routeHeard(message.text, intent, revision));

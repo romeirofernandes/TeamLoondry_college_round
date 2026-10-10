@@ -87,7 +87,9 @@ pause handsfree
 stop handsfree
 ```
 
-Point at a target, then say `click this`. Unknown phrases show what was heard and perform no action.
+Point at a target, then say `click this`. For explicit navigation, say `click the first link`, `open the second result`, or `click the ChatGPT link`. Ordinals one through ten resolve fresh rendered links, preferring heading links in main content and removing duplicate destinations. Generic links work when there are no result headings. Polite wrappers such as `could you please` are accepted. Say `open the second result in a new tab` or `in a background tab` for an HTTP or HTTPS destination; background opening preserves the current tab.
+
+Say `focus the search box` or `focus Message` to focus a safe editable field without typing or submitting. `show links` lists up to ten numbered candidates; say `choose two`, then `click this`. Duplicate named labels also require a choice. Explicit link, named, and focus commands work without a head sample or calibration. Hidden, private, disabled, sensitive, covered, removed or changed targets cannot activate. Pointer-current commands retain the tracking safety gate. Unknown phrases show what was heard and perform no action.
 
 ## Dictate and submit
 
@@ -129,6 +131,8 @@ Exact local commands bypass providers, including `click this`, `open Careers`, `
 Provider output is validated. Unknown IDs, unsupported actions, ambiguous results, timeouts, and provider errors cause no activation. Up to 1,500 target labels can be sent, including offscreen targets. Closed shadow roots and cross-origin iframe contents are not scanned.
 
 The local build reads `extension/config/providers.local.json`, which is gitignored. Use `providers.example.json` as the format. This workspace's supplied credentials are already configured; no values belong in tracked code or documentation. Groq requests rotate across up to four configured keys, including transcription requests. This local build uses the four working supplied keys; the rejected fifth is excluded. Keys are bundled in the local extension build. Keep `dist/` out of GitHub too.
+
+Jev accepts an optional `jevKeys` array together with the legacy `jevKey` string. The combined keys are deduplicated and rotate independently of Groq. Authentication, rate-limit and transient transport/server errors try each key at most once; invalid semantic output is not retried. Exact local commands bypass Jev. Runtime status exposes only key counts, and saving a legacy nonempty key retains existing configured keys. An empty legacy key disables Jev; an explicit list replaces that runtime list.
 
 The dashboard accepts local overrides without exposing stored values back to webpages. Saving empty provider values disables that provider. Without Jev, exact commands still work. Browser speech may send audio to Chrome, Groq fallback sends audio to Groq, Jev receives command text, and wake Groq requests receive command text, target labels, page title and URL, and at most 12,000 characters of public page text. Inputs, editable regions, passwords, scripts and Handsfree UI are excluded; avoid asking page questions on sensitive documents. Answers are displayed as text, never HTML or code. Camera frames remain local.
 

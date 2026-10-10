@@ -104,6 +104,7 @@ export const initialState: SessionState = {
   calibrationProgress: null,
   calibrationStage: "",
 };
+export type LinkDisposition = "new-tab" | "background";
 export type Intent =
   | { type: "scroll"; direction: "up" | "down" }
   | {
@@ -132,7 +133,10 @@ export type Intent =
   | { type: "search"; query: string; background: boolean }
   | { type: "named-tab"; name: string }
   | { type: "find"; query: string }
-  | { type: "click-target"; query: string }
+  | { type: "click-target"; query: string; disposition?: LinkDisposition }
+  | { type: "click-link"; index: number; disposition?: LinkDisposition }
+  | { type: "focus-target"; query: string }
+  | { type: "show-links" }
   | { type: "choose"; index: number }
   | { type: "unknown"; heard: string };
 export interface PageContext {
@@ -158,7 +162,7 @@ export type Message =
   | { type: "GET_TABS" }
   | { type: "ACTIVATE_TAB"; id: number }
   | { type: "GET_PROVIDER_STATUS" }
-  | { type: "SAVE_PROVIDERS"; groqKeys?: string[]; jevKey?: string }
+  | { type: "SAVE_PROVIDERS"; groqKeys?: string[]; jevKey?: string; jevKeys?: string[] }
   | { type: "SET_DASHBOARD_URL"; url: string }
   | { type: "GRANT_PERMISSIONS"; kind: "pages" | "tabs" | "provider" }
   | { type: "INSTALL_SPEECH_PACK" }
@@ -188,6 +192,7 @@ export type Message =
   | { type: "PAGE_ACTION"; intent: Intent }
   | { type: "DICTATE"; text: string }
   | { type: "GET_TARGETS" }
+  | { type: "VALIDATE_LINK"; id: string; url: string; pageUrl: string }
   | { type: "GET_PAGE_CONTEXT" }
   | { type: "ANSWER"; text: string }
   | { type: "FIND_RESULT"; ids: string[] }
