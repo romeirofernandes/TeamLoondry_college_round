@@ -513,6 +513,7 @@ export function HandsfreeDashboard() {
                     disabled={
                       locked ||
                       !running ||
+                      settings.voiceOnly ||
                       state.paused ||
                       state.calibrationProgress !== null
                     }

@@ -546,6 +546,11 @@ export class ContentRuntime {
       return true;
     }
     if (!this.running || this.paused) return false;
+    if (this.sites.snapshot()?.site && (intent.type === "submit" || intent.type === "confirm" && this.pending)) {
+      this.cancelPending();
+      this.feedback("Use a dedicated site submission command. Generic form confirmation cannot publish content on this site.");
+      return false;
+    }
     if (this.dictating && ["click-link", "click-target", "focus-target", "show-links", "choose"].includes(intent.type)) return false;
     if (intent.type === "confirm") {
       const pending = this.pending;

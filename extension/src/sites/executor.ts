@@ -86,6 +86,7 @@ export class SiteExecutor {
   }
   snapshot(): SiteSnapshot | null {
     const snapshot = this.context.inspect();
+    if(snapshot && !this.publicationAllowed())snapshot.capabilities=snapshot.capabilities.map(c=>this.context.adapter()?.actions.find(a=>a.id===c.id)?.operation.kind==='submit' ? {...c,state:'not-implemented'}:c);
     return snapshot &&
       this.selected &&
       this.selectedRevision === snapshot.revision
@@ -108,6 +109,7 @@ export class SiteExecutor {
     request: SiteRequest,
   ): ParentNode | null {
     const op = spec.operation;
+    if (spec.id === "R07") return document;
     const selector = "scope" in op ? op.scope : undefined;
     if (selector) {
       let roots = elements(selector);
@@ -321,12 +323,12 @@ export class SiteExecutor {
       }
     }
     if (this.pending) this.pending = null;
-    if (n === "list results") {
+    if (n === "list results" || n === "list comments") {
       const s = this.context.inspect();
       if (!s) return null;
       const spec = this.context
         .adapter()!
-        .actions.find((a) => a.operation.kind === "entities");
+        .actions.find((a) => a.operation.kind === "entities" && (n !== "list comments" || a.operation.entity === "comment"));
       if (!spec)
         return result("unavailable", "No result list is available here.");
       return this.run({
@@ -383,6 +385,16 @@ export class SiteExecutor {
       return this.remember(result("not-implemented", op.reason));
     if (this.pending && this.pending.request.requestId !== request.requestId)
       this.pending = null;
+    if (["R09", "R20"].includes(spec.id) && request.args.value !== undefined) {
+      const choices = this.choices;
+      const chosen = choices?.entities[request.args.value - 1];
+      if (!choices || this.now() > choices.expires || !this.fresh(choices.request) || chosen?.kind !== "comment") {
+        this.choices = null;
+        return result("needs-choice", "Say list comments first, then refer to an announced comment number.");
+      }
+      request.entityId = chosen.id;
+      this.choices = null;
+    }
     if (this.choices && this.choices.request.requestId !== request.requestId) {
       const ordinal =
         request.args.index ??
@@ -591,6 +603,25 @@ export class SiteExecutor {
       return result("available", "Opening the requested destination.", {
         navigate: { url: new URL(path, s.url).href, newTab: false },
       });
+    }
+    if (spec.id === "G08") {
+      const query = a.query;
+      if (!query) return result("unavailable", "Name a file to find.");
+      const available = s.entities.filter(e => e.kind === "file" && norm(e.label).includes(norm(query)));
+      if (!available.length) {
+        const openers = controls(["Go to file"]);
+        if (openers.length !== 1) return result("unavailable", "The repository file finder is unavailable. Only rendered files can be selected here.");
+        openers[0].click();
+        await until(() => elements('[role="dialog"] input,input[aria-label="Go to file"]').filter(editable).length === 1, valid);
+        const fields = elements('[role="dialog"] input,input[aria-label="Go to file"]').filter(editable);
+        if (fields.length !== 1) return result("unavailable", "The file finder input is unavailable or ambiguous.");
+        setInput(fields[0] as HTMLInputElement, query);
+        await until(() => !!this.context.inspect()?.entities.some(e => e.kind === "file" && norm(e.label).includes(norm(query))), valid);
+        const refreshed = this.context.inspect();
+        if (!valid() || !refreshed) return result("unavailable", "The repository changed while finding the file.");
+        s = refreshed;
+        request = {...request, revision: refreshed.revision};
+      }
     }
     if (op.kind === "entities") {
       let candidates = s.entities.filter((e) => e.kind === op.entity);
@@ -1015,6 +1046,26 @@ export class SiteExecutor {
         return result('available',`Opening branch ${branch}.`,{navigate:{url:destination.href,newTab:false}});
       }
       choice.click();return verified(()=>stateOf(choice,[])===true||decodeURIComponent(new URL(location.href).pathname.split('/')[4]||'')===branch,`Switched to ${branch}.`);
+    }
+    if (spec.id === "R07") {
+      const [sort, range] = (a.query || "").split(" by ");
+      const roots = elements('main,[role="menu"]');
+      const root = roots.find(e => e.getAttribute("role") === "menu") || roots[0];
+      if (!root || !sort) return result("unavailable", "Open the post sorting menu first.");
+      const choices = controls([sort], root);
+      if (choices.length !== 1) return result("unavailable", "That post sort is unavailable. Open its menu first.");
+      if (stateOf(choices[0], []) !== true) {
+        choices[0].click();
+        if (!(await until(() => stateOf(choices[0], []) === true, valid))) return result("failed", "The post sort changed without a verifiable selected state.");
+      }
+      if (range) {
+        const names = {today: ["Today", "Past 24 hours"], "this week": ["This week", "Past week"], "this month": ["This month", "Past month"], "all time": ["All time"]}[range];
+        const ranges = controls(names || [range]);
+        if (ranges.length !== 1) return result("unavailable", "The sort was selected, but the requested time range is unavailable. Open the time range menu.");
+        ranges[0].click();
+        return verified(() => stateOf(ranges[0], []) === true, `Sorted posts by ${sort}, ${range}.`);
+      }
+      return result("available", `Sorted posts by ${sort}.`, {evidence: "selected-sort"});
     }
     if (op.kind === "control") {
       let names = op.names;

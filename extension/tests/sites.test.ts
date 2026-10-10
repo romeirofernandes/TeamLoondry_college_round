@@ -46,6 +46,7 @@ function fixture(site: SiteId, html: string) {
   return new SiteExecutor(
     () => urls[site],
     () => time,
+    () => true, // Disposable fixtures explicitly permit demo publication.
   );
 }
 function request(engine: SiteExecutor, phrase: string) {
@@ -347,4 +348,41 @@ it("uses an announced ordinal for open-result phrasing and rejects a stale list"
   await engine.dialogue("list results");
   document.querySelector("article")!.remove();
   expect((await engine.dialogue("choose two"))?.state).toBe("unavailable");
+});
+
+it("leaves publication disabled until an owned test space is configured",async()=>{
+ document.body.innerHTML=fixtures.github;const engine=new SiteExecutor(()=>urls.github,()=>time);
+ document.querySelector<HTMLInputElement>('input')!.value='Draft';const button=[...document.querySelectorAll('button')].find(b=>b.textContent==='Create issue')!,click=vi.fn();button.addEventListener('click',click);
+ expect((await engine.run(request(engine,'submit this issue'))).state).toBe('not-implemented');expect(engine.snapshot()!.capabilities.find(c=>c.id==='G24')?.state).toBe('not-implemented');await engine.dialogue('confirm');expect(click).not.toHaveBeenCalled();
+});
+
+describe("scoped file and comment resolution", () => {
+  it("opens the file finder and observes matching file results", async () => {
+    const engine = fixture("github", '<main><strong itemprop="name">handsfree</strong><button>Go to file</button></main>');
+    document.querySelector("button")!.onclick = () => {
+      const dialog = document.createElement("div");
+      dialog.setAttribute("role", "dialog");
+      dialog.innerHTML = '<input aria-label="Find a file">';
+      document.body.append(dialog);
+      dialog.querySelector("input")!.oninput = () => {
+        dialog.insertAdjacentHTML("beforeend", '<a href="/demo/handsfree/blob/main/src/deep.ts">deep.ts</a>');
+      };
+    };
+    expect((await engine.run(request(engine, "find a file named deep.ts"))).feedback).toContain("Selected deep.ts");
+  });
+  it("sets post sort and time range as separate verified controls", async () => {
+    const engine = fixture("reddit", fixtures.reddit + '<div role="menu"><button aria-selected="false">Top</button><button aria-selected="false">This week</button></div>');
+    for (const button of document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')) button.onclick = () => button.setAttribute("aria-selected", "true");
+    expect((await engine.run(request(engine, "show top posts this week"))).state).toBe("available");
+    expect([...document.querySelectorAll('[role="menu"] button')].every(e => e.getAttribute("aria-selected") === "true")).toBe(true);
+  });
+  it("requires an announced comment list and scopes the numbered thread", async () => {
+    const engine = fixture("reddit", fixtures.reddit + '<shreddit-comment><span>First reply</span><button aria-expanded="false">Expand</button></shreddit-comment><shreddit-comment><span>Second reply</span><button aria-expanded="false">Expand</button></shreddit-comment>');
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('shreddit-comment button')];
+    for (const button of buttons) button.onclick = () => button.setAttribute("aria-expanded", "true");
+    expect((await engine.run(request(engine, "show replies to comment two"))).state).toBe("needs-choice");
+    expect((await engine.dialogue("list comments"))?.choices).toHaveLength(2);
+    expect((await engine.run(request(engine, "show replies to comment two"))).state).toBe("available");
+    expect(buttons.map(b => b.getAttribute("aria-expanded"))).toEqual(["false", "true"]);
+  });
 });

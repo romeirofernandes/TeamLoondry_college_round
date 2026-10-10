@@ -218,7 +218,7 @@ export function siteCandidates(
   if (unsafeSpeech(text) || isCancellation(text)) return candidates;
   const parsed = parseSite(text, snapshot);
   for (const spec of adapters[snapshot.site].actions) {
-    if (spec.operation.kind === "unsupported") continue;
+    if (spec.operation.kind === "unsupported" || snapshot.capabilities.find(c=>c.id===spec.id)?.state === "not-implemented") continue;
     const matched = parsed?.action === spec.id;
     if (spec.extract && !matched) {
       if (spec.operation.kind !== "entities") continue;
