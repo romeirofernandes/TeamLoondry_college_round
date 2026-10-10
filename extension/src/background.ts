@@ -35,6 +35,7 @@ function isDashboard(url?: string) {
 }
 let pendingClose: { id: number; expires: number } | null = null;
 let tabChoices: number[] = [];
+const tabActivations = new Map<number, symbol>();
 let lastTrackingLog = 0;
 let hadTracking = false;
 let logs: MetricEvent[] = [];
@@ -277,14 +278,14 @@ async function tabAction(intent: Intent, current: () => boolean) {
       break;
     case "next-tab":
     case "previous-tab": {
-      const current = browse.find((t) => t.id === state.targetTabId);
-      const group = browse.filter((t) => t.windowId === current?.windowId);
+      const currentTab = browse.find((t) => t.id === state.targetTabId);
+      const group = browse.filter((t) => t.windowId === currentTab?.windowId);
       const id = adjacentTabId(
         group as any,
         state.targetTabId ?? -1,
         intent.type === "next-tab" ? "next" : "previous",
       );
-      if (id != null) await activateTab(id);
+      if (id != null) await activateTab(id, current);
       break;
     }
     case "named-tab": {
@@ -304,7 +305,7 @@ async function tabAction(intent: Intent, current: () => boolean) {
               .join("; ") +
             ". Say choose one, choose two, or cancel.",
         });
-      } else await activateTab(Number(matches.ids[0]));
+      } else await activateTab(Number(matches.ids[0]), current);
       break;
     }
     case "close-tab":
@@ -315,8 +316,10 @@ async function tabAction(intent: Intent, current: () => boolean) {
       });
       record("confirmation-request");
       break;
-    case "incognito":
-      if (await chrome.extension.isAllowedIncognitoAccess())
+    case "incognito": {
+      const allowed = await chrome.extension.isAllowedIncognitoAccess();
+      if (!current()) return;
+      if (allowed)
         await chrome.windows.create({ incognito: true });
       else
         await publish({
@@ -324,6 +327,7 @@ async function tabAction(intent: Intent, current: () => boolean) {
             "Allow incognito access in chrome://extensions → Handsfree details first.",
         });
       break;
+    }
     case "history":
     case "downloads":
     case "settings":
@@ -331,12 +335,27 @@ async function tabAction(intent: Intent, current: () => boolean) {
       break;
   }
 }
-async function activateTab(id: number) {
+async function activateTab(id: number, current: () => boolean = () => true) {
+  const revision = pageRevision;
+  const valid = () => current() && pageRevision === revision;
   const tab = await chrome.tabs.get(id);
-  await chrome.tabs.update(id, { active: true });
-  await chrome.windows.update(tab.windowId, { focused: true });
-  await target(id);
-  await publish({ feedback: "Switched tab." });
+  if (!valid()) return;
+  const activation = Symbol();
+  tabActivations.set(id, activation);
+  try {
+    await chrome.tabs.update(id, { active: true });
+    if (!valid()) return;
+    await chrome.windows.update(tab.windowId, { focused: true });
+    if (!valid()) return;
+    // target() deliberately changes the revision and aborts the provider. After
+    // committing our own transition, only another revision can supersede it.
+    const targetRevision = pageRevision + 1;
+    await target(id);
+    if (pageRevision === targetRevision && state.targetTabId === id)
+      await publish({ feedback: "Switched tab." });
+  } finally {
+    if (tabActivations.get(id) === activation) tabActivations.delete(id);
+  }
 }
 async function arbitraryFind(query: string, signal?: AbortSignal) {
   if (!groqOptions().groqKeys.length) { await publish({ feedback: "Add a Groq key in the website dashboard to use hey handsfree commands." }); return; }
@@ -426,7 +445,7 @@ async function action(intent: Intent, current: () => boolean = () => true) {
       return;
     }
     tabChoices = [];
-    await activateTab(id);
+    await activateTab(id, current);
     return;
   }
   pendingClose = null;
@@ -723,6 +742,9 @@ chrome.runtime.onMessage.addListener((message: Message, sender, respond) => {
 });
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   void ready.then(async () => {
+    // Controlled activation commits its target once, after focus completes.
+    // Do not let Chrome's echo event cancel that same in-flight action.
+    if (tabActivations.has(tabId) || tabId === state.targetTabId) return;
     const tab = await chrome.tabs.get(tabId);
     if (isDashboard(tab.url)) { await connectDashboard(tabId); return; }
     if (!state.running || tabId === controllerTabId || tab.url?.startsWith(chrome.runtime.getURL(""))) return;

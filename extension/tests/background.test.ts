@@ -84,7 +84,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
         return { ok: true };
       }),
       create: vi.fn(async () => ({ id: 3 })),
-      update: vi.fn(async () => ({})),
+      update: vi.fn(async (_id: number, _options: chrome.tabs.UpdateProperties) => ({})),
       remove: vi.fn(async () => {}),
       onActivated: event(),
       onUpdated: event(),
@@ -679,5 +679,85 @@ describe('local tab switching', () => {
     expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(2);
     expect(browser.tabs.update).toHaveBeenCalledWith(2, { active: true });
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('deferred browser-read cancellation', () => {
+  it.each([
+    { intent: { type: 'next-tab' }, interrupt: 'PAUSE' },
+    { intent: { type: 'named-tab', name: 'Inbox' }, interrupt: 'cancel' },
+    { intent: { type: 'choose', index: 2 }, interrupt: 'STOP' },
+  ] as const)('does not activate a stale $intent.type after delayed tabs.get', async ({ intent, interrupt }) => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    if (intent.type === 'choose') {
+      browser.tabs.query.mockResolvedValue([
+        { id: 1, windowId: 1, index: 0, url: 'https://example.test/', title: 'Inbox' },
+        { id: 2, windowId: 1, index: 1, url: 'https://example.test/inbox', title: 'Inbox' },
+      ]);
+      await send({ type: 'HEARD', text: 'switch to tab Inbox' });
+    }
+    const original = browser.tabs.get.getMockImplementation()!;
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => browser.tabs.get.mockImplementation(id => {
+      resolve(); return new Promise(resolver => { release = () => { void original(id).then(resolver); }; });
+    }));
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ ids: [], intent }) } }] }) });
+    const provider = send({ type: 'HEARD', text: 'hey handsfree switch to my requested tab' });
+    await waiting;
+    await send(interrupt === 'cancel' ? { type: 'HEARD', text: 'cancel' } : { type: interrupt });
+    release();
+    await provider;
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(browser.tabs.update).not.toHaveBeenCalled();
+    expect(browser.windows.update).not.toHaveBeenCalled();
+    expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(1);
+  });
+  it('does not create incognito after authorization resolves for a cancelled provider action', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let release!: (allowed: boolean) => void;
+    const waiting = new Promise<void>(resolve => browser.extension.isAllowedIncognitoAccess.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { release = resolver; });
+    }));
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"incognito"}}' } }] }) });
+    const provider = send({ type: 'HEARD', text: 'hey handsfree open a private window' });
+    await waiting;
+    await send({ type: 'HEARD', text: 'click this' });
+    release(true);
+    await provider;
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(browser.windows.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('tab activation transition validity', () => {
+  it('does not focus a window after pause while tab activation is outstanding', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => browser.tabs.update.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { release = () => resolver({}); });
+    }));
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"next-tab"}}' } }] }) });
+    const provider = send({ type: 'HEARD', text: 'hey handsfree switch tabs' });
+    await waiting;
+    await send({ type: 'PAUSE' });
+    release();
+    await provider;
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(browser.windows.update).not.toHaveBeenCalled();
+    expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(1);
+  });
+  it('finishes a valid provider switch when Chrome emits its own activation event', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    const activated = browser.tabs.onActivated.addListener.mock.calls[0][0] as (info: { tabId: number }) => void;
+    browser.tabs.update.mockImplementation(async id => {
+      activated({ tabId: id });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      return {};
+    });
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"next-tab"}}' } }] }) });
+    await send({ type: 'HEARD', text: 'hey handsfree switch tabs' });
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(browser.windows.update).toHaveBeenCalledWith(1, { focused: true });
+    expect(await send({ type: 'GET_STATE' })).toMatchObject({ targetTabId: 2, feedback: 'Switched tab.' });
   });
 });

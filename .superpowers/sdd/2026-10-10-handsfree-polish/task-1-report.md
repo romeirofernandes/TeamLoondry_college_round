@@ -108,3 +108,46 @@ Used an in-memory esbuild bundle of the real provider module and ignored local c
 - The live Jev paraphrase did not clear existing conservative mapping thresholds. No thresholds were relaxed. Exact supported scroll/click/tab/search commands now execute locally regardless of that provider result; unknown paraphrases can still be rejected safely. Groq general-answer availability was verified live.
 - Per the brief and controller confirmation, immediate provider interruption is limited to click/open/named-click and emergencies. Other local commands perform no provider request of their own but keep existing speech ordering behind already-pending provider work, preserving queued-close and dictation safety.
 - Context/DOM and router behavior are automated fixture checks. Browser end-to-end and physical tracking/microphone evaluation belong to later tasks and were not claimed here.
+
+## Review fix round 1 (base e3dcff2)
+
+Read the Important finding in `task-1-review.md`. Reproduced the remaining stale browser mutations before editing production code: `activateTab` lost the provider predicate across `tabs.get`, and incognito authorization used the result after cancellation. Provider tab choices also omitted the predicate when activating their selected tab.
+
+Changes are confined to background routing and its tests:
+
+- Next/previous/named-tab and tab-choice paths now pass the validity predicate to `activateTab`.
+- `activateTab` snapshots the page revision and checks it together with provider validity after `tabs.get`, after tab activation, and after window focus, before issuing the next mutation.
+- In-progress controlled activations carry a token so Chrome's own `onActivated` echo does not advance the revision or abort the very switch that generated it. The helper commits `target` once, and after that deliberate transition uses the expected new revision before publishing completion. Late echo events for the current target are also ignored. Tokens are removed in `finally`, including cancellation/error paths.
+- Incognito authorization now rechecks validity after its asynchronous read and before creating a window or publishing a denial.
+- Corrected the browser test double's `tabs.update` parameter types so the transition-event regression uses the real call signature.
+
+RED/GREEN evidence:
+
+```text
+npm test --prefix extension -- tests/background.test.ts --reporter=dot
+Initial RED: Tests 4 failed | 33 passed (37)
+Expanded RED: Tests 5 failed | 34 passed (39)
+GREEN: Test Files 1 passed (1); Tests 39 passed (39)
+```
+
+Expected RED failures showed tabs activating after delayed reads despite pause/cancel/stop, incognito opening after a superseding click, and window focus occurring after pause while the tab update was outstanding. A positive transition regression confirms that a still-valid provider switch completes when Chrome emits its own activation event.
+
+Full verification after the production fix:
+
+```text
+npm test --prefix extension
+Test Files 9 passed (9)
+Tests 182 passed (182)
+Duration 1.06s
+
+npm run typecheck --prefix extension
+Initial check: TS2345/TS7006 in the new test override because the original tabs.update double inferred a zero-argument signature.
+Corrected the double's parameter types; reran npm run typecheck --prefix extension:
+tsc --noEmit
+exit 0
+
+git diff --check
+exit 0
+```
+
+No production changes followed the full suite; the subsequent change only typed the existing test double's unused parameters. Self-review confirmed the fix carries validity through every reviewed helper call, permits its own target revision change, and leaves direct dashboard tab activation available when the voice session is stopped. No new live provider requests, credentials, push, deployment or physical performance claims. Previous live Jev paraphrase concern remains unchanged.
