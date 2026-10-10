@@ -1850,6 +1850,7 @@ export function siteForUrl(url: string): SiteId | null {
       (
         {
           "en.wikipedia.org": "wikipedia",
+          "www.wikipedia.org": "wikipedia",
           "github.com": "github",
           "reddit.com": "reddit",
           "www.reddit.com": "reddit",

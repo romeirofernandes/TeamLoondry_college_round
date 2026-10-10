@@ -120,6 +120,7 @@ export class SiteExecutor {
           {
             type: "site-action",
             site: snapshot.site,
+            url: snapshot.url,
             action: spec.id,
             args: {},
             revision: snapshot.revision,
@@ -266,6 +267,7 @@ export class SiteExecutor {
       return {
         type: "site-action",
         site: snapshot.site,
+        url: snapshot.url,
         action: spec.id,
         args: {},
         documentId: snapshot.documentId,
@@ -441,6 +443,7 @@ export class SiteExecutor {
       return this.run({
         type: "site-action",
         site: s.site,
+        url: s.url,
         action: spec.id,
         documentId: s.documentId,
         revision: s.revision,
@@ -457,25 +460,41 @@ export class SiteExecutor {
       : "No more choices. Say a previously announced number or cancel.";
   }
   async run(raw: SiteRequest, confirmed = false): Promise<SiteResult> {
-    const request = validateSiteRequest(raw);
+    let request = validateSiteRequest(raw);
     if (!request)
       return result("unavailable", "Invalid or unsupported site action.");
     const previous = this.handled.get(request.requestId);
     if (previous) return previous;
+    const spec = this.context
+      .adapter()
+      ?.actions.find((a) => a.id === request!.action);
+    if (!spec)
+      return result("unavailable", "Invalid or unsupported site action.");
     if (!this.fresh(request)) {
-      this.cancel();
-      return this.remember(
-        result(
-          "unavailable",
-          "The page or target changed. Repeat your request.",
-        ),
-      );
+      const current = this.context.inspect();
+      const canRebaseSpotifyRead =
+        request.site === "spotify" &&
+        !!request.url &&
+        !request.entityId &&
+        request.args.index === undefined &&
+        !spec?.write &&
+        current?.site === request.site &&
+        current.documentId === request.documentId &&
+        current.url === request.url;
+      if (canRebaseSpotifyRead)
+        request = { ...request, revision: current.revision };
+      else {
+        this.cancel();
+        return this.remember(
+          result(
+            "unavailable",
+            "The page or target changed. Repeat your request.",
+          ),
+        );
+      }
     }
     const snapshot = this.snapshot()!,
-      spec = this.context
-        .adapter()!
-        .actions.find((a) => a.id === request.action)!;
-    const op = spec.operation;
+      op = spec.operation;
     const boundEntity = this.identity(request, snapshot);
     if (
       spec.write &&

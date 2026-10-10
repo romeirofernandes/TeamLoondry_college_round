@@ -1,6 +1,6 @@
 import { normalizeSpeech } from "../core/parser";
 import { adapters } from "./registry";
-import { catalogue } from "./catalogue";
+import { catalogue, siteForUrl } from "./catalogue";
 import type { Intent } from "../shared";
 import type { SiteArgs, SiteRequest, SiteSnapshot, ActionSpec } from "./types";
 const small: Record<string, number> = {
@@ -100,6 +100,7 @@ export function makeRequest(
   return {
     type: "site-action",
     site: snapshot.site,
+    url: snapshot.url,
     action: id,
     args,
     revision: snapshot.revision,
@@ -265,6 +266,8 @@ export function validateSiteRequest(value: unknown): SiteRequest | null {
     v.type !== "site-action" ||
     !Object.hasOwn(adapters, v.site) ||
     !adapters[v.site].actions.some((a) => a.id === v.action) ||
+    (v.url !== undefined &&
+      (typeof v.url !== "string" || v.url.length > 3000 || siteForUrl(v.url) !== v.site)) ||
     typeof v.documentId !== "string" ||
     v.documentId.length > 100 ||
     typeof v.requestId !== "string" ||
@@ -292,6 +295,7 @@ export function validateSiteRequest(value: unknown): SiteRequest | null {
   return {
     type: "site-action",
     site: v.site,
+    ...(typeof v.url === "string" ? { url: v.url } : {}),
     action: v.action,
     args: { query, value: n, end, index, mode },
     revision: v.revision,

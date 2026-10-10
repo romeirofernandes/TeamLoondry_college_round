@@ -338,6 +338,31 @@ describe("voice dialogue and account guard", () => {
     vi.unstubAllGlobals();
   });
 });
+describe("Spotify page freshness", () => {
+  it("uses the current now-playing context when it changes during a read-only request", async () => {
+    const engine = fixture("spotify", fixtures.spotify);
+    const pending = request(engine, "what song is playing");
+    document.querySelector('[data-testid="context-item-link"]')!.textContent =
+      "New track by Radiohead";
+
+    const result = await engine.run(pending);
+
+    expect(result.state).toBe("available");
+    expect(result.feedback).toContain("New track by Radiohead");
+  });
+
+  it("does not rebase a Spotify write command after the page context changes", async () => {
+    const engine = fixture("spotify", fixtures.spotify);
+    const pending = request(engine, "like this song");
+    document.querySelector('[data-testid="context-item-link"]')!.textContent =
+      "A different track by Radiohead";
+
+    const result = await engine.run(pending);
+
+    expect(result.state).toBe("unavailable");
+    expect(result.feedback).toContain("page or target changed");
+  });
+});
 
 it("uses an announced ordinal for open-result phrasing and rejects a stale list", async () => {
   const engine = fixture("x", fixtures.x);

@@ -69,6 +69,8 @@ export interface SiteArgs {
 export interface SiteRequest {
   type: "site-action";
   site: SiteId;
+  /** Original route lets safe, unbound Spotify commands survive in-place player updates. */
+  url?: string;
   action: ActionId;
   args: SiteArgs;
   revision: number;
