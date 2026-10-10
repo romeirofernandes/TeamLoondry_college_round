@@ -18,3 +18,6 @@ User request on 2026-10-10 is the binding spec. Improve the existing Chrome MV3 
 - Exact local click/scroll/tab commands never depend on Jev or Groq; only final recognized transcripts activate commands.
 - Provider answers and page text are data, rendered as text, never HTML or executable instructions.
 - Work locally; no push or deploy. Physical camera/microphone performance must not be claimed from synthetic tests.
+
+## Approved follow-up: generic voice navigation
+User approved generic positional/named page targeting, search-result links and fields, background opening and Jev key rotation. No per-website calibration or adapters in this increment. Head/hand/calibration/dwell behavior must remain unchanged. Extend existing semantic DOM page targets and safety gates; all exact commands run locally. Opening links in new/background tabs must validate http(s), sender/current page and cancellation. Sensitive/editable fields retain protection; focus never types/submits. Existing Groq answers/search/tab navigation remain.
