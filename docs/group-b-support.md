@@ -61,6 +61,8 @@ This includes TypeScript, the complete unit/DOM/lifecycle corpus, a packaged ext
 
 Run `npm run typecheck` and `npm run build` from `next/`. With the Next server available, `node tests/dashboard-next.mjs` from `extension/` checks the actual dashboard bridge, commands, pause/resume/stop, preference persistence, owned-recipient persistence, permission state, calibration display and responsive widths.
 
+Final verification on 2026-10-10 passed both TypeScript checks, 2,572 tests across 15 files, all 62 packaged Chromium scenarios, and both production builds. The connected Next dashboard check passed commands, pause/resume/stop, wake-answer rendering, recipient and pointer preference persistence, permission state, calibration display without photo persistence, and no horizontal overflow at 320, 390, 768 and 1280 pixels. Axe was unavailable for this run; no automated accessibility audit is claimed.
+
 ## Live checks and remaining qualification
 
 Read-only public checks ran in a fresh Chromium profile. No signed-in account was modified and no real message, application, booking or payment was submitted.
