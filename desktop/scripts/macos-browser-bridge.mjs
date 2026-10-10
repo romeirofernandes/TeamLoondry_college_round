@@ -32,7 +32,7 @@ try{
  await writeFile(path.join(profileHosts,'com.handsfree.desktop.json'),await readFile(registries[0]));
  const shellQuote=value=>"'"+value.replaceAll("'","'\\''")+"'";
  // A PID marker belongs only to this isolated generated launcher, not the distributed app.
- const source=await readFile(launcher,'utf8');await writeFile(launcher,source.replace('#!/bin/sh\n',`#!/bin/sh\necho $$ > ${shellQuote(path.join(bridgeDir,'chrome-native-host.pid'))}\n`));
+ const source=await readFile(launcher,'utf8');await writeFile(launcher,source.replace('#!/bin/sh\n',()=>`#!/bin/sh\necho $$ > ${shellQuote(path.join(bridgeDir,'chrome-native-host.pid'))}\n`));
  const controls=await context.newPage();await controls.goto(`chrome-extension://${id}/popup.html`);
  const message=msg=>controls.evaluate(value=>chrome.runtime.sendMessage(value),msg);
  const page=await context.newPage();const origin=`http://127.0.0.1:${server.address().port}`;await page.goto(origin+'/fixture');
@@ -42,7 +42,8 @@ try{
  const nativeProbe=await worker.evaluate(()=>new Promise(resolve=>{const host=chrome.runtime.connectNative('com.handsfree.desktop');host.onMessage.addListener(value=>{host.disconnect();resolve(value);});host.onDisconnect.addListener(()=>resolve({error:chrome.runtime.lastError?.message||'Native host closed'}));host.postMessage({id:crypto.randomUUID(),type:'hello'});}));
  if(!nativeProbe?.ok)throw Error('Chrome host registration/launch: '+JSON.stringify(nativeProbe));
  const connected=await message({type:'DESKTOP_CONNECT'});if(!connected?.ok)throw Error('Actual Chrome native connection failed: '+JSON.stringify(connected));
- const connectedPid=Number((await readFile(path.join(bridgeDir,'chrome-native-host.pid'),'utf8')).trim());
+ const marker=(await readFile(path.join(bridgeDir,'chrome-native-host.pid'),'utf8')).trim();
+ const connectedPid=Number(marker);if(!Number.isSafeInteger(connectedPid)||connectedPid<2)throw Error('Invalid launcher PID marker: '+JSON.stringify(marker));
  async function until(predicate,label){const deadline=Date.now()+30000;while(Date.now()<deadline){if(await predicate())return;await new Promise(resolve=>setTimeout(resolve,100));}throw Error('Timed out: '+label);}
  // A second native host can show the panel only after the permission-check lease releases.
  const panelAvailable=()=>worker.evaluate(()=>new Promise(resolve=>{
