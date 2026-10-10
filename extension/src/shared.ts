@@ -162,6 +162,7 @@ export type Intent =
         | "new-tab"
         | "next-tab"
         | "previous-tab"
+        | "show-tabs"
         | "close-tab"
         | "incognito"
         | "history"
@@ -172,6 +173,7 @@ export type Intent =
         | "media-toggle";
     }
   | { type: "search"; query: string; background: boolean }
+  | { type: "indexed-tab"; index: number }
   | { type: "named-tab"; name: string }
   | { type: "find"; query: string }
   | { type: "click-target"; query: string; disposition?: LinkDisposition }

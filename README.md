@@ -75,6 +75,7 @@ Core commands:
 scroll up
 scroll down
 go back
+previous page
 go forward
 click this
 open this
@@ -83,9 +84,14 @@ stop typing
 submit form
 confirm
 cancel
+show tabs
+go to tab three
+close this tab
 pause handsfree
 stop handsfree
 ```
+
+`show tabs` numbers the tabs in the current browser window in tab-strip order. Say `go to tab three`, `switch to the twelfth tab`, or `go to tab 12` to select one. `close tab` or `close this tab` asks for `confirm` before closing; `cancel` leaves it open. `previous page` works like `go back`.
 
 Say `click` at the cursor position even when no component has snapped. Named finds still select a target for review. Coordinate clicks freeze when tracking is lost or stale. Browser-protected controls may reject synthetic events. Unknown phrases show what was heard and perform no action.
 

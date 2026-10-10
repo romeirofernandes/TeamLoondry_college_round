@@ -688,6 +688,24 @@ describe('local tab switching', () => {
     expect(browser.tabs.update).toHaveBeenCalledWith(2, { active: true });
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it('lists tabs in the controlled window and activates any tab by its spoken number', async () => {
+    const { browser, send } = await setup();
+    browser.tabs.query.mockResolvedValue([
+      { id: 1, windowId: 1, index: 0, url: 'https://example.test/', title: 'Project notes' },
+      { id: 2, windowId: 1, index: 1, url: 'https://example.test/inbox', title: 'Inbox' },
+      { id: 3, windowId: 1, index: 2, url: 'https://example.test/settings', title: 'Settings' },
+      { id: 4, windowId: 2, index: 0, url: 'https://other.test/', title: 'Other window' },
+    ]);
+
+    await send({ type: 'HEARD', text: 'show tabs' });
+    expect((await send({ type: 'GET_STATE' })).feedback).toContain('1. Project notes; 2. Inbox; 3. Settings');
+    expect((await send({ type: 'GET_STATE' })).feedback).not.toContain('Other window');
+
+    await send({ type: 'HEARD', text: 'go to tab three' });
+    expect(browser.tabs.update).toHaveBeenCalledWith(3, { active: true });
+    expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(3);
+  });
 });
 
 describe('deferred browser-read cancellation', () => {

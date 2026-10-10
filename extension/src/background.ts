@@ -319,6 +319,38 @@ async function tabAction(intent: Intent, current: () => boolean) {
       if (id != null) await activateTab(id, current);
       break;
     }
+    case "show-tabs": {
+      const currentTab = browse.find((t) => t.id === state.targetTabId);
+      if (!currentTab) {
+        await publish({ feedback: "There is no active browser tab to list." });
+        break;
+      }
+      const windowTabs = browse
+        .filter((t) => t.windowId === currentTab.windowId)
+        .sort((a, b) => a.index - b.index);
+      await publish({
+        feedback:
+          "Tabs in this window: " +
+          windowTabs
+            .map((tab, index) => `${index + 1}. ${(tab.title || "Untitled tab").slice(0, 100)}`)
+            .join("; ") +
+          '. Say "go to tab" followed by its number to switch.',
+      });
+      break;
+    }
+    case "indexed-tab": {
+      const currentTab = browse.find((t) => t.id === state.targetTabId);
+      const windowTabs = browse
+        .filter((t) => t.windowId === currentTab?.windowId)
+        .sort((a, b) => a.index - b.index);
+      const selected = windowTabs[intent.index - 1];
+      if (!selected?.id) {
+        await publish({ feedback: `There is no tab ${intent.index} in this window.` });
+        break;
+      }
+      await activateTab(selected.id, current);
+      break;
+    }
     case "named-tab": {
       const matches = rankTabs(intent.name, browse as any);
       if (matches.kind === "none")
@@ -516,6 +548,8 @@ async function action(intent: Intent, current: () => boolean = () => true) {
       "search",
       "next-tab",
       "previous-tab",
+      "show-tabs",
+      "indexed-tab",
       "named-tab",
       "close-tab",
       "incognito",

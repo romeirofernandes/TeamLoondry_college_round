@@ -16,6 +16,8 @@ const fixed: Record<string, Intent> = {
   "scroll up": { type: "scroll", direction: "up" },
   "scroll down": { type: "scroll", direction: "down" },
   "go back": { type: "back" },
+  "previous page": { type: "back" },
+  "go to previous page": { type: "back" },
   back: { type: "back" },
   "go forward": { type: "forward" },
   forward: { type: "forward" },
@@ -42,6 +44,10 @@ const fixed: Record<string, Intent> = {
   "next tab": { type: "next-tab" },
   "previous tab": { type: "previous-tab" },
   "close tab": { type: "close-tab" },
+  "close this tab": { type: "close-tab" },
+  "close the current tab": { type: "close-tab" },
+  "show tabs": { type: "show-tabs" },
+  "list tabs": { type: "show-tabs" },
   "open incognito": { type: "incognito" },
   "open incognito window": { type: "incognito" },
   "open history": { type: "history" },
@@ -60,6 +66,41 @@ const numberNames = [
   "eight",
   "nine",
   "ten",
+];
+const ordinalNames = [
+  "first",
+  "second",
+  "third",
+  "fourth",
+  "fifth",
+  "sixth",
+  "seventh",
+  "eighth",
+  "ninth",
+  "tenth",
+  "eleventh",
+  "twelfth",
+  "thirteenth",
+  "fourteenth",
+  "fifteenth",
+  "sixteenth",
+  "seventeenth",
+  "eighteenth",
+  "nineteenth",
+  "twentieth",
+];
+const tabNumberNames = [
+  ...numberNames,
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+  "twenty",
 ];
 
 /** Session controls are exact and available even during dictation and pause. */
@@ -107,6 +148,17 @@ export function parseIntent(text: string): Intent {
 
   const adjacentTab = /^(?:(?:switch|go|move)(?: over)? to (?:the )?)?(next|previous|last) tab$/.exec(normalized);
   if (adjacentTab) return { type: adjacentTab[1] === "next" ? "next-tab" : "previous-tab" };
+
+  const tabPosition = /^(?:(?:switch|go|move)(?: over)? to (?:the )?(?:tab )?(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth)(?:st|nd|rd|th)?(?: tab)?|(?:switch|go|move) tab (\d{1,3}))$/.exec(normalized);
+  if (tabPosition) {
+    const value = tabPosition[1] ?? tabPosition[2];
+    const index = /^\d+$/.test(value)
+      ? Number(value)
+      : ordinalNames.includes(value)
+        ? ordinalNames.indexOf(value) + 1
+        : tabNumberNames.indexOf(value) + 1;
+    if (index >= 1 && index <= 999) return { type: "indexed-tab", index };
+  }
 
   const tabSuffix = /^(?:switch|go|move) to (?:the )?(.+?) tab$/.exec(normalized);
   if (tabSuffix) return { type: "named-tab", name: tabSuffix[1] };

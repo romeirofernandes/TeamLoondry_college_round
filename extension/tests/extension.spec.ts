@@ -230,6 +230,21 @@ test("tab switch by title works and closing always requires confirmation", async
   await expect
     .poll(async () => (await message({ type: "GET_STATE" })).targetTabId)
     .not.toBe(null);
+  await heard("show tabs");
+  const tabFeedback = (await message({ type: "GET_STATE" })).feedback as string;
+  expect(tabFeedback).toContain("Handsfree test page");
+  expect(tabFeedback).toContain("Second Handsfree page");
+  const secondTabNumber = tabFeedback.match(/(\d+)\. Second Handsfree page/)?.[1];
+  expect(secondTabNumber).toBeTruthy();
+  await heard(`go to tab ${secondTabNumber}`);
+  await expect
+    .poll(async () =>
+      worker.evaluate(async () => {
+        const { state } = await chrome.storage.session.get("state");
+        return (await chrome.tabs.get((state as any).targetTabId)).title;
+      }),
+    )
+    .toBe("Second Handsfree page");
   await heard("go to tab handsfree test page");
   await expect
     .poll(async () =>
@@ -250,7 +265,7 @@ test("tab switch by title works and closing always requires confirmation", async
       }),
     )
     .toBe("Second Handsfree page");
-  await heard("close tab");
+  await heard("close this tab");
   expect(second.isClosed()).toBe(false);
   await heard("cancel");
   expect(second.isClosed()).toBe(false);
@@ -510,7 +525,7 @@ test("final transcripts navigate generic result links and focus fields without p
     await heard("click the first link");
     await page.waitForURL("**/second");
     await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
-    await heard("go back");
+    await heard("previous page");
     await page.waitForURL("**/results?q=accessible%20design");
     await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
     await heard("click the ChatGPT link");
