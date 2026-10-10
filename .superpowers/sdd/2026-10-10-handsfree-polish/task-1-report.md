@@ -151,3 +151,59 @@ exit 0
 ```
 
 No production changes followed the full suite; the subsequent change only typed the existing test double's unused parameters. Self-review confirmed the fix carries validity through every reviewed helper call, permits its own target revision change, and leaves direct dashboard tab activation available when the voice session is stopped. No new live provider requests, credentials, push, deployment or physical performance claims. Previous live Jev paraphrase concern remains unchanged.
+
+## Packaged-browser command fixture correction (after 43738e8)
+
+The controller reported a packaged-browser failure in `dictation words do not navigate; submission requires confirmation`: after submit and confirm, the fixture submission counter stayed zero. Rebuilt the extension from current TypeScript before diagnosis. The case initially passed alone (1/1, 507 ms) and with the preceding click case (2/2), indicating a timing-dependent interaction. A full run passed dictation but failed the later resume-click case and timed out while setting up the final dashboard authorization case (7/9 passed). A second full run with temporary command diagnostics reproduced both command failures while both dashboard tests passed (7/9 passed); no authentication change was made.
+
+Diagnostic evidence from the real background session and content feedback:
+
+```text
+start typing: confidence 1; dictation on
+scroll down: confidence 1; dictation on
+hello world: confidence 1; dictation on
+stop typing: confidence 0; Dictation stopped.
+submit form: confidence 0; Tracking is uncertain. Move back into view before activating a target.
+confirm: confidence 0; Nothing is waiting for confirmation.
+```
+
+Root cause: deterministic command tests injected one confident pointer sample while the real offscreen tracker simultaneously processed Chrome's blank fake-camera stream. Blank-camera inference correctly emitted confidence zero and could replace the test sample before submit/confirm or the resumed click. Production low/stale tracking and confirmation gates behaved correctly.
+
+Test-only correction in `extension/tests/extension.spec.ts`:
+
+- `point()` pauses offscreen inference directly before injecting deterministic pointer input. It does not pause the background session or change any production state/safety code. Each test's existing START setup starts capture afresh; the capture lifecycle and packaged-worker tests continue to exercise real inference.
+- The dictation scenario injects a fresh pointer sample before submit and before confirm, matching the required fresh tracking signal rather than relying on an earlier sample staying valid.
+- Removed all temporary diagnostics. No production gates were relaxed and no implementation change was needed for form submission.
+
+Verification after the fixture correction:
+
+```text
+npm run build --prefix extension
+Local model assets ready; background/content/tracking/UI/offscreen bundles built; exit 0.
+
+# Cached Chrome for Testing executable supplied via CHROMIUM_PATH;
+# NO_COLOR and FORCE_COLOR unset to remove harness conflicts.
+npm run test:e2e --prefix extension -- --grep 'actual content|dictation words|low confidence'
+3 passed (4.7s)
+
+npm run test:e2e --prefix extension
+9 passed (12.1s)
+```
+
+The full browser run passed actual content clicks, dictation and submit confirmation, low-confidence/pause/escape behavior, missing-key/unknown no-ops, named tab switching and close confirmation, live offscreen capture through popup close/navigation, dashboard key/privacy boundaries, dashboard authorization after in-place navigation, and packaged face/hand blank-frame rejection.
+
+```text
+npm test --prefix extension
+Test Files 9 passed (9)
+Tests 182 passed (182)
+Duration 1.91s
+
+npm run typecheck --prefix extension
+tsc --noEmit
+exit 0
+
+git diff --check
+exit 0
+```
+
+Remaining limitation: these browser checks use fake camera/microphone inputs and injected pointer samples. They make no physical accuracy or comfort claim. The prior live Jev paraphrase concern remains unchanged. The single dashboard setup timeout observed before the fixture correction did not recur in either subsequent complete run; all authorization assertions passed in the final run.

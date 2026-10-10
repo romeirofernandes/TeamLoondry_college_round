@@ -19,6 +19,9 @@ async function message<T = any>(msg: Message): Promise<T> {
   return controls.evaluate(async (msg) => chrome.runtime.sendMessage(msg), msg);
 }
 async function point(selector: string, confidence = 1) {
+  // These command cases supply deterministic pointer samples. Blank fake-camera
+  // inference must not replace them; capture lifecycle tests keep inference live.
+  await message({ type: "OFFSCREEN_COMMAND", command: "pause" });
   await page.locator(selector).scrollIntoViewIfNeeded();
   const box = await page.locator(selector).boundingBox();
   if (!box) throw new Error("No target");
@@ -123,8 +126,10 @@ test("dictation words do not navigate; submission requires confirmation", async 
   await expect(page.locator("#search")).toHaveValue("scroll down hello world");
   expect(await page.evaluate(() => scrollY)).toBe(0);
   await heard("stop typing");
+  await point("#search");
   await heard("submit form");
   await expect(page.locator("#submissions")).toHaveText("0");
+  await point("#search");
   await heard("confirm");
   await expect(page.locator("#submissions")).toHaveText("1");
   await point("#password");
