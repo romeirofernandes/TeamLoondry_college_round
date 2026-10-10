@@ -42,36 +42,47 @@ The first package is unsigned by Apple Developer ID. macOS may ask the user to a
 
 ## Install the macOS preview
 
-The current preview targets Apple Silicon and macOS 26 or newer. It is unsigned by Apple Developer ID and is not notarized. The installer requires an explicit opt-in, checks the package checksum and app identity, and installs into `~/Applications` by default. Use the exact pinned version below; preview releases are not resolved through GitHub's `/releases/latest` URL.
+The current preview targets Apple Silicon and macOS 26 or newer. It is unsigned by Apple Developer ID and is not notarized. The installer requires an explicit opt-in, checks the package checksum and app identity, and installs into `~/Applications` by default. This GitHub repository is private, so the release requires a GitHub account with repository access. Anonymous `github.com/.../releases/download/...` curl URLs return 404. Authenticate with GitHub CLI first (`gh auth login`).
 
-Download the installer and run it from Terminal:
-
-```bash
-curl -fsSL https://github.com/romeirofernandes/TeamLoondry_college_round/releases/download/v0.1.0-preview.1/install-app.sh -o /tmp/install-handsfree.sh
-HANDSFREE_VERSION=v0.1.0-preview.1 HANDSFREE_ALLOW_UNSIGNED_MAC=1 bash /tmp/install-handsfree.sh
-```
-
-The script fetches the pinned DMG and checksum, verifies them, installs the app, and opens it. If Gatekeeper blocks the first launch, use System Settings > Privacy & Security > Open Anyway for Handsfree. Camera and macOS input-control permissions are separate grants requested only when their features are used.
-
-To download the DMG yourself, verify it, and open it in Finder:
+Use authenticated `curl` requests against GitHub's release-assets API, then run the installer against the downloaded, checksum-verified local package:
 
 ```bash
-mkdir -p "$HOME/Downloads/Handsfree-preview"
-cd "$HOME/Downloads/Handsfree-preview"
-curl -fL https://github.com/romeirofernandes/TeamLoondry_college_round/releases/download/v0.1.0-preview.1/Handsfree_0.1.0_aarch64.dmg -o Handsfree_0.1.0_aarch64.dmg
-curl -fL https://github.com/romeirofernandes/TeamLoondry_college_round/releases/download/v0.1.0-preview.1/SHA256SUMS -o SHA256SUMS
-shasum -a 256 -c SHA256SUMS
-open Handsfree_0.1.0_aarch64.dmg
+(
+  set -e
+  mkdir -p "$HOME/Downloads/Handsfree-preview"
+  cd "$HOME/Downloads/Handsfree-preview"
+  export GH_TOKEN="$(gh auth token)"
+  curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' https://api.github.com/repos/romeirofernandes/TeamLoondry_college_round/releases/assets/629006555 -o Handsfree_0.1.0_aarch64.dmg
+  curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' https://api.github.com/repos/romeirofernandes/TeamLoondry_college_round/releases/assets/629006553 -o install-app.sh
+  curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' https://api.github.com/repos/romeirofernandes/TeamLoondry_college_round/releases/assets/629006552 -o update-app.sh
+  curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' https://api.github.com/repos/romeirofernandes/TeamLoondry_college_round/releases/assets/629006558 -o SHA256SUMS
+  unset GH_TOKEN
+  shasum -a 256 -c SHA256SUMS
+  HANDSFREE_ALLOW_UNSIGNED_MAC=1 bash ./install-app.sh --local-package ./Handsfree_0.1.0_aarch64.dmg
+)
 ```
 
-The DMG opens a standard macOS installer window. Drag `Handsfree.app` to Applications. If macOS blocks it, approve it in Privacy & Security before reopening. Review the [pinned preview release](https://github.com/romeirofernandes/TeamLoondry_college_round/releases/tag/v0.1.0-preview.1) for the tested build's report, screenshot, checksum, and current limitations.
+The installer verifies the matching checksum and app identity, installs the app, and opens it. If Gatekeeper blocks the first launch, use System Settings > Privacy & Security > Open Anyway for Handsfree. Camera and macOS input-control permissions are separate grants requested only when their features are used. The [pinned preview release](https://github.com/romeirofernandes/TeamLoondry_college_round/releases/tag/v0.1.0-preview.1) includes the tested build's report, screenshot, checksum, and current limitations; sign into GitHub to view it.
 
-To reinstall/update from this pinned preview, close Handsfree and run:
+For a direct DMG download without installing, fetch it and its checksum in an authenticated shell, then open it in Finder:
 
 ```bash
-curl -fsSL https://github.com/romeirofernandes/TeamLoondry_college_round/releases/download/v0.1.0-preview.1/update-app.sh -o /tmp/update-handsfree.sh
-HANDSFREE_VERSION=v0.1.0-preview.1 HANDSFREE_ALLOW_UNSIGNED_MAC=1 bash /tmp/update-handsfree.sh
+(
+  set -e
+  mkdir -p "$HOME/Downloads/Handsfree-preview"
+  cd "$HOME/Downloads/Handsfree-preview"
+  export GH_TOKEN="$(gh auth token)"
+  curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' https://api.github.com/repos/romeirofernandes/TeamLoondry_college_round/releases/assets/629006555 -o Handsfree_0.1.0_aarch64.dmg
+  curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' https://api.github.com/repos/romeirofernandes/TeamLoondry_college_round/releases/assets/629006558 -o SHA256SUMS
+  unset GH_TOKEN
+  grep 'Handsfree_0.1.0_aarch64.dmg$' SHA256SUMS | shasum -a 256 -c -
+  open Handsfree_0.1.0_aarch64.dmg
+)
 ```
+
+Then drag `Handsfree.app` to Applications. This manual route does not run the installer's app-identity checks; prefer the installer command above for installation.
+
+For an update later, download the new DMG, installer, updater, and matching checksum manifest into a clean directory using their authenticated API asset URLs. Close Handsfree, run `shasum -a 256 -c SHA256SUMS`, then run the new `update-app.sh` with `--local-package` and the new DMG filename.
 
 ## Development verification
 

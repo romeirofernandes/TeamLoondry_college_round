@@ -941,7 +941,7 @@ On Linux, document required runtime libraries for AppImage and supported alterna
 
 ## 45. Release destination and proposed assets
 
-The current remote is `https://github.com/romeirofernandes/TeamLoondry_college_round.git`. That is the proposed release destination, not either reference repository.
+The current remote is `https://github.com/romeirofernandes/TeamLoondry_college_round.git`, and it is the confirmed release destination. The repository is private. The first Mac preview, `v0.1.0-preview.1`, is published there; release-page and asset downloads require an authenticated GitHub account with repository access. Anonymous `curl` requests to GitHub release URLs return 404 while the repository stays private.
 
 Release assets should include:
 
@@ -960,18 +960,18 @@ Release assets should include:
 
 Native messaging helper resources belong in app packages. Installation registers manifests at stable per-user paths for selected browsers. Registration repair must be available without reinstalling all settings.
 
-Do not promise a working download URL until the release is actually published and tested. The following are proposed post-publication URLs:
+The current pinned Mac preview assets are published at:
 
 - [Releases](https://github.com/romeirofernandes/TeamLoondry_college_round/releases)
-- [Latest release](https://github.com/romeirofernandes/TeamLoondry_college_round/releases/latest)
-- `https://github.com/romeirofernandes/TeamLoondry_college_round/releases/latest/download/install-app.sh`
-- `https://github.com/romeirofernandes/TeamLoondry_college_round/releases/latest/download/update-app.sh`
+- [v0.1.0-preview.1](https://github.com/romeirofernandes/TeamLoondry_college_round/releases/tag/v0.1.0-preview.1)
+- `https://github.com/romeirofernandes/TeamLoondry_college_round/releases/download/v0.1.0-preview.1/Handsfree_0.1.0_aarch64.dmg`
+- Authenticated installer and updater download steps are in `desktop/README.md`; that document verifies the checksums and passes the downloaded DMG to the local-package installer path.
 
-The user asked for Releases distribution. Publication belongs to the implementation/release work after real packages exist and pass the stated gates. This planning document is not an application release artifact.
+The release is explicitly a macOS preview, not the completed desktop/extension product. `latest` URLs remain future distribution guidance for a public stable release with platform-specific assets. This planning document is not an application release artifact.
 
-## 46. Proposed public install instructions
+## 46. Future public install instructions
 
-These commands are documentation templates for future published assets. They do not work as an installation guarantee today.
+These Linux and public stable-release commands remain templates. The repository is private, and this preview only provides a Mac ARM64 package; use the authenticated, tested steps in `desktop/README.md` for `v0.1.0-preview.1`.
 
 Linux x86_64:
 
@@ -1467,8 +1467,8 @@ Local checks ran on the Arch Linux development host on 2026-10-11:
 - Installer shell syntax and the Mac smoke-test Python syntax passed. The local diagnostic command reported Arch x86_64 and correctly stated that native input is macOS-only.
 - The official runner image list maps `macos-26` to Apple Silicon. The job verified `arm64`, macOS 26.6.2, Node 22, and Rust on its runner.
 
-Three independent [GitHub Mac runs succeeded](https://github.com/romeirofernandes/TeamLoondry_college_round/actions/runs/38085545874): the automatic push run [38085539570](https://github.com/romeirofernandes/TeamLoondry_college_round/actions/runs/38085539570), a manual dispatch [38085545874](https://github.com/romeirofernandes/TeamLoondry_college_round/actions/runs/38085545874), and run [38086135535](https://github.com/romeirofernandes/TeamLoondry_college_round/actions/runs/38086135535) on the commit with the Mac install instructions. All three verified arm64 packaging and passed the same eight install checks: unsigned install requires an explicit opt-in; package hash and app identity verify; the installed ARM64 binary starts stopped; the packaged updater preserves a sentinel; a corrupted package leaves the existing app intact; installed WKWebView renders React and invokes Rust; the live panel screenshot captures; and temporary installer staging is removed. The manual-dispatch candidate was 16.65 MiB with SHA-256 `dbf209a12948ea71b01c9648c1629c56c5fca1369b19e02aa2f3a436845dcc6a`. Separate runs produce different DMG hashes, so each Actions artifact must stay paired with its own report. All three runner diagnostics reported CoreGraphics input and Accessibility preflight calls as trusted, but none of the smoke tests injected pointer/click events or requested camera access.
+Four independent [GitHub Mac runs succeeded](https://github.com/romeirofernandes/TeamLoondry_college_round/actions/runs/38086587464): automatic push runs [38085539570](https://github.com/romeirofernandes/TeamLoondry_college_round/actions/runs/38085539570) and [38086135535](https://github.com/romeirofernandes/TeamLoondry_college_round/actions/runs/38086135535), manual dispatch [38085545874](https://github.com/romeirofernandes/TeamLoondry_college_round/actions/runs/38085545874), and release-instructions run [38086587464](https://github.com/romeirofernandes/TeamLoondry_college_round/actions/runs/38086587464). All four ran on `macos-26` Apple Silicon and passed the same eight install checks: unsigned install requires an explicit opt-in; package hash and app identity verify; the installed ARM64 binary starts stopped; the packaged updater preserves a sentinel; a corrupted package leaves the existing app intact; installed WKWebView renders React and invokes Rust; the live panel screenshot captures; and temporary installer staging is removed. The exact release DMG is 17,457,384 bytes with SHA-256 `7b78f5bbed0c0bb7f0da2bccaa76dc617a4c6bbaaffd173c2d5e3fb729ea6087`. Separate runs produce different hashes, so each Actions artifact stays paired with its own report. None of the smoke tests injected pointer/click events or requested camera access.
 
-The run's `handsfree-macos-preview` Actions artifact contains the tested DMG, installer, updater, and checksum list; `handsfree-macos-test-evidence` contains the report and Mac screenshot. I copied the exact tested package and evidence into ignored `local-docs/artifacts/handsfree-macos-run-38085545874/` for this workspace and rechecked its hashes. The app remains unsigned and not notarized. No public release has been published because browser pairing, voice, and the broader app actions are still missing. The user's M4 must still qualify camera access and real pointer/gesture behavior before those features are described as working.
+The exact artifact/report/screenshot from run `38086587464` were published in the [v0.1.0-preview.1 GitHub prerelease](https://github.com/romeirofernandes/TeamLoondry_college_round/releases/tag/v0.1.0-preview.1), tagged at tested commit `e4e73c236ce064a5b3a619ccbbaf219dcf083f82`. The app is unsigned and not notarized. The repository is private; authenticated asset downloads passed checksum verification, while unauthenticated browser release URLs correctly returned 404. The release does not include browser pairing, voice, broader native app/file/media actions, or Linux/Hyprland input. The user's physical M4 must still qualify camera access and real pointer/gesture behavior before those features are described as working. The Mac panel screenshot and sanitized `macos-validation.json` are release assets.
 
-No real environment files or credentials changed, so no Varte sync is pending. Private notes remain ignored and were not staged. Treat the runner results and screenshot as pending evidence until the workflow finishes and its uploaded artifacts are inspected.
+No real environment files or credentials changed, so no Varte sync is pending. Private notes remain ignored and were not staged. The runner artifacts were downloaded, checksum-verified, and published with the release. Physical M4 camera and pointer qualification remains open.
