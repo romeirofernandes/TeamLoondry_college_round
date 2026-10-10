@@ -1,4 +1,4 @@
-import type { Intent, Settings } from "../shared";
+import type { FormCommand, Intent, Settings } from "../shared";
 
 /** Normalize recognizer punctuation and spacing, without interpreting partial commands. */
 export function normalizeSpeech(text: string): string {
@@ -31,7 +31,6 @@ const fixed: Record<string, Intent> = {
   "start typing": { type: "start-typing" },
   "stop typing": { type: "stop-typing" },
   "finish dictation": { type: "stop-typing" },
-  "submit form": { type: "submit" },
   submit: { type: "submit" },
   pause: { type: "pause" },
   "pause handsfree": { type: "pause" },
@@ -118,8 +117,57 @@ export function wakeRequest(text: string): string | null {
   return match ? match[1].trim() : null;
 }
 
+function formIndex(text: string): number | null {
+  const normalized = normalizeSpeech(text);
+  const digits = /^(\d{1,3})(?:st|nd|rd|th)?$/.exec(normalized);
+  const index = digits ? Number(digits[1])
+    : ordinalNames.includes(normalized) ? ordinalNames.indexOf(normalized) + 1
+    : tabNumberNames.indexOf(normalized) + 1;
+  return index >= 1 && index <= 999 ? index : null;
+}
+
+/** Match framing against the original text so literal answers retain their spelling. */
+export function parseFormCommand(text: string): FormCommand | null {
+  const command = text.trim().replace(/^(?:(?:could|can|would)\s+you\s+)?(?:please\s+)?/i, "");
+  const fixedCommand = normalizeSpeech(command).replace(/ please$/, "");
+  const fixedForms: Record<string, FormCommand> = {
+    "list forms": { type: "list-forms" },
+    "list fields": { type: "list-fields" },
+    "list required fields": { type: "list-required" },
+    "what fields are missing": { type: "missing" },
+    "review my answers": { type: "review" },
+    "next section": { type: "next-section" },
+    "previous section": { type: "previous-section" },
+    "submit form": { type: "submit" },
+  };
+  if (Object.hasOwn(fixedForms, fixedCommand)) return fixedForms[fixedCommand];
+  const form = /^(?:open|select)\s+form\s+(.+)$/is.exec(command);
+  if (form) {
+    const query = form[1].trim();
+    const index = formIndex(query);
+    return index === null ? { type: "select-form", query } : { type: "select-form", index };
+  }
+  const fill = /^fill\s+(.+?)\s+with\s+(.+)$/is.exec(command);
+  if (fill) return { type: "fill", query: fill[1].trim(), value: fill[2].trim() };
+  const enter = /^enter\s+(.+)\s+in\s+(.+)$/is.exec(command);
+  if (enter) return { type: "fill", query: enter[2].trim(), value: enter[1].trim() };
+  const change = /^change\s+(.+?)\s+to\s+(.+)$/is.exec(command);
+  if (change) return { type: "change", query: change[1].trim(), value: change[2].trim() };
+  const dictate = /^dictate\s+into\s+(.+)$/is.exec(command);
+  if (dictate) return { type: "dictate", query: dictate[1].trim() };
+  const option = /^(?:select|choose)\s+(.+)\s+for\s+(.+)$/is.exec(command);
+  if (option) return { type: "select-option", query: option[2].trim(), option: option[1].trim() };
+  const field = /^(check|uncheck|clear)\s+(.+)$/is.exec(command);
+  if (field) return { type: field[1].toLowerCase() as "check" | "uncheck" | "clear", query: field[2].trim() };
+  const choose = /^choose\s+(.+)$/is.exec(command);
+  const index = choose ? formIndex(choose[1]) : null;
+  return index === null ? null : { type: "choose", index };
+}
+
 /** Only call in command mode. Dictation bypasses this parser altogether. */
 export function parseIntent(text: string): Intent {
+  const formCommand = parseFormCommand(text);
+  if (formCommand) return { type: "form-command", command: formCommand };
   const normalized = normalizeSpeech(text).replace(/^(?:(?:could|can|would) you )?(?:please )?/, "").replace(/ please$/, "");
   const pointer = /^(?:use|switch to) (?:the )?(head|face|hand|hands)(?: (?:pointer|control))?$/.exec(normalized);
   if (pointer) return { type: "switch-pointer", mode: /^(head|face)$/.test(pointer[1]) ? "face" : "hand" };

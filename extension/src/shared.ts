@@ -197,7 +197,28 @@ export const initialState: SessionState = {
   calibrationSnapshots: {},
 };
 export type LinkDisposition = "new-tab" | "background";
+/** Explicit page-local form operations; answers must never be provider input. */
+export type FormCommand =
+  | { type: "list-forms" }
+  | { type: "select-form"; query: string }
+  | { type: "select-form"; index: number }
+  | { type: "list-fields" }
+  | { type: "list-required" }
+  | { type: "fill"; query: string; value: string }
+  | { type: "change"; query: string; value: string }
+  | { type: "dictate"; query: string }
+  | { type: "select-option"; query: string; option: string }
+  | { type: "check"; query: string }
+  | { type: "uncheck"; query: string }
+  | { type: "clear"; query: string }
+  | { type: "choose"; index: number }
+  | { type: "missing" }
+  | { type: "review" }
+  | { type: "next-section" }
+  | { type: "previous-section" }
+  | { type: "submit" };
 export type Intent =
+  | { type: "form-command"; command: FormCommand }
   | {type:"upload-file"}
   | { type: "switch-pointer"; mode: PointerMode }
   | SiteRequest

@@ -16,7 +16,7 @@ import {
   type TargetText,
   type PageContext,
 } from "./shared";
-import { parseIntent, sessionIntent, wakeRequest } from "./core/parser";
+import { parseFormCommand, parseIntent, sessionIntent, wakeRequest } from "./core/parser";
 import { mediaControl } from "./content/media";
 import { bundledProviders } from "./provider-config";
 import { rankTabs, rankTargets, adjacentTabId } from "./core/ranking";
@@ -491,6 +491,10 @@ async function activateTab(id: number, current: () => boolean = () => true) {
 }
 async function arbitrarySingle(query: string, signal?: AbortSignal) {
   const parsed = parseIntent(query);
+  if (parsed.type === "form-command") {
+    await action(parsed, () => !signal?.aborted && state.running && !state.paused);
+    return;
+  }
   if (!groqOptions().groqKeys.length) { await publish({ feedback: "Add a Groq key in the website dashboard to use hey handsfree commands." }); return; }
   const requestRevision = pageRevision;
   const snapshotTab = state.targetTabId;
@@ -663,6 +667,27 @@ async function action(intent: Intent, current: () => boolean = () => true) {
       feedback:
         'Heard "' + intent.heard + '". No command matched; nothing happened.',
     });
+    return;
+  }
+  if (intent.type === "form-command") {
+    if (intent.command.type === "choose" && tabChoices.length) {
+      await action({ type: "choose", index: intent.command.index }, current);
+      return;
+    }
+    pendingClose = null;
+    const command = intent.command;
+    if (("query" in command && command.query.length > 500) ||
+        ("option" in command && command.option.length > 1000) ||
+        ("value" in command && command.value.length > 10000)) {
+      await publish({ feedback: "That form command is too long. Use a shorter field, answer, or option." });
+      return;
+    }
+    const tabId = state.targetTabId;
+    const revision = pageRevision;
+    const result = await page({ type: "PAGE_ACTION", intent }, tabId);
+    if (!current() || state.targetTabId !== tabId || pageRevision !== revision) return;
+    if (typeof result?.dictating === "boolean") await publish({ dictating: result.dictating });
+    if (result?.error) await publish({ feedback: result.error });
     return;
   }
   if (intent.type === "cancel") {
@@ -859,9 +884,19 @@ async function voicePlan(steps: string[], snapshot: SiteSnapshot) {
   }
   if(valid())await publish({feedback:`Completed ${completed} verified steps.`});
 }
+/** Persist command state without retaining literal form answers or dictation. */
+function storedTranscript(text: string): string {
+  if (state.dictating) return "Dictation";
+  const command = wakeRequest(text) ?? text.trim().replace(/^handsfree[, ]+/i, "");
+  // Interim transcripts may contain an answer before its trailing field framing
+  // arrives ("enter [answer] in ..."). Redact these prefixes as well.
+  const formPrefix = /^(?:(?:could|can|would)\s+you\s+)?(?:please\s+)?(?:fill|enter|change|dictate|select|choose|check|uncheck|clear|open\s+form)\b/i;
+  return parseFormCommand(command) || formPrefix.test(command) ? "Form command" : text;
+}
+
 async function routeHeard(text: string, parsed: Intent, revision: number) {
   if (revision !== pageRevision || !state.running || state.paused) return;
-  await publish({ lastHeard: text, interimTranscript: "" });
+  await publish({ lastHeard: storedTranscript(text), interimTranscript: "" });
   if (revision !== pageRevision || !state.running || state.paused) return;
   const conversation: SiteSnapshot | null = await page({type:"GET_SITE_CONTEXT"});
   if (revision !== pageRevision || !state.running || state.paused) return;
@@ -883,6 +918,13 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     return;
   }
   if (isCancellation(text)) { await action({type:"cancel"},current); return; }
+  const wake = wakeRequest(text);
+  const wakeForm = wake === null ? null : parseFormCommand(wake);
+  if (parsed.type === "form-command" || wakeForm) {
+    wakeUntil = 0;
+    await action(wakeForm ? { type: "form-command", command: wakeForm } : parsed, current);
+    return;
+  }
   const openSite = /^(?:open|take me to) (wikipedia|github|reddit|amazon|spotify|netflix|youtube|chatgpt|chat gpt|ai chat|x|twitter|whatsapp|gmail|google meet|meet|linkedin|irctc|google maps|maps)$/i.exec(text.trim().replace(/[.!?]+$/,""));
   if (openSite) {
     const spokenSite = openSite[1].toLowerCase();
@@ -911,7 +953,6 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     if(unsafeSpeech(text)) { await publish({feedback:'This is a question, commentary, negation or an excluded account operation. No page action was taken.'}); return; }
     if (/^(next|stop)$/i.test(text.trim())) { await publish({feedback:'Specify what to stop or advance, such as next episode or pause Handsfree.'}); return; }
   }
-  const wake = wakeRequest(text);
   if (wake !== null) {
     wakeUntil = 0;
     if (!wake) {
@@ -1118,7 +1159,8 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     }
     case "TRANSCRIPT":
       if (state.running && !state.paused) {
-        await publish(message.final ? { lastHeard: message.text, interimTranscript: "" } : { interimTranscript: message.text }, message.final);
+        const transcript = storedTranscript(message.text);
+        await publish(message.final ? { lastHeard: transcript, interimTranscript: "" } : { interimTranscript: transcript }, message.final);
         await page(message);
       }
       return { ok: true };
@@ -1278,13 +1320,16 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       }
       if (state.paused) return { ok: true };
       const revision = pageRevision;
-      const intent = parseIntent(message.text);
+      const wake = wakeRequest(message.text);
+      const wakeForm = wake === null ? null : parseFormCommand(wake);
+      const intent: Intent = wakeForm ? { type: "form-command", command: wakeForm } : parseIntent(message.text);
       if (["cancel", "pause", "stop"].includes(intent.type)) linkAuthorizationRevision++;
       // Typing transitions remain serialized. A click can cancel slow provider
       // work only when no earlier transcript may enter or leave dictation.
       if (
         activeProvider && !state.dictating && pendingTypingCommands === 0 &&
-        ["click", "open", "click-target", "click-link", "focus-target", "show-links", "pause", "stop", "cancel"].includes(intent.type)
+        (intent.type === "form-command" && intent.command.type !== "dictate" ||
+          ["click", "open", "click-target", "click-link", "focus-target", "show-links", "pause", "stop", "cancel"].includes(intent.type))
       ) {
         const provider = activeProvider;
         urgentCommand = urgentCommand.then(() => routeHeard(message.text, intent, revision));
@@ -1292,7 +1337,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
         await urgentCommand;
         return { ok: true };
       }
-      const typing = intent.type === "start-typing" || intent.type === "stop-typing";
+      const typing = intent.type === "start-typing" || intent.type === "stop-typing" || intent.type === "form-command" && intent.command.type === "dictate";
       if (typing) pendingTypingCommands++;
       commandQueue = commandQueue
         .then(async () => { await urgentCommand; await routeHeard(message.text, intent, revision); })
