@@ -31,6 +31,11 @@ with tempfile.TemporaryDirectory(prefix="handsfree-mac-test-") as temporary:
     assert diagnostics["os"] == "macos" and diagnostics["arch"] == "aarch64"
     assert diagnostics["state"] == "stopped" and not diagnostics["cloudSpeech"] and diagnostics["nativeControl"]
     record("installed ARM64 executable starts stopped")
+    helper=app / "Contents/Resources/resources/handsfree-speech"
+    assert helper.is_file(), "on-device speech helper missing from app bundle"
+    voice=json.loads(run([str(helper),"--diagnostics"]).stdout)
+    assert voice["onDeviceOnly"] is True
+    record("bundled Swift speech helper runs diagnostics without capturing microphone")
     sentinel = destination / "preferences-sentinel.json"
     sentinel.write_text('{"calibration":"keep","pairing":"keep"}')
     original = sentinel.read_bytes()

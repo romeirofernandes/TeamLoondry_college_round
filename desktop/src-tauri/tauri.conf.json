@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "identifier": "com.handsfree.desktop",
   "build": {
-    "beforeDevCommand": "npm run assets && npm run dev",
+    "beforeDevCommand": "node scripts/native.mjs && npm run assets && npm run dev",
     "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
