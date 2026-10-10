@@ -8,6 +8,14 @@ Unit/DOM coverage includes exact parser matching and unknown phrases, target-lat
 
 Browser tests load the real built scripts in Chromium. The isolated fixture manifest pregrants tabs and localhost access so native permission dialogs do not block automation; the distributed manifest retains optional permissions. Deterministic pointer/transcript messages exercise the same runtime protocol as real tracking/recognition. Fake camera frames test stream release and local model initialization. They do not measure real user performance.
 
+### Dashboard and transcript integration
+
+Run `HANDSFREE_DASHBOARD_ORIGIN=http://localhost:3001 node tests/dashboard-next.mjs` from `extension/` with the Next server running on that origin. Set `CHROMIUM_PATH` to an installed Chrome for Testing executable when `/usr/bin/chromium` is unavailable. If installed, `@axe-core/playwright` adds light/dark accessibility checks. The harness verifies connected command scrolling, pause/resume/stop, saved cursor choices across reload, expanded slider bounds and saved values, and responsive widths 320, 390, 768 and 1280. Screenshots and JSON reports are written to ignored `extension/test-results/`.
+
+The Chrome suite mirrors final speech callbacks using `TRANSCRIPT` plus `HEARD`, verifies interim text cannot activate, and exercises named click ambiguity, search query/background preservation, tab switching, wake answers, find-only highlights and wake-prefixed named clicks with submit confirmation. Only the provider HTTP boundary is replaced with deterministic fixtures in wake browser tests; routing, local page matching and confirmation gates are real. This proves integration, not live speech recognition or provider accuracy. YouTube-style visible `aria-hidden` thumbnails are eligible for pointer targeting and share dwell with their same-link title; `aria-hidden` page text remains excluded from provider context. Cursor DOM coverage checks that style changes preserve an active dwell timer and its one-click latch. Legacy settings coverage uses a stored fixture genuinely missing the new fields.
+
+After each rebuild, reload the unpacked extension in `chrome://extensions` and refresh the webpage/dashboard. Never copy local provider keys into test output or tracked files.
+
 ## Tracking regression measurements
 
 Run `node tests/tracking-timing.mjs` from `extension/` to check raw-frame capture while the displayed video clock is deliberately frozen. `--baseline=50fa96b` runs the previous tracker against the same harness. On this machine the previous tracker dropped from about20updates/second to0; the updated tracker maintained about20updates/second. This reproduces a frame-delivery failure, not every cause of lag on a physical laptop.
@@ -22,14 +30,14 @@ Use the fixture from the root README. Start the Next.js site and open its dashbo
 | ------------------------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------- |
 | First setup with permissions               | Plain permission text, live preview, visible errors          | Seconds from opening popup to first successful selection |
 | Neutral and range calibration              | Completes in about8seconds; no selections during calibration | Total setup time, comfortable range, retries                |
-| Face point to five targets                 | Smooth movement; only intended target highlights             | Correct selections, missed targets, sensitivity             |
-| Broad hand control                         | Palm movement and steady hold work without pinch             | Correct/incorrect selections, fatigue                       |
+| Face point to five targets                 | Small held turns keep moving; neutral stops in place             | Correct selections, missed targets, sensitivity             |
+| Broad hand control                         | Complete open palm stays visible; small movement and steady hold work             | Correct/incorrect selections, fatigue                       |
 | Brief passes over targets                  | No click before dwell threshold                              | Accidental activations                                      |
 | Leave halfway through dwell                | Ring resets and no click                                     | Cancellation result                                         |
 | Stay after a selection                     | No repeated click until leaving and returning                | Click counter                                               |
 | Cover camera, move out of view, disconnect | Cursor freezes; no dwell or hand action                      | Loss count and any accidental action                        |
 | Resume after loss                          | Stable position, target review before action                 | Jumps, wrong selection                                      |
-| Shift posture slowly                       | Neutral adapts without constant calibration                  | Recalibration count                                         |
+| Shift posture slowly                       | Review comfort; recalibrate if neutral needs correction                  | Recalibration count                                         |
 | Dim light/backlight                        | Low reliability blocks selection, feedback remains clear     | Correct selections and observed failures                    |
 | Selected-language voice commands                   | Exact intended actions; unknown phrase does nothing          | Intended command, heard phrase, action                      |
 | Fans/music/distant microphone              | Failures show feedback without unrelated actions             | Accuracy at each noise condition                            |
@@ -40,6 +48,8 @@ Use the fixture from the root README. Start the Next.js site and open its dashbo
 | Close tab then cancel/switch tab           | Original close is cancelled                                  | Any tab closed unexpectedly                                 |
 | Duplicate tab titles/find labels           | Numbered choice required                                     | Wrong match/activation                                      |
 | Say hey handsfree to find offscreen target                      | Scroll/highlight; no click                                   | Match result                                                |
+| Wake named click and page/general question | Click/open matches real labels with confirmation gates; answers are text | Match errors, answer usefulness, privacy exclusions |
+| Scroll speed and cursor preferences | Save across reload; ring visible for all styles; scroll stops on pause/loss as appropriate | Speed comfort, dwell visibility |
 | Find with missing key/invalid key/no match | Clear error/no-op                                            | Any unintended action                                       |
 | Pause during pointing/dictation            | All selection and recognition stops                          | Any action after pause                                      |
 | Close popup and return to webpage           | Capture and pointer updates continue                         | Fresh inference after closing preview                       |

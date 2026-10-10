@@ -4,7 +4,7 @@ import { defaults } from "../src/shared";
 import { ActivationGate } from "../src/core/safety";
 
 describe("tracking cursor contract", () => {
-  it("maps neutral to center, range to screen edge and mirrors horizontal movement", () => {
+  it("keeps hand mapping absolute, with neutral at center and mirrored range at the edge", () => {
     const f = new PointerFilter();
     f.setCalibration({
       neutralX: 0.5,
@@ -22,7 +22,7 @@ describe("tracking cursor contract", () => {
       rangeX: 0.2,
       rangeY: 0.2,
     });
-    const point = edge.update({ x: 0.3, y: 0.7, confidence: 1 }, 0, defaults);
+    const point = edge.update({ x: 0.3, y: 0.7, confidence: 1 }, 0, { ...defaults, pointerMode: "hand" });
     expect(point.x).toBeCloseTo(1);
     expect(point.y).toBeCloseTo(1);
   });
@@ -108,5 +108,55 @@ describe("tracking cursor contract", () => {
     expect(landmarkPoint([], "face")).toBeNull();
     points[1].x = NaN;
     expect(landmarkPoint(points, "face")).toBeNull();
+  });
+});
+
+describe("comfortable face rate control", () => {
+  const turn = { x: 0.48, y: 0.5, confidence: 1 };
+  const neutral = { x: 0.5, y: 0.5, confidence: 1 };
+  const filter = () => {
+    const f = new PointerFilter();
+    f.setCalibration({ neutralX: 0.5, neutralY: 0.5, rangeX: 0.04, rangeY: 0.04 });
+    return f;
+  };
+  it("continues moving for a held small turn and stops at neutral without recentering", () => {
+    const f = filter();
+    f.update(turn, 0, defaults);
+    const first = f.update(turn, 100 / 3, defaults);
+    const later = f.update(turn, 200 / 3, defaults);
+    expect(later.x).toBeGreaterThan(first.x);
+    const stopped = f.update(neutral, 100, defaults);
+    expect(stopped.x).toBe(later.x);
+    expect(f.update(neutral, 200, defaults).x).toBe(later.x);
+    expect(later.x).toBeGreaterThan(0.5);
+  });
+  it("ignores small neutral landmark noise instead of accumulating drift", () => {
+    const f = filter();
+    f.update(neutral, 0, defaults);
+    for (let t = 33; t < 1000; t += 33) {
+      const result = f.update({ x: 0.503, y: 0.497, confidence: 1 }, t, defaults);
+      expect(result).toMatchObject({ x: 0.5, y: 0.5 });
+    }
+  });
+  it("integrates elapsed time consistently across camera frame rates", () => {
+    const travel = (step: number) => {
+      const f = filter();
+      f.update(turn, 0, defaults);
+      for (let t = step; t <= 500; t += step) f.update(turn, t, defaults);
+      return f.update(turn, 500, defaults).x;
+    };
+    expect(travel(10)).toBeCloseTo(travel(50), 5);
+  });
+  it("freezes on loss, skips elapsed loss/pause time and bounds delayed frames", () => {
+    const f = filter();
+    f.update(turn, 0, defaults);
+    const before = f.update(turn, 33, defaults);
+    expect(f.update(null, 66, defaults).x).toBe(before.x);
+    expect(f.update(turn, 10000, defaults).x).toBe(before.x);
+    const resumed = f.update(turn, 10033, defaults);
+    expect(resumed.x).toBeGreaterThan(before.x);
+    f.reset();
+    expect(f.update(turn, 20000, defaults).x).toBe(resumed.x);
+    expect(f.update(turn, 30000, defaults).x - resumed.x).toBeLessThan(0.04);
   });
 });

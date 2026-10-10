@@ -310,3 +310,17 @@ describe("bounded local metrics", () => {
     });
   });
 });
+
+describe('anchored local commands', () => {
+  it.each([
+    ['could you please scroll down please', { type: 'scroll', direction: 'down' }],
+    ['click Careers', { type: 'click-target', query: 'careers' }],
+    ['open C++ (Guide)', { type: 'click-target', query: 'c++ (guide)' }],
+    ['search for cats in a new tab', { type: 'search', query: 'cats', background: false }],
+    ['search cats in a new tab in background', { type: 'search', query: 'cats', background: true }],
+    ['in the background search for cats', { type: 'search', query: 'cats', background: true }],
+    ['switch to the next tab', { type: 'next-tab' }],
+    ['switch to previous tab', { type: 'previous-tab' }],
+    ['switch to the tab Project notes', { type: 'named-tab', name: 'project notes' }],
+  ])('parses %s without a provider', (text, expected) => expect(parseIntent(text)).toEqual(expected));
+});

@@ -16,7 +16,7 @@ const pageSender = (id: number): chrome.runtime.MessageSender => ({
   url: "https://example.test/",
 });
 
-async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: string } = {}) {
+async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: string; settings?: Record<string, unknown>; legacySettings?: Record<string, unknown> } = {}) {
   let listener: Listener | undefined;
   let pageDictating = false;
   const event = () => ({ addListener: vi.fn() });
@@ -25,7 +25,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
       local: {
         setAccessLevel: vi.fn(async () => {}),
         get: vi.fn(async () => ({
-          settings: { ...defaults },
+          settings: options.legacySettings ?? { ...defaults, ...options.settings },
           providers: { groqKeys: options.key ? [options.key] : [], jevKey: options.jevKey ?? "" },
           logs: [],
         })),
@@ -84,7 +84,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
         return { ok: true };
       }),
       create: vi.fn(async () => ({ id: 3 })),
-      update: vi.fn(async () => ({})),
+      update: vi.fn(async (_id: number, _options: chrome.tabs.UpdateProperties) => ({})),
       remove: vi.fn(async () => {}),
       onActivated: event(),
       onUpdated: event(),
@@ -551,5 +551,285 @@ describe("arbitrary find boundary", () => {
     resolveFetch({ ok: true, json: async () => ({}) });
     await request;
     expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: "PAGE_ACTION", intent: { type: "scroll", direction: "down" } });
+  });
+});
+
+describe('final speech routing regressions', () => {
+  it('dispatches local commands with Jev unavailable and retains background search arguments', async () => {
+    const { browser, send, fetch } = await setup({ jevKey: 'fixture-jev' });
+    fetch.mockRejectedValue(new Error('offline'));
+    await send({ type: 'HEARD', text: 'scroll down' });
+    await send({ type: 'HEARD', text: 'search for accessible design in a new tab in background' });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'scroll', direction: 'down' } });
+    expect(browser.tabs.create).toHaveBeenCalledWith({ url: 'https://www.google.com/search?q=accessible%20design', active: false });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('clicks immediately during provider work and suppresses its stale action', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let finish!: (response: unknown) => void;
+    const started = new Promise<void>(resolve => fetch.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { finish = resolver; });
+    }));
+    const pending = send({ type: 'HEARD', text: 'hey handsfree move down a little' });
+    await started;
+    let clickDone = false;
+    const clicked = send({ type: 'HEARD', text: 'click this' }).then(() => { clickDone = true; });
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(clickDone).toBe(true);
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'click' } });
+    finish({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"scroll","direction":"down"}}' } }] }) });
+    await Promise.all([pending, clicked]);
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'scroll', direction: 'down' } });
+  });
+  it('answers a wake question even when target scanning is unavailable', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    const original = browser.tabs.sendMessage.getMockImplementation()!;
+    browser.tabs.sendMessage.mockImplementation(async (id, message) => {
+      if (message.type === 'GET_TARGETS') return { ok: false, error: 'No targets available' } as any;
+      if (message.type === 'GET_PAGE_CONTEXT') return { title: 'Article', url: 'https://example.test/', text: 'Public text' } as any;
+      return original(id, message);
+    });
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"answer":"A useful answer"}' } }] }) });
+    await send({ type: 'HEARD', text: 'hey handsfree what does this page explain?' });
+    expect((await send({ type: 'GET_STATE' })).feedback).toBe('A useful answer');
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'ANSWER', text: 'A useful answer' });
+    expect(JSON.parse(JSON.parse(fetch.mock.calls[0][1].body).messages[1].content).page.text).toBe('Public text');
+  });
+  it('surfaces failed page dispatch and never executes interim text', async () => {
+    const { browser, send } = await setup();
+    await send({ type: 'TRANSCRIPT', text: 'click this', final: false });
+    expect(browser.tabs.sendMessage.mock.calls.some(([,m]) => m.type === 'PAGE_ACTION')).toBe(false);
+    browser.tabs.sendMessage.mockRejectedValue(new Error('Disconnected'));
+    await send({ type: 'HEARD', text: 'click this' });
+    expect((await send({ type: 'GET_STATE' })).feedback).toContain('page is unavailable');
+  });
+});
+
+describe('provider cancellation ordering', () => {
+  it('keeps a click behind an earlier start-typing transcript during provider work', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let finish!: (response: unknown) => void;
+    const started = new Promise<void>(resolve => fetch.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { finish = resolver; });
+    }));
+    const provider = send({ type: 'HEARD', text: 'hey handsfree help' });
+    await started;
+    const typing = send({ type: 'HEARD', text: 'start typing' });
+    const clicking = send({ type: 'HEARD', text: 'click this' });
+    finish({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[]}' } }] }) });
+    await Promise.all([provider, typing, clicking]);
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'DICTATE', text: 'click this' });
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'click' } });
+  });
+  it.each(['PAUSE', 'STOP', 'cancel'] as const)('discards a pending answer after %s', async change => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let finish!: (response: unknown) => void;
+    const started = new Promise<void>(resolve => fetch.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { finish = resolver; });
+    }));
+    const provider = send({ type: 'HEARD', text: 'hey handsfree what is two plus two?' });
+    await started;
+    await send(change === 'cancel' ? { type: 'HEARD', text: 'cancel' } : { type: change });
+    finish({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"answer":"Stale answer"}' } }] }) });
+    await provider;
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: 'ANSWER', text: 'Stale answer' });
+    expect((await send({ type: 'GET_STATE' })).feedback).not.toBe('Stale answer');
+  });
+  it('cancels pending provider actions when controls enter dictation directly', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let finish!: (response: unknown) => void;
+    const started = new Promise<void>(resolve => fetch.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { finish = resolver; });
+    }));
+    const provider = send({ type: 'HEARD', text: 'hey handsfree select this' });
+    await started;
+    await send({ type: 'ACTION', intent: { type: 'start-typing' } });
+    finish({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"click"}}' } }] }) });
+    await provider;
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'click' } });
+  });
+  it('rechecks cancellation after tab permission resolves', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let allow!: (value: boolean) => void;
+    const waiting = new Promise<void>(resolve => browser.permissions.contains.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { allow = resolver; });
+    }));
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"new-tab"}}' } }] }) });
+    const provider = send({ type: 'HEARD', text: 'hey handsfree open a fresh tab' });
+    await waiting;
+    await send({ type: 'PAUSE' });
+    allow(true);
+    await provider;
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(browser.tabs.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('local tab switching', () => {
+  it('switches next, previous and named tabs with Jev offline', async () => {
+    const { browser, send, fetch } = await setup({ jevKey: 'fixture-jev' });
+    fetch.mockRejectedValue(new Error('offline'));
+    await send({ type: 'HEARD', text: 'switch to the next tab' });
+    expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(2);
+    await send({ type: 'HEARD', text: 'switch to previous tab' });
+    expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(1);
+    await send({ type: 'HEARD', text: 'switch to tab Inbox' });
+    expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(2);
+    expect(browser.tabs.update).toHaveBeenCalledWith(2, { active: true });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('deferred browser-read cancellation', () => {
+  it.each([
+    { intent: { type: 'next-tab' }, interrupt: 'PAUSE' },
+    { intent: { type: 'named-tab', name: 'Inbox' }, interrupt: 'cancel' },
+    { intent: { type: 'choose', index: 2 }, interrupt: 'STOP' },
+  ] as const)('does not activate a stale $intent.type after delayed tabs.get', async ({ intent, interrupt }) => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    if (intent.type === 'choose') {
+      browser.tabs.query.mockResolvedValue([
+        { id: 1, windowId: 1, index: 0, url: 'https://example.test/', title: 'Inbox' },
+        { id: 2, windowId: 1, index: 1, url: 'https://example.test/inbox', title: 'Inbox' },
+      ]);
+      await send({ type: 'HEARD', text: 'switch to tab Inbox' });
+    }
+    const original = browser.tabs.get.getMockImplementation()!;
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => browser.tabs.get.mockImplementation(id => {
+      resolve(); return new Promise(resolver => { release = () => { void original(id).then(resolver); }; });
+    }));
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ ids: [], intent }) } }] }) });
+    const provider = send({ type: 'HEARD', text: 'hey handsfree switch to my requested tab' });
+    await waiting;
+    await send(interrupt === 'cancel' ? { type: 'HEARD', text: 'cancel' } : { type: interrupt });
+    release();
+    await provider;
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(browser.tabs.update).not.toHaveBeenCalled();
+    expect(browser.windows.update).not.toHaveBeenCalled();
+    expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(1);
+  });
+  it('does not create incognito after authorization resolves for a cancelled provider action', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let release!: (allowed: boolean) => void;
+    const waiting = new Promise<void>(resolve => browser.extension.isAllowedIncognitoAccess.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { release = resolver; });
+    }));
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"incognito"}}' } }] }) });
+    const provider = send({ type: 'HEARD', text: 'hey handsfree open a private window' });
+    await waiting;
+    await send({ type: 'HEARD', text: 'click this' });
+    release(true);
+    await provider;
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(browser.windows.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('tab activation transition validity', () => {
+  it('does not focus a window after pause while tab activation is outstanding', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => browser.tabs.update.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { release = () => resolver({}); });
+    }));
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"next-tab"}}' } }] }) });
+    const provider = send({ type: 'HEARD', text: 'hey handsfree switch tabs' });
+    await waiting;
+    await send({ type: 'PAUSE' });
+    release();
+    await provider;
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(browser.windows.update).not.toHaveBeenCalled();
+    expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(1);
+  });
+  it('finishes a valid provider switch when Chrome emits its own activation event', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    const activated = browser.tabs.onActivated.addListener.mock.calls[0][0] as (info: { tabId: number }) => void;
+    browser.tabs.update.mockImplementation(async id => {
+      activated({ tabId: id });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      return {};
+    });
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"next-tab"}}' } }] }) });
+    await send({ type: 'HEARD', text: 'hey handsfree switch tabs' });
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(browser.windows.update).toHaveBeenCalledWith(1, { focused: true });
+    expect(await send({ type: 'GET_STATE' })).toMatchObject({ targetTabId: 2, feedback: 'Switched tab.' });
+  });
+});
+
+describe('user tab activation supersedes controlled switching', () => {
+  it('keeps the original tab after the user returns during deferred window focus', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    const activated = browser.tabs.onActivated.addListener.mock.calls[0][0] as (info: { tabId: number }) => void;
+    browser.tabs.update.mockImplementation(async id => {
+      activated({ tabId: id });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      return {};
+    });
+    let releaseFocus!: () => void;
+    const focusing = new Promise<void>(resolve => browser.windows.update.mockImplementation(() => {
+      resolve(); return new Promise(resolver => { releaseFocus = () => resolver({}); });
+    }));
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":[],"intent":{"type":"next-tab"}}' } }] }) });
+    const provider = send({ type: 'HEARD', text: 'hey handsfree switch tabs' });
+    await focusing;
+    // B's own activation echo has already been emitted. Selecting A is a real
+    // competing user action even though A remains the session's current target.
+    activated({ tabId: 1 });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    releaseFocus();
+    await provider;
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    const state = await send({ type: 'GET_STATE' });
+    expect(state.targetTabId).toBe(1);
+    expect(state.feedback).not.toBe('Switched tab.');
+    expect(browser.tabs.sendMessage.mock.calls.some(([id, message]) => id === 2 && message.type === 'PAGE_STATE')).toBe(false);
+  });
+});
+
+describe("comfortable control settings", () => {
+  it("normalizes invalid persisted settings and fills old missing fields", async () => {
+    const { send } = await setup({ settings: { sensitivity: "invalid", dwellMs: Infinity, scrollSensitivity: -100, cursorStyle: "unknown", edgeScroll: "false", dwellEnabled: null } });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ sensitivity: 1, dwellMs: 800, scrollSensitivity: 0.2, cursorStyle: "circle", edgeScroll: true, dwellEnabled: true });
+  });
+  it("persists expanded upper bounds and valid cursor styles", async () => {
+    const { send, browser } = await setup();
+    await send({ type: "SAVE_SETTINGS", settings: { ...defaults, sensitivity: 6, dwellMs: 5000, scrollSensitivity: 3, cursorStyle: "crosshair" } });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ sensitivity: 6, dwellMs: 5000, scrollSensitivity: 3, cursorStyle: "crosshair" });
+    expect(browser.storage.local.set).toHaveBeenCalledWith(expect.objectContaining({ settings: expect.objectContaining({ scrollSensitivity: 3, cursorStyle: "crosshair" }) }));
+    await send({ type: "SAVE_SETTINGS", settings: { ...defaults, sensitivity: 0.2, dwellMs: 400, scrollSensitivity: 0.2, cursorStyle: "spark" } });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ sensitivity: 0.2, dwellMs: 400, scrollSensitivity: 0.2, cursorStyle: "spark" });
+  });
+  it("clamps finite outliers and rejects nonfinite settings on save", async () => {
+    const { send } = await setup();
+    await send({ type: "SAVE_SETTINGS", settings: { ...defaults, sensitivity: 100, dwellMs: -1, scrollSensitivity: NaN, cursorStyle: "bad" } as unknown as typeof defaults });
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ sensitivity: 6, dwellMs: 400, scrollSensitivity: 1, cursorStyle: "circle" });
+  });
+});
+
+
+describe("legacy preference migration and wake named clicks", () => {
+  it("fills genuinely absent fields in an old stored settings record", async () => {
+    const { send, browser } = await setup({ legacySettings: { pointerMode: "hand", sensitivity: 2.5, dwellMs: 1200 } });
+    const raw = await browser.storage.local.get();
+    expect(Object.hasOwn(raw.settings, "cursorStyle")).toBe(false);
+    expect(Object.hasOwn(raw.settings, "scrollSensitivity")).toBe(false);
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ pointerMode: "hand", sensitivity: 2.5, dwellMs: 1200, cursorStyle: "circle", scrollSensitivity: 1 });
+  });
+  it("routes an explicit wake named click through local page matching, and keeps finds as highlights", async () => {
+    const { browser, send, fetch } = await setup({ key: "fixture-groq" });
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ ids: [], intent: { type: "click-target", query: "Careers" } }) } }] }) });
+    await send({ type: "HEARD", text: "hey handsfree open Careers" });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: "PAGE_ACTION", intent: { type: "click-target", query: "Careers" } });
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":["careers"]}' } }] }) });
+    browser.tabs.sendMessage.mockClear();
+    await send({ type: "HEARD", text: "hey handsfree find Careers" });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: "FIND_RESULT", ids: ["careers"] });
+    expect(browser.tabs.sendMessage.mock.calls.some(([,m]) => m.type === "PAGE_ACTION")).toBe(false);
   });
 });

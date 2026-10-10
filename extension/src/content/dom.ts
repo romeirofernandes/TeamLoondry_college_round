@@ -1,10 +1,20 @@
-import type { TargetText } from "../shared";
+import type { PageContext, TargetText } from "../shared";
 
 export const interactiveSelector =
   'a[href],button,input:not([type="hidden"]),textarea,select,[contenteditable="true"],[contenteditable=""],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[tabindex]:not([tabindex="-1"])';
 export const overlayId = "handsfree-assist-overlay";
 const privateTextSelector =
-  'input,textarea,[contenteditable="true"],[contenteditable=""],[role="textbox"]';
+  'input,textarea,[contenteditable]:not([contenteditable="false"]),[role="textbox"],script,style,noscript,template,[data-private],[data-handsfree-ignore],#handsfree-assist-overlay';
+
+function publicText(element: Element): boolean {
+  if (element.closest(privateTextSelector + ',[hidden],[inert],[aria-hidden="true"]')) return false;
+  for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
+    const style = getComputedStyle(ancestor);
+    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || Number(style.opacity || "1") <= 0) return false;
+    if (ancestor instanceof HTMLElement && sensitive(ancestor)) return false;
+  }
+  return true;
+}
 
 function staticText(element: Element | null): string {
   if (!element || element.closest(privateTextSelector)) return "";
@@ -12,17 +22,33 @@ function staticText(element: Element | null): string {
   const pieces: string[] = [];
   let node: Node | null;
   while ((node = walker.nextNode())) {
-    if (!node.parentElement?.closest(privateTextSelector))
+    if (node.parentElement && publicText(node.parentElement))
       pieces.push(node.textContent ?? "");
   }
   return pieces.join(" ");
+}
+
+/** Public rendered document text only; never read form values or editable content. */
+export function pageContext(): PageContext {
+  const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+  let text = "";
+  let node: Node | null;
+  while (text.length < 12000 && (node = walker.nextNode())) {
+    if (!node.parentElement || !publicText(node.parentElement)) continue;
+    const piece = (node.textContent || "").replace(/\s+/g, " ").trim();
+    if (piece) text += (text ? " " : "") + piece.slice(0, 12000 - text.length - (text ? 1 : 0));
+  }
+  return { title: document.title.slice(0, 500), url: location.href.slice(0, 2000), text };
 }
 
 export function usable(element: Element): element is HTMLElement {
   if (!(element instanceof HTMLElement) || element.closest(`#${overlayId}`))
     return false;
   if (
-    element.closest('[hidden],[inert],[aria-hidden="true"]') ||
+    // aria-hidden removes duplicate thumbnails from assistive technology,
+    // but does not hide their native pointer hit area. Public text filtering
+    // independently excludes aria-hidden content above.
+    element.closest('[hidden],[inert]') ||
     element.matches(':disabled,[aria-disabled="true"]')
   )
     return false;
@@ -242,6 +268,7 @@ export class PageTargets {
     this.elements.clear();
     return Array.from(document.querySelectorAll(interactiveSelector))
       .filter(usable)
+      .filter(element => !sensitive(element) && !element.closest('[data-private],[data-handsfree-ignore]'))
       .slice(0, 1500)
       .map((element) => ({
         id: this.id(element),
@@ -249,11 +276,71 @@ export class PageTargets {
         role: element.getAttribute("role") || element.tagName.toLowerCase(),
       }));
   }
-  snap(x: number, y: number): HTMLElement | null {
-    const direct = document
-      .elementFromPoint(x, y)
-      ?.closest(interactiveSelector);
-    if (direct && usable(direct)) return direct;
+  named(query: string): string[] {
+    const normalize = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+    const needle = normalize(query);
+    if (!needle || needle.length > 500) return [];
+    const ranked = this.scan().map(target => {
+      const label = normalize(target.text);
+      const offset = label.indexOf(needle);
+      if (offset < 0) return { id: target.id, score: 0 };
+      const word = (character: string | undefined) => !!character && /[\p{L}\p{N}_]/u.test(character);
+      let whole = false;
+      for (let match = offset; match >= 0; match = label.indexOf(needle, match + 1)) {
+        if (!word(label[match - 1]) && !word(label[match + needle.length])) {
+          whole = true;
+          break;
+        }
+      }
+      return { id: target.id, score: label === needle ? 3 : whole ? 2 : 1 };
+    });
+    const best = Math.max(0, ...ranked.map(target => target.score));
+    return best ? ranked.filter(target => target.score === best).map(target => target.id).slice(0, 10) : [];
+  }
+  // Only semantically bounded cards share target identity; channel links and
+  // buttons inside the same card retain their own activation target.
+  private stable(candidate: HTMLElement, previous: HTMLElement | null): HTMLElement {
+    const cardSelector = "ytd-rich-item-renderer,ytd-video-renderer,ytd-grid-video-renderer,ytd-compact-video-renderer,article,li,[role=article]";
+    if (candidate instanceof HTMLAnchorElement && previous instanceof HTMLAnchorElement &&
+        candidate.href === previous.href && previous.isConnected && usable(previous)) {
+      const card = candidate.closest(cardSelector);
+      if (card && card === previous.closest(cardSelector)) {
+        const box = previous.getBoundingClientRect();
+        const x = Math.max(0, box.left) + (Math.min(innerWidth, box.right) - Math.max(0, box.left)) / 2;
+        const y = Math.max(0, box.top) + (Math.min(innerHeight, box.bottom) - Math.max(0, box.top)) / 2;
+        const hit = document.elementFromPoint(x, y);
+        if (box.right > 0 && box.left < innerWidth && box.bottom > 0 && box.top < innerHeight &&
+            hit && (previous.contains(hit) || this.thumbnailContains(hit, previous))) return previous;
+      }
+    }
+    return candidate;
+  }
+  private thumbnailContains(hit: Element, link: Element): boolean {
+    return hit.matches("ytd-thumbnail,figure,[data-thumbnail]") && hit.contains(link);
+  }
+  snap(x: number, y: number, previous: HTMLElement | null = null): HTMLElement | null {
+    const hit = document.elementFromPoint(x, y);
+    const direct = hit?.closest(interactiveSelector);
+    if (direct && usable(direct)) return this.stable(direct, previous);
+    // Some thumbnail components expose their wrapper in hit testing. Resolve
+    // only real links inside that exposed wrapper and under this point.
+    if (hit?.matches("ytd-thumbnail,figure,[data-thumbnail]")) {
+      for (const link of hit.querySelectorAll("a[href]")) {
+        if (!usable(link)) continue;
+        const box = link.getBoundingClientRect();
+        if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom)
+          return this.stable(link, previous);
+      }
+    }
+    // The intersection index may not have delivered its first entries yet.
+    // Browser hit stacks still identify a covered control directly under this
+    // point, preventing nearby-title snapping through a newly opened layer.
+    if (hit && document.elementsFromPoint?.(x, y).some(layer => {
+      const candidate = layer.closest(interactiveSelector);
+      if (!candidate || !usable(candidate) || candidate.contains(hit)) return false;
+      const box = candidate.getBoundingClientRect();
+      return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+    })) return null;
     let winner: HTMLElement | null = null;
     let distance = 42;
     if ((this.intersection ? this.dirty : true) && performance.now() - this.refreshedAt > 250) {
@@ -305,12 +392,17 @@ export class PageTargets {
         const hitY = Math.max(top + insetY, Math.min(bottom - insetY, y));
         const hit = document.elementFromPoint(hitX, hitY);
         // Geometry alone must not select a control behind a modal or another page layer.
-        if (!hit || (hit !== candidate && !candidate.contains(hit))) continue;
+        if (!hit || (hit !== candidate && !candidate.contains(hit))) {
+          // A covered control under the pointer must not redirect activation to
+          // a nearby exposed title or unrelated control.
+          if (gap === 0) return null;
+          continue;
+        }
         winner = candidate;
         distance = gap;
       }
     }
-    return winner;
+    return winner ? this.stable(winner, previous) : null;
   }
   destroy() {
     this.intersection?.disconnect();

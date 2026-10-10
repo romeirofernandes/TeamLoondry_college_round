@@ -11,12 +11,14 @@ import {
   formFor,
   insertText,
   PageTargets,
+  pageContext,
   sensitive,
   submitControl,
   targetLabel,
   usable,
 } from "./dom";
 import { Overlay } from "./overlay";
+import { ScrollMotion, scrollPixels } from "./scroll";
 
 type Pending = {
   target: HTMLElement;
@@ -51,6 +53,7 @@ export class ContentRuntime {
   private edge: "up" | "down" | null = null;
   private edgeSince = 0;
   private edgeLast = 0;
+  private scrollMotion = new ScrollMotion();
   private frame = 0;
   private activationTarget: HTMLElement | null = null;
   private confirmedSubmission = false;
@@ -114,6 +117,8 @@ export class ContentRuntime {
     }).catch(() => {});
   }
   private pageChanged = () => {
+    this.scrollMotion.cancel();
+    this.edge = null;
     this.cancelPending("The page changed. Submission cancelled.");
     this.select(null);
     this.stopTyping();
@@ -127,6 +132,8 @@ export class ContentRuntime {
   private onKey = (event: KeyboardEvent) => {
     if (event.key === "Escape" && this.running) {
       this.paused = true;
+      this.scrollMotion.cancel();
+      this.edge = null;
       this.stopTyping();
       this.cancelPending();
       this.gate.update({
@@ -238,6 +245,7 @@ export class ContentRuntime {
       !blocked &&
       confident &&
       this.settings.edgeScroll &&
+      !this.scrollMotion.active &&
       !this.choices.length
     ) {
       const direction =
@@ -249,22 +257,28 @@ export class ContentRuntime {
       }
       if (
         direction &&
-        now - this.edgeSince >= 900 &&
-        now - this.edgeLast >= 700
+        now - this.edgeSince >= 900
       ) {
-        this.scroll(direction);
+        this.scrollMotion.cancel();
+        const elapsed = Math.max(0, Math.min(50, now - Math.max(this.edgeLast, this.edgeSince + 900)));
+        const speed = Math.max(200, innerHeight * 0.55) * this.settings.scrollSensitivity;
+        scrollPixels((direction === "down" ? 1 : -1) * speed * elapsed / 1000, document.elementFromPoint(this.x, this.y));
         this.edgeLast = now;
       }
     } else {
       this.edge = null;
       this.edgeSince = now;
     }
+    if (blocked) this.scrollMotion.cancel();
+    else this.scrollMotion.tick(now);
   }
   private scroll(direction: "up" | "down") {
-    window.scrollBy({
-      top: (direction === "down" ? 1 : -1) * Math.max(200, innerHeight * 0.65),
-      behavior: "instant",
-    });
+    this.edge = null;
+    const origin = this.target || document.elementFromPoint(this.x, this.y) || document.activeElement;
+    this.scrollMotion.command(
+      (direction === "down" ? 1 : -1) * Math.max(200, innerHeight * 0.65) * this.settings.scrollSensitivity,
+      origin, this.clock(),
+    );
     this.metric("scroll", direction);
   }
   async handle(message: Message): Promise<unknown> {
@@ -283,10 +297,12 @@ export class ContentRuntime {
             confidenceThreshold: message.settings.confidenceThreshold,
           });
         this.settings = message.settings;
+        this.overlay.style(this.settings.cursorStyle);
         if (!this.running || this.paused) {
           this.cancelPending();
           this.stopTyping();
           this.edge = null;
+          this.scrollMotion.cancel();
           if (!this.running) this.gate.reset();
           else
             this.gate.update({
@@ -331,11 +347,17 @@ export class ContentRuntime {
           this.x = Math.max(0, Math.min(1, sample.x)) * innerWidth;
           this.y = Math.max(0, Math.min(1, sample.y)) * innerHeight;
           if (!this.choices.length)
-            this.select(this.targets.snap(this.x, this.y), true);
+            this.select(this.targets.snap(this.x, this.y, this.target), true);
         }
         this.tick();
         return { ok: true };
       }
+      case "GET_PAGE_CONTEXT":
+        return pageContext();
+      case "ANSWER":
+        if (!this.running || this.paused || typeof message.text !== "string" || message.text.length > 6000) return { ok: false };
+        this.feedback(message.text);
+        return { ok: true };
       case "GET_TARGETS":
         return this.targets.scan();
       case "TRANSCRIPT":
@@ -497,6 +519,22 @@ export class ContentRuntime {
       );
       return true;
     }
+    if (intent.type === "click-target") {
+      if (this.dictating) return false;
+      const ids = this.targets.named(intent.query);
+      if (ids.length !== 1) {
+        void this.handle({ type: "FIND_RESULT", ids });
+        return true;
+      }
+      const target = this.targets.get(ids[0]);
+      if (!target) return false;
+      this.choices = [];
+      this.overlay.options([]);
+      this.select(target, false);
+      target.scrollIntoView({ block: "center", behavior: "instant" });
+      if (!this.voiceAllowed()) return false;
+      return this.activate(target, "voice");
+    }
     if (intent.type === "scroll") {
       this.cancelPending();
       this.scroll(intent.direction);
@@ -630,6 +668,7 @@ export class ContentRuntime {
     if (message) this.feedback(message);
   }
   destroy() {
+    this.scrollMotion.cancel();
     this.targets.destroy();
     this.destroyed = true;
     cancelAnimationFrame(this.frame);

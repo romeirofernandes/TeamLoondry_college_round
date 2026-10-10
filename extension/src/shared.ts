@@ -1,6 +1,8 @@
 export type PointerMode = "face" | "hand";
 export interface Settings {
   sensitivity: number;
+  scrollSensitivity: number;
+  cursorStyle: "circle" | "arrow" | "crosshair" | "spark";
   dwellMs: number;
   deadZone: number;
   confidenceThreshold: number;
@@ -17,6 +19,8 @@ export interface Settings {
 }
 export const defaults: Settings = {
   sensitivity: 1,
+  scrollSensitivity: 1,
+  cursorStyle: "circle",
   dwellMs: 800,
   deadZone: 0.035,
   confidenceThreshold: 0.7,
@@ -31,6 +35,25 @@ export const defaults: Settings = {
   groqModel: "qwen/qwen3.8-27b",
   jevProvider: "openrouter",
 };
+/** Apply the same finite bounds to old saved controls and new dashboard settings. */
+export function normalizeControlSettings(value: Partial<Settings>): Settings {
+  const next = { ...defaults, ...value };
+  const bounded = (n: unknown, minimum: number, maximum: number, fallback: number) =>
+    typeof n === "number" && Number.isFinite(n) ? Math.max(minimum, Math.min(maximum, n)) : fallback;
+  return {
+    ...next,
+    sensitivity: bounded(next.sensitivity, 0.2, 6, defaults.sensitivity),
+    dwellMs: bounded(next.dwellMs, 400, 5000, defaults.dwellMs),
+    scrollSensitivity: bounded(next.scrollSensitivity, 0.2, 3, defaults.scrollSensitivity),
+    cursorStyle: ["circle", "arrow", "crosshair", "spark"].includes(next.cursorStyle) ? next.cursorStyle : "circle",
+    deadZone: bounded(next.deadZone, 0, 0.3, defaults.deadZone),
+    confidenceThreshold: bounded(next.confidenceThreshold, 0.5, 0.95, defaults.confidenceThreshold),
+    dwellEnabled: typeof next.dwellEnabled === "boolean" ? next.dwellEnabled : defaults.dwellEnabled,
+    edgeScroll: typeof next.edgeScroll === "boolean" ? next.edgeScroll : defaults.edgeScroll,
+    pointerMode: next.pointerMode === "hand" ? "hand" : "face",
+    speechMode: next.speechMode === "local" ? "local" : "browser",
+  };
+}
 export interface Calibration {
   neutralX: number;
   neutralY: number;
@@ -109,8 +132,14 @@ export type Intent =
   | { type: "search"; query: string; background: boolean }
   | { type: "named-tab"; name: string }
   | { type: "find"; query: string }
+  | { type: "click-target"; query: string }
   | { type: "choose"; index: number }
   | { type: "unknown"; heard: string };
+export interface PageContext {
+  title: string;
+  url: string;
+  text: string;
+}
 export interface TargetText {
   id: string;
   text: string;
@@ -159,6 +188,8 @@ export type Message =
   | { type: "PAGE_ACTION"; intent: Intent }
   | { type: "DICTATE"; text: string }
   | { type: "GET_TARGETS" }
+  | { type: "GET_PAGE_CONTEXT" }
+  | { type: "ANSWER"; text: string }
   | { type: "FIND_RESULT"; ids: string[] }
   | { type: "METRIC"; event: MetricEvent }
   | { type: "GET_LOGS" }

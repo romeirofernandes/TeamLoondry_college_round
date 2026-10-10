@@ -160,6 +160,21 @@ describe("tracker lifecycle", () => {
     expect(persistence.getCalibration).toHaveBeenCalledWith("face");
     tracker.stop();
   });
+  it("keeps tiny saved hand ranges invalid while accepting comfortable saved face ranges", async () => {
+    const persistence = {
+      getCalibration: vi.fn(async (_mode: string) => ({ neutralX: 0.5, neutralY: 0.5, rangeX: 0.009, rangeY: 0.009 })),
+      saveCalibration: vi.fn(async () => {}),
+    };
+    const sample = vi.fn(), tracker = new Tracker(video(), sample, vi.fn(), persistence);
+    for (const pointerMode of ["hand", "face"] as const) {
+      await tracker.start({ ...defaults, pointerMode });
+      const worker = WorkerMock.instances.at(-1)!;
+      worker.emit({ type: "sample", point: { x: 0.5, y: 0.5, confidence: 1 }, timestamp: performance.now(), epoch: 0, latencyMs: 2 });
+      expect(sample).toHaveBeenLastCalledWith(expect.objectContaining({ confidence: pointerMode === "hand" ? 0 : 1 }));
+      tracker.stop();
+    }
+    expect(persistence.getCalibration.mock.calls.map(call => call[0])).toEqual(["hand", "face"]);
+  });
   it("keeps a pointer-mode restart paused while its model loads", async () => {
     const preview = video(),
       tracker = new Tracker(preview, vi.fn(), vi.fn());
@@ -274,6 +289,23 @@ describe("tracker lifecycle", () => {
     expect(streamStop).toHaveBeenCalled();
     expect(preview.srcObject).toBeNull();
   });
+  it("rejects calibration when neutral noise overwhelms directional movement", async () => {
+    const preview = video(), tracker = new Tracker(preview, vi.fn(), vi.fn());
+    await tracker.start(defaults);
+    const result = tracker.calibrate().catch(error => error);
+    const worker = WorkerMock.instances[0];
+    for (let index = 0; index < 238; index++) {
+      preview.currentTime += 0.034;
+      await vi.advanceTimersByTimeAsync(34);
+      const frame = worker.frames.at(-1);
+      const noise = performance.now() < 2500 ? 0.006 : 0.012;
+      const offset = (index % 2 ? 1 : -1) * noise;
+      worker.emit({ type: "sample", point: { x: 0.5 + offset, y: 0.5 + offset, confidence: 1 }, timestamp: frame.timestamp, epoch: frame.epoch, latencyMs: 2 });
+    }
+    expect(await result).toBeInstanceOf(Error);
+    expect(chrome.storage.local.set).not.toHaveBeenCalled();
+    tracker.stop();
+  });
   it("calibrates neutral and comfortable range in eight seconds while blocking selection", async () => {
     const preview = video(),
       sample = vi.fn(),
@@ -288,7 +320,7 @@ describe("tracker lifecycle", () => {
       await vi.advanceTimersByTimeAsync(34);
       const frame = worker.frames.at(-1);
       const moving = performance.now() > 2500;
-      const offset = moving ? (index % 2 === 0 ? 0.1 : -0.1) : 0;
+      const offset = moving ? (index % 2 === 0 ? 0.012 : -0.012) : 0;
       worker.emit({
         type: "sample",
         point: { x: 0.5 + offset, y: 0.5 + offset, confidence: 1 },
@@ -298,13 +330,13 @@ describe("tracker lifecycle", () => {
       });
       if (performance.now() < 8000)
         expect(sample).toHaveBeenLastCalledWith(
-          expect.objectContaining({ confidence: 0, handHold: false }),
+          expect.objectContaining({ x: 0.5, y: 0.5, confidence: 0, handHold: false }),
         );
     }
     const result = await calibration;
     expect(result.neutralX).toBeCloseTo(0.5);
-    expect(result.rangeX).toBeCloseTo(0.1);
-    expect(result.rangeY).toBeCloseTo(0.1);
+    expect(result.rangeX).toBeCloseTo(0.012);
+    expect(result.rangeY).toBeCloseTo(0.012);
     expect(chrome.storage.local.set).toHaveBeenCalledWith({
       "calibration-face": result,
     });

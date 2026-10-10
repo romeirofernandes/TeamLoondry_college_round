@@ -19,6 +19,9 @@ async function message<T = any>(msg: Message): Promise<T> {
   return controls.evaluate(async (msg) => chrome.runtime.sendMessage(msg), msg);
 }
 async function point(selector: string, confidence = 1) {
+  // These command cases supply deterministic pointer samples. Blank fake-camera
+  // inference must not replace them; capture lifecycle tests keep inference live.
+  await message({ type: "OFFSCREEN_COMMAND", command: "pause" });
   await page.locator(selector).scrollIntoViewIfNeeded();
   const box = await page.locator(selector).boundingBox();
   if (!box) throw new Error("No target");
@@ -38,6 +41,8 @@ async function point(selector: string, confidence = 1) {
   });
 }
 async function heard(text: string) {
+  // Mirror the final recognition callback, including the passive transcript.
+  await message({ type: "TRANSCRIPT", text, final: true });
   await message({ type: "HEARD", text });
 }
 test.beforeAll(async () => {
@@ -123,8 +128,10 @@ test("dictation words do not navigate; submission requires confirmation", async 
   await expect(page.locator("#search")).toHaveValue("scroll down hello world");
   expect(await page.evaluate(() => scrollY)).toBe(0);
   await heard("stop typing");
+  await point("#search");
   await heard("submit form");
   await expect(page.locator("#submissions")).toHaveText("0");
+  await point("#search");
   await heard("confirm");
   await expect(page.locator("#submissions")).toHaveText("1");
   await point("#password");
@@ -298,4 +305,135 @@ test("dashboard requests reject after navigating the authorized tab to another p
   const denied = await dashboardRequest(dashboard, { type: "GET_SETTINGS" });
   expect(denied.ok).toBe(false);
   await dashboard.close();
+});
+
+
+test("final transcripts scroll and match named controls without provider dependency", async () => {
+  await message({ type: "OFFSCREEN_COMMAND", command: "pause" });
+  await message({ type: "TRANSCRIPT", text: "click Count a selection", final: false });
+  await expect(page.locator("#clicks")).toHaveText("0");
+  await heard("click Count a selection");
+  await expect(page.locator("#clicks")).toHaveText("1");
+  await heard("scroll down");
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(100);
+  await page.evaluate(() => {
+    for (const id of ["careers-one", "careers-two"]) document.getElementById(id)!.addEventListener("click", () => document.body.dataset.selected = id);
+  });
+  await heard("open Careers contact");
+  await expect(page.locator("#handsfree-assist-overlay .choice")).toHaveCount(2);
+  expect(await page.evaluate(() => document.body.dataset.selected)).toBeUndefined();
+  await heard("choose two");
+  expect(await page.evaluate(() => document.body.dataset.selected)).toBeUndefined();
+  await heard("click this");
+  await expect(page.locator("body")).toHaveAttribute("data-selected", "careers-two");
+});
+
+test("background search preserves the query and current tab from a final transcript", async () => {
+  await message({ type: "OFFSCREEN_COMMAND", command: "pause" });
+  const before = await message({ type: "GET_STATE" });
+  await heard("search for accessible design in a new tab in background");
+  const results = await worker.evaluate(async () => chrome.tabs.query({ url: "https://www.google.com/search*" }));
+  const result = results.find(tab => tab.url === "https://www.google.com/search?q=accessible%20design" || tab.pendingUrl === "https://www.google.com/search?q=accessible%20design");
+  expect(result).toBeDefined();
+  expect(result!.active).toBe(false);
+  expect((await message({ type: "GET_STATE" })).targetTabId).toBe(before.targetTabId);
+  await worker.evaluate(async id => { await chrome.tabs.remove(id); }, result!.id!);
+});
+
+test("wake answers, find highlights and named clicks use the real worker and content safety gates", async () => {
+  await message({ type: "OFFSCREEN_COMMAND", command: "pause" });
+  await message({ type: "SAVE_PROVIDERS", groqKeys: ["fixture-groq-key"], jevKey: "" });
+  // Stub only the external provider HTTP boundary, never the router or page action.
+  await worker.evaluate(() => {
+    const scope = globalThis as any;
+    scope.fixtureOriginalFetch = scope.fetch;
+    scope.fetch = async (url: any, init: any) => {
+      if (!String(url).startsWith("https://api.groq.com/")) return scope.fixtureOriginalFetch(url, init);
+      const data = JSON.parse(JSON.parse(init.body).messages[1].content);
+      scope.fixturePageContext = data.page;
+      const phrase = data.phrase as string;
+      const output = phrase.startsWith("find")
+        ? { ids: [data.targets.find((target: any) => target.text === "Count a selection").id] }
+        : phrase.startsWith("click")
+          // Live Groq can return find IDs for explicit clicks. Preserve the
+          // original request's local matching semantics after validation.
+          ? { ids: [data.targets.find((target: any) => target.text === phrase.replace(/^click /, "")).id] }
+          : phrase.startsWith("open")
+            ? { ids: [], intent: { type: "click-target", query: phrase.replace(/^open /, "") } }
+            : { ids: [], answer: "<b>A useful answer</b>" };
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(output) } }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+  });
+  try {
+    await page.locator("#search").fill("INPUT_SECRET");
+    await heard("hey handsfree summarize this page");
+    await expect(page.locator("#handsfree-assist-overlay .feedback")).toHaveText("<b>A useful answer</b>");
+    await expect(page.locator("#handsfree-assist-overlay .feedback b")).toHaveCount(0);
+    expect((await message({ type: "GET_STATE" })).feedback).toBe("<b>A useful answer</b>");
+    const pageContext = await worker.evaluate(() => (globalThis as any).fixturePageContext);
+    expect(pageContext.text).toContain("A controlled page");
+    expect(pageContext.text).not.toContain("INPUT_SECRET");
+    await heard("hey handsfree find Count a selection");
+    await expect(page.locator("#clicks")).toHaveText("0");
+    await expect(page.locator("#handsfree-assist-overlay .feedback")).toContainText("Found Count a selection");
+    await heard("hey handsfree click Count a selection");
+    await expect(page.locator("#clicks")).toHaveText("1");
+    await heard("hey handsfree open Submit example form");
+    await expect(page.locator("#submissions")).toHaveText("0");
+    await expect(page.locator("#handsfree-assist-overlay .feedback")).toContainText("confirm");
+    await heard("cancel");
+    await heard("confirm");
+    await expect(page.locator("#submissions")).toHaveText("0");
+    await heard("hey handsfree click Submit example form");
+    await heard("confirm");
+    await expect(page.locator("#submissions")).toHaveText("1");
+  } finally {
+    await worker.evaluate(() => {
+      const scope = globalThis as any;
+      scope.fetch = scope.fixtureOriginalFetch;
+      delete scope.fixtureOriginalFetch;
+      delete scope.fixturePageContext;
+    });
+    await message({ type: "SAVE_PROVIDERS", groqKeys: [], jevKey: "" });
+  }
+});
+
+test("persisted cursor styles render distinct shapes with a visible dwell ring", async () => {
+  await point("#count");
+  const original = await message({ type: "GET_SETTINGS" });
+  try {
+    for (const cursorStyle of ["circle", "arrow", "crosshair", "spark"] as const) {
+      await message({ type: "SAVE_SETTINGS", settings: { ...original, cursorStyle, sensitivity: 6, dwellMs: 5000, scrollSensitivity: 3 } });
+      await expect(page.locator("#handsfree-assist-overlay .cursor")).toHaveAttribute("data-style", cursorStyle);
+      await expect(page.locator(`#handsfree-assist-overlay .cursor-icon[data-icon="${cursorStyle}"]`)).toBeVisible();
+      await expect(page.locator("#handsfree-assist-overlay .dwell-ring")).toBeVisible();
+      expect(await message({ type: "GET_SETTINGS" })).toMatchObject({ cursorStyle, sensitivity: 6, dwellMs: 5000, scrollSensitivity: 3 });
+    }
+  } finally { await message({ type: "SAVE_SETTINGS", settings: original }); }
+});
+
+
+test("visible aria-hidden YouTube thumbnails retain dwell across the title area", async () => {
+  await message({ type: "OFFSCREEN_COMMAND", command: "pause" });
+  const original = await message({ type: "GET_SETTINGS" });
+  await page.evaluate(() => {
+    const card = document.createElement("ytd-video-renderer");
+    card.innerHTML = '<a id="video-thumbnail" aria-hidden="true" href="/second" style="display:block;width:300px;height:180px;background:#777"><span>Thumbnail</span></a><a id="video-title" href="/second" style="display:block;width:300px;height:40px">Video title</a>';
+    document.body.prepend(card);
+    for (const link of card.querySelectorAll("a")) link.addEventListener("click", event => {
+      event.preventDefault();
+      document.body.dataset.videoClicks = String(Number(document.body.dataset.videoClicks || 0) + 1);
+    });
+  });
+  try {
+    await message({ type: "SAVE_SETTINGS", settings: { ...original, dwellEnabled: true, dwellMs: 800 } });
+    await point("#video-thumbnail");
+    await expect(page.locator("#handsfree-assist-overlay .outline")).toBeVisible();
+    for (let i = 0; i < 12; i++) {
+      await page.waitForTimeout(100);
+      await point(i === 3 || i > 8 ? "#video-title" : "#video-thumbnail");
+    }
+    await expect(page.locator("body")).toHaveAttribute("data-video-clicks", "1");
+    expect(await page.evaluate(() => location.pathname)).toBe("/");
+  } finally { await message({ type: "SAVE_SETTINGS", settings: original }); }
 });
