@@ -524,6 +524,37 @@ describe("thumbnail and title snapping", () => {
     channel.getBoundingClientRect = () => rect(330, 400);
     return { thumb, title, channel };
   }
+  it("allows a visibly clickable aria-hidden YouTube thumbnail while preserving private context exclusions", async () => {
+    const { thumb, title } = card();
+    thumb.setAttribute("aria-hidden", "true");
+    thumb.insertAdjacentHTML("beforeend", "<span>ARIA_HIDDEN_SECRET</span>");
+    const clicked = vi.fn((event: Event) => event.preventDefault());
+    thumb.addEventListener("click", clicked);
+    title.addEventListener("click", clicked);
+    const hit = document.elementFromPoint as ReturnType<typeof vi.fn>;
+    hit.mockImplementation((_x: number, y: number) => y < 280 ? thumb : title);
+    const targets = new PageTargets();
+    expect(targets.snap(500, 200)).toBe(thumb);
+    expect(targets.snap(500, 300, thumb)).toBe(thumb);
+    const point = (y: number) => ({ type: "POINTER", sample: { ...(pointer() as Extract<Message, { type: "POINTER" }>).sample, x: 500 / innerWidth, y: y / innerHeight } } as Message);
+    await runtime.handle(point(200));
+    time = 400;
+    await runtime.handle(point(300));
+    expect(clicked).not.toHaveBeenCalled();
+    time = 800;
+    await runtime.handle(point(200));
+    expect(clicked).toHaveBeenCalledOnce();
+    const context = await runtime.handle({ type: "GET_PAGE_CONTEXT" }) as { text: string };
+    expect(context.text).not.toContain("ARIA_HIDDEN_SECRET");
+    for (const attr of ["hidden", "inert"]) {
+      thumb.setAttribute(attr, "");
+      expect(usable(thumb)).toBe(false);
+      thumb.removeAttribute(attr);
+    }
+    thumb.style.display = "none";
+    expect(usable(thumb)).toBe(false);
+    targets.destroy();
+  });
   it("resolves an exposed thumbnail wrapper to its actual descendant link", () => {
     const { thumb } = card();
     const hit = document.elementFromPoint as ReturnType<typeof vi.fn>;
@@ -678,5 +709,32 @@ describe("smooth scrolling", () => {
     time = 2100;
     runtime.tick();
     expect(distance()).toBe(pausedDistance);
+  });
+});
+
+
+describe("cursor preferences preserve dwell", () => {
+  it("changes trusted cursor icons without resetting an in-progress dwell or activation latch", async () => {
+    const clicked = vi.fn();
+    document.getElementById("button")!.addEventListener("click", clicked);
+    await runtime.handle(pointer());
+    time = 400;
+    await runtime.handle(pointer());
+    const shadow = document.getElementById("handsfree-assist-overlay")!.shadowRoot!;
+    const ring = shadow.querySelector(".dwell-ring circle") as SVGCircleElement;
+    expect(ring?.style.strokeDashoffset).toBe("50");
+    for (const cursorStyle of ["arrow", "crosshair", "spark", "circle"] as const) {
+      await runtime.handle({ type: "PAGE_STATE", running: true, paused: false, dictating: false, settings: { ...defaults, cursorStyle } });
+      expect(shadow.querySelector(".cursor")!.getAttribute("data-style")).toBe(cursorStyle);
+      expect(shadow.querySelector(`.cursor-icon[data-icon="${cursorStyle}"]`)).not.toBeNull();
+      expect(shadow.querySelector(".dwell-ring circle")).toBe(ring);
+      expect(ring.style.strokeDashoffset).toBe("50");
+    }
+    time = 800;
+    await runtime.handle(pointer());
+    expect(clicked).toHaveBeenCalledTimes(1);
+    time = 1200;
+    await runtime.handle(pointer());
+    expect(clicked).toHaveBeenCalledTimes(1);
   });
 });

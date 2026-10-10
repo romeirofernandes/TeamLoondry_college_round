@@ -574,7 +574,7 @@ export function HandsfreeDashboard() {
               <section className="dashboard-panel">
                 <SectionTitle
                   title="Make pointing feel natural"
-                  description="Move within a comfortable range. No pinch required."
+                  description="Choose a source, then use a small comfortable range."
                 />
                 <FieldGroup>
                   <Field>
@@ -604,13 +604,31 @@ export function HandsfreeDashboard() {
                       </ToggleGroupItem>
                     </ToggleGroup>
                   </Field>
+                  <p className="dashboard-hint" role="note">
+                    {settings.pointerMode === "face"
+                      ? "Hold a small turn to keep moving. Return to neutral to stop in place."
+                      : "Keep your complete open palm in view. Move your palm to point; hold steady to select. No pinch required."}
+                  </p>
+                  <Field>
+                    <FieldLabel id="cursor-style-label">Cursor style</FieldLabel>
+                    <div className="dashboard-cursor-choices" role="radiogroup" aria-labelledby="cursor-style-label">
+                      {(["circle", "arrow", "crosshair", "spark"] as const).map((style) => (
+                        <label key={style} className="dashboard-cursor-choice" data-selected={settings.cursorStyle === style}>
+                          <input type="radio" name="cursor-style" value={style} checked={settings.cursorStyle === style} disabled={locked} onChange={() => save({ cursorStyle: style })} />
+                          <CursorIcon style={style} />
+                          <span>{style[0].toUpperCase() + style.slice(1)}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <FieldDescription>Every style keeps the visible dwell ring.</FieldDescription>
+                  </Field>
                   <SettingSlider
                     id="sensitivity"
                     label="Sensitivity"
                     value={settings.sensitivity}
                     display={`${settings.sensitivity.toFixed(1)}×`}
                     min={0.2}
-                    max={3}
+                    max={6}
                     step={0.1}
                     disabled={locked}
                     onChange={(value) => save({ sensitivity: value })}
@@ -621,10 +639,21 @@ export function HandsfreeDashboard() {
                     value={settings.dwellMs}
                     display={`${settings.dwellMs} ms`}
                     min={400}
-                    max={2500}
+                    max={5000}
                     step={100}
                     disabled={locked}
                     onChange={(value) => save({ dwellMs: value })}
+                  />
+                  <SettingSlider
+                    id="scroll-speed"
+                    label="Scroll speed"
+                    value={settings.scrollSensitivity}
+                    display={`${settings.scrollSensitivity.toFixed(1)}×`}
+                    min={0.2}
+                    max={3}
+                    step={0.1}
+                    disabled={locked}
+                    onChange={(value) => save({ scrollSensitivity: value })}
                   />
                   <SettingSlider
                     id="dead-zone"
@@ -648,7 +677,7 @@ export function HandsfreeDashboard() {
                   <SettingSwitch
                     id="edge-scroll"
                     label="Scroll at page edges"
-                    hint="Hold at the top or bottom to scroll."
+                    hint="Hold at the top or bottom to scroll. Leaving the edge or losing tracking stops it."
                     checked={settings.edgeScroll}
                     disabled={locked}
                     onChange={(checked) => save({ edgeScroll: checked })}
@@ -658,7 +687,7 @@ export function HandsfreeDashboard() {
               <section className="dashboard-panel">
                 <SectionTitle
                   title="A quick calibration"
-                  description="Start your session, sit comfortably, then calibrate."
+                  description="Start your session and sit comfortably. Each mode saves its own eight-second calibration."
                 />
                 <CameraPreview running={running} />
                 <Calibration state={state} />
@@ -679,13 +708,13 @@ export function HandsfreeDashboard() {
                     : "Calibrate pointer"}
                 </Button>
                 <ol className="dashboard-calibration-steps">
-                  <li>Look ahead and hold still.</li>
-                  <li>Move gently left and right.</li>
-                  <li>Move gently up and down.</li>
+                  <li>{settings.pointerMode === "face" ? "Look ahead and hold your comfortable neutral position." : "Show your open palm with every finger and your wrist inside the camera frame. Hold still."}</li>
+                  <li>{settings.pointerMode === "face" ? "Turn slightly left and right, staying comfortable." : "Move your palm slightly left and right within the camera frame."}</li>
+                  <li>Move gently up and down. Small movements are enough; avoid stretching to the edges.</li>
                 </ol>
                 <p className="dashboard-hint">
-                  Selections pause during calibration. Low confidence and
-                  tracking loss block clicks.
+                  Selections pause during calibration. Low confidence and tracking loss freeze movement and block clicks. Return to view, hold still briefly, then review the highlighted target. Recalibrate after a posture change if needed.
+                  Voice scrolling works before camera calibration.
                 </p>
               </section>
             </div>
@@ -822,13 +851,16 @@ export function HandsfreeDashboard() {
                 <CommandList
                   items={[
                     ["Click this", "Activate the highlighted target"],
+                    ["Open Careers", "Match a real page label locally and activate"],
                     ["Scroll down", "Read further on the page"],
                     ["Go back", "Return to the previous page"],
                     ["Start typing", "Dictate into the selected field"],
                     ["Stop typing", "Return to voice commands"],
                     ["Submit form", "Request submission, then say confirm"],
                     ["Hey handsfree, find careers", "Find a page target with Groq"],
-                    ["Hey handsfree, scroll down", "Ask Groq to interpret a command"],
+                    ["Hey handsfree, click Careers", "Match locally and activate, with confirmation for submit"],
+                    ["Hey handsfree, summarize this page", "Read a text answer here and on the webpage"],
+                    ["Hey handsfree, what is a browser?", "Ask a general question"],
                     ["Choose two", "Select one of several find matches"],
                     ["Pause handsfree", "Pause pointer, voice, and dictation"],
                   ]}
@@ -939,7 +971,7 @@ export function HandsfreeDashboard() {
             <div className="dashboard-two-column">
               <section className="dashboard-panel">
                 <SectionTitle
-                  title="Find a page target"
+                  title="Ask questions and use page controls"
                   description="Say hey handsfree before a request to use Groq. Fixed commands also work without a key."
                 />
                 <div className="dashboard-provider-status">
@@ -1122,11 +1154,9 @@ export function HandsfreeDashboard() {
                 </Button>
                 <Alert role="note">
                   <Key aria-hidden="true" />
-                  <AlertTitle>Page labels, not camera frames</AlertTitle>
+                  <AlertTitle>What your request shares</AlertTitle>
                   <AlertDescription>
-                    Hey handsfree sends your phrase and visible target labels to
-                    Groq. Editable field contents are excluded.
-                    Review the highlight before saying click this.
+                    Hey handsfree sends your phrase, target labels, page title, URL and up to 12,000 characters of public page text to Groq. Inputs, editable regions, passwords and Handsfree UI are excluded. Camera frames stay local. Find requests highlight; explicit click or open requests activate through the usual safety gates. Answers appear as text here and on the webpage.
                   </AlertDescription>
                 </Alert>
                 <Button
@@ -1315,6 +1345,16 @@ function Metric({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+function CursorIcon({ style }: { style: Settings["cursorStyle"] }) {
+  return (
+    <svg viewBox="0 0 38 38" width="24" height="24" aria-hidden="true" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
+      {style === "circle" && <circle cx="19" cy="19" r="7" />}
+      {style === "arrow" && <path d="M11 6 L29 23 L20 23 L16 33 Z" />}
+      {style === "crosshair" && <path d="M19 4 V13 M19 25 V34 M4 19 H13 M25 19 H34" fill="none" strokeWidth="3" />}
+      {style === "spark" && <path d="M19 4 L23 15 L34 19 L23 23 L19 34 L15 23 L4 19 L15 15 Z" />}
+    </svg>
+  );
+}
 function SettingSlider({
   id,
   label,
@@ -1345,7 +1385,7 @@ function SettingSlider({
         <output>
           {local === value
             ? display
-            : id === "sensitivity"
+            : id === "sensitivity" || id === "scroll-speed"
               ? `${local.toFixed(1)}×`
               : id === "dead-zone"
                 ? `${Math.round(local * 100)}%`

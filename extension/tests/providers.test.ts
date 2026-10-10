@@ -372,9 +372,35 @@ describe('local priority and textual assistance regressions', () => {
     { ids: [], intent: { type: 'click' }, answer: 'text' },
     { ids: [], answer: 'x'.repeat(6001) },
     { ids: [], answer: 42 },
-    { ids: [], intent: { type: 'click-target', query: 'Careers' } },
+    { ids: [], intent: { type: 'click-target', query: '' } },
   ])('rejects malformed or combined answer results', async output => {
     request.mockResolvedValue(completion(output));
     await expect(resolveArbitrary('answer me', targets, { groqKeys: keys })).rejects.toThrow(/invalid|unsupported/i);
+  });
+});
+
+
+describe("wake named control actions", () => {
+  it.each([
+    { ids: ["careers"] },
+    { ids: [] },
+    { ids: [], intent: { type: "click" } },
+  ])("keeps an explicit named action bound to the original local query for valid provider output %j", async output => {
+    request.mockResolvedValue(completion(output));
+    expect(await resolveArbitrary("open Submit example form", targets, { groqKeys: keys })).toEqual({ ids: [], intent: { type: "click-target", query: "submit example form" } });
+  });
+
+  it("accepts bounded named clicks and discards extra provider fields", async () => {
+    request.mockResolvedValue(completion({ ids: [], intent: { type: "click-target", query: "  Careers  ", html: "<script>bad()</script>" } }));
+    expect(await resolveArbitrary("select the Careers control", targets, { groqKeys: keys })).toEqual({ ids: [], intent: { type: "click-target", query: "Careers" } });
+    expect(validateIntent({ type: "click-target", query: " " })).toBeNull();
+    expect(validateIntent({ type: "click-target", query: "x".repeat(501) })).toBeNull();
+  });
+  it.each([
+    { ids: ["careers"], intent: { type: "click-target", query: "Careers" } },
+    { ids: [], answer: "Hello", intent: { type: "click-target", query: "Careers" } },
+  ])("rejects combined named clicks %j", async output => {
+    request.mockResolvedValue(completion(output));
+    await expect(resolveArbitrary("open Careers", targets, { groqKeys: keys })).rejects.toThrow(/invalid|combined/i);
   });
 });

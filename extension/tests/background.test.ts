@@ -16,7 +16,7 @@ const pageSender = (id: number): chrome.runtime.MessageSender => ({
   url: "https://example.test/",
 });
 
-async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: string; settings?: Record<string, unknown> } = {}) {
+async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: string; settings?: Record<string, unknown>; legacySettings?: Record<string, unknown> } = {}) {
   let listener: Listener | undefined;
   let pageDictating = false;
   const event = () => ({ addListener: vi.fn() });
@@ -25,7 +25,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
       local: {
         setAccessLevel: vi.fn(async () => {}),
         get: vi.fn(async () => ({
-          settings: { ...defaults, ...options.settings },
+          settings: options.legacySettings ?? { ...defaults, ...options.settings },
           providers: { groqKeys: options.key ? [options.key] : [], jevKey: options.jevKey ?? "" },
           logs: [],
         })),
@@ -809,5 +809,27 @@ describe("comfortable control settings", () => {
     const { send } = await setup();
     await send({ type: "SAVE_SETTINGS", settings: { ...defaults, sensitivity: 100, dwellMs: -1, scrollSensitivity: NaN, cursorStyle: "bad" } as unknown as typeof defaults });
     expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ sensitivity: 6, dwellMs: 400, scrollSensitivity: 1, cursorStyle: "circle" });
+  });
+});
+
+
+describe("legacy preference migration and wake named clicks", () => {
+  it("fills genuinely absent fields in an old stored settings record", async () => {
+    const { send, browser } = await setup({ legacySettings: { pointerMode: "hand", sensitivity: 2.5, dwellMs: 1200 } });
+    const raw = await browser.storage.local.get();
+    expect(Object.hasOwn(raw.settings, "cursorStyle")).toBe(false);
+    expect(Object.hasOwn(raw.settings, "scrollSensitivity")).toBe(false);
+    expect(await send({ type: "GET_SETTINGS" })).toMatchObject({ pointerMode: "hand", sensitivity: 2.5, dwellMs: 1200, cursorStyle: "circle", scrollSensitivity: 1 });
+  });
+  it("routes an explicit wake named click through local page matching, and keeps finds as highlights", async () => {
+    const { browser, send, fetch } = await setup({ key: "fixture-groq" });
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ ids: [], intent: { type: "click-target", query: "Careers" } }) } }] }) });
+    await send({ type: "HEARD", text: "hey handsfree open Careers" });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: "PAGE_ACTION", intent: { type: "click-target", query: "Careers" } });
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '{"ids":["careers"]}' } }] }) });
+    browser.tabs.sendMessage.mockClear();
+    await send({ type: "HEARD", text: "hey handsfree find Careers" });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: "FIND_RESULT", ids: ["careers"] });
+    expect(browser.tabs.sendMessage.mock.calls.some(([,m]) => m.type === "PAGE_ACTION")).toBe(false);
   });
 });

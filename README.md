@@ -27,7 +27,7 @@ The first build downloads Google's versioned MediaPipe face and hand models, ver
 7. Start the website in a second terminal with `cd next`, `npm ci`, then `npm run dev`. Open `http://localhost:3000/dashboard` from the extension's **Open dashboard** button.
 8. On a normal webpage, open Handsfree and select **Start Handsfree**. Allow the camera and microphone. The popup shows a live camera preview while the session runs.
 9. Open the website dashboard for calibration, pointer settings, speech language, tabs, providers, and activity. Capture continues in Chrome's offscreen document when the popup closes or you return to another tab.
-10. Select **Calibrate**. Hold your comfortable neutral position for the first 2.5 seconds, then move comfortably left, right, up, and down until the eight-second calibration ends. Instructions and progress appear above the camera.
+10. Select **Calibrate**. Hold your comfortable neutral position for the first 2.5 seconds, then make small comfortable movements left, right, up, and down until the eight-second calibration ends. No full-range stretch is needed. Face and hand save separate calibrations. Instructions and progress appear above the camera.
 11. Use the dashboard permission setup to enable webpage control and optional tab commands. Permission prompts open on the extension origin. If Chrome refuses a popup media prompt, use **Enable camera and microphone** in that setup window, then retry.
 
 The Chrome dashboard shortcut is `chrome-extension://<extension-id>/dashboard.html#tabs`. It redirects to the configured website dashboard. The default website URL is `http://localhost:3000/dashboard`. For another development port or HTTPS deployment, update the saved `dashboardUrl` through the extension settings protocol and grant webpage access to that host before opening it.
@@ -47,13 +47,16 @@ npm run fixtures
 
 Open `http://127.0.0.1:4177`. This page has a click counter, ordinary text fields, guarded password/payment fields, a submission counter, a contenteditable field, offscreen careers links, and duplicate target labels. Leave the terminal running while testing.
 
+After changing extension code, run `cd extension && npm run build`, then use **Reload** on the unpacked extension at `chrome://extensions`. Refresh the controlled webpage and dashboard so their content scripts use the rebuilt version. The original installation and optional permissions remain the same. Keep `dist/` and local provider configuration out of version control.
+
 ## Try the controls
 
-- **Face movements:** keep Face movements selected, calibrate, and move your head to steer. Small movements inside the dead zone do not move the pointer. Sensitivity changes the usable range.
-- **Hand gestures:** choose Broad hand, then calibrate that mode. Move your palm broadly to point. Hold steady to confirm; pinching is never required. Face and hand have separate saved calibrations.
+- **Face movements:** keep Face movements selected and calibrate. Hold a small head turn to keep the cursor moving in that direction. Return to neutral to stop in place; the cursor does not snap back. The dead zone absorbs small resting movements. Sensitivity adjusts cursor speed.
+- **Hand gestures:** choose Hand gestures, then calibrate that mode. Keep your complete open palm, fingers and wrist visible in the camera preview. Move your palm within a small comfortable range to point directly. Hold steady until the dwell ring fills (or use steady hand hold with dwell disabled); pinching is never required. Face and hand have separate saved calibrations.
 - **Dwell:** enable dwell selection, aim at Count a selection, and wait for the visible ring. It defaults to 800 ms. Moving away cancels it. Remaining on an already activated target does not click repeatedly; leave and return to rearm.
-- **Tracking loss:** cover the camera or move out of view. The pointer should freeze and no dwell or hand action should fire. Return to view before selecting again.
-- **Scroll:** say `scroll down` or `scroll up`. With edge scrolling enabled, hold the pointer near the top or bottom edge.
+- **Tracking loss:** cover the camera or move out of view. The pointer should freeze and no dwell or hand action should fire. Return to view, hold still briefly, and review the highlighted target before selecting again. Recalibrate after a posture change if needed.
+- **Scroll:** say `scroll down` or `scroll up` for smooth scrolling, even before camera calibration. With edge scrolling enabled, hold the pointer near the top or bottom edge; leaving the edge or losing tracking stops edge scrolling. Scroll speed adjusts both modes. Pause or stop cancels every scroll.
+- **Preferences:** the Pointer dashboard saves sensitivity (0.2–6×), dwell (400–5000 ms; default 800 ms), scroll speed (0.2–3×; default 1×), and Circle, Arrow, Crosshair or Spark cursors. Every cursor has the same visible dwell ring.
 - **Pause:** click Pause, press Escape on the controlled webpage, or use Alt + Shift + P. Cursor activation, voice recognition, and dictation stop together. Resume with the button or shortcut, because paused recognition cannot hear a resume phrase.
 - **Stop:** click Stop or say `stop handsfree` in command mode. This releases the camera and ends recognition.
 
@@ -121,13 +124,13 @@ Tab-title ties ask you to say `choose one`, `choose two`, and so on. A title wit
 
 ## Providers and arbitrary commands
 
-Ordinary speech uses Jev. Requests starting with `hey handsfree` use Groq with `qwen/qwen3.8-27b`. For example, say `hey handsfree find the careers link`. Matching IDs highlight available top-document controls; say `click this` to activate. Arbitrary navigation requests can also map to existing browser actions. Submit and close-tab still require a separate confirmation.
+Exact local commands bypass providers, including `click this`, `open Careers`, `scroll down`, `next tab`, and `search for jazz in a new tab in background`. Other ordinary speech can use Jev. Requests starting with `hey handsfree` use Groq with `qwen/qwen3.8-27b`. For example, say `hey handsfree find the careers link`. Matching IDs highlight available top-document controls; say `click this` to activate. Explicit named actions such as `hey handsfree click Careers` use local label matching to activate a real control; ambiguous labels ask for a numbered choice. Find-only requests highlight. Ask `hey handsfree summarize this page`, a page question, or a general question to receive a text answer in the webpage overlay and dashboard feedback. Arbitrary navigation requests can also map to existing browser actions. Submit and close-tab still require a separate confirmation.
 
 Provider output is validated. Unknown IDs, unsupported actions, ambiguous results, timeouts, and provider errors cause no activation. Up to 1,500 target labels can be sent, including offscreen targets. Closed shadow roots and cross-origin iframe contents are not scanned.
 
-The local build reads `extension/config/providers.local.json`, which is gitignored. Use `providers.example.json` as the format. This workspace's supplied credentials are already configured; no values belong in tracked code or documentation. Groq requests rotate across up to five configured keys, including transcription requests. This local build uses the four working supplied keys; the rejected fifth is excluded. Keys are bundled in the local extension build. Keep `dist/` out of GitHub too.
+The local build reads `extension/config/providers.local.json`, which is gitignored. Use `providers.example.json` as the format. This workspace's supplied credentials are already configured; no values belong in tracked code or documentation. Groq requests rotate across up to four configured keys, including transcription requests. This local build uses the four working supplied keys; the rejected fifth is excluded. Keys are bundled in the local extension build. Keep `dist/` out of GitHub too.
 
-The dashboard accepts local overrides without exposing stored values back to webpages. Saving empty provider values disables that provider. Without Jev, exact commands still work. Browser speech may send audio to Chrome, Groq fallback sends audio to Groq, Jev receives command text, and arbitrary Groq requests receive command text and target labels. Camera frames remain local.
+The dashboard accepts local overrides without exposing stored values back to webpages. Saving empty provider values disables that provider. Without Jev, exact commands still work. Browser speech may send audio to Chrome, Groq fallback sends audio to Groq, Jev receives command text, and wake Groq requests receive command text, target labels, page title and URL, and at most 12,000 characters of public page text. Inputs, editable regions, passwords, scripts and Handsfree UI are excluded; avoid asking page questions on sensitive documents. Answers are displayed as text, never HTML or code. Camera frames remain local.
 
 ## Check timing and errors
 

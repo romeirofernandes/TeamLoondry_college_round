@@ -45,7 +45,10 @@ export function usable(element: Element): element is HTMLElement {
   if (!(element instanceof HTMLElement) || element.closest(`#${overlayId}`))
     return false;
   if (
-    element.closest('[hidden],[inert],[aria-hidden="true"]') ||
+    // aria-hidden removes duplicate thumbnails from assistive technology,
+    // but does not hide their native pointer hit area. Public text filtering
+    // independently excludes aria-hidden content above.
+    element.closest('[hidden],[inert]') ||
     element.matches(':disabled,[aria-disabled="true"]')
   )
     return false;

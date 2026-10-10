@@ -297,6 +297,7 @@ export class ContentRuntime {
             confidenceThreshold: message.settings.confidenceThreshold,
           });
         this.settings = message.settings;
+        this.overlay.style(this.settings.cursorStyle);
         if (!this.running || this.paused) {
           this.cancelPending();
           this.stopTyping();
