@@ -92,6 +92,29 @@ export interface Calibration {
   up?: number;
   down?: number;
 }
+export type HandGesture = "index" | "two-fingers" | "three-fingers" | "fist" | "thumbs-up";
+export type GestureCalibration = { threshold: number; calibratedAt: number };
+export type GestureAction =
+  | { type: "open-site"; destinationId: string; url: string; inNewTab: boolean }
+  | { type: "media-toggle" | "media-play" | "media-pause" }
+  | { type: "back" | "forward" | "next-tab" | "previous-tab" | "scroll-top" | "scroll-bottom" };
+export interface GesturePreset {
+  id: string;
+  name: string;
+  gesture: HandGesture;
+  action: GestureAction;
+  calibration: GestureCalibration;
+  enabled: boolean;
+}
+export interface GestureRuntimeStatus {
+  ready: boolean;
+  detected: HandGesture | null;
+  confidence: number;
+  calibrating?: HandGesture | null;
+  calibrationProgress?: number;
+  calibration?: GestureCalibration;
+  error?: string;
+}
 export interface PointerSample {
   x: number;
   y: number;
@@ -227,7 +250,17 @@ export type Message =
   | { type: "TRANSCRIBE_AUDIO"; audio: number[]; mime: string; language: string }
   | { type: "GET_CALIBRATION"; mode: PointerMode }
   | { type: "SAVE_CALIBRATION"; mode: PointerMode; calibration: Calibration }
-  | { type: "OFFSCREEN_COMMAND"; command: "start" | "pause" | "resume" | "stop" | "calibrate" | "settings" | "install-speech"; settings?: Settings }
+  | { type: "OFFSCREEN_COMMAND"; command: "start" | "pause" | "resume" | "stop" | "calibrate" | "settings" | "install-speech" | "gesture-calibrate" | "gesture-cancel-calibration" | "gesture-presets"; settings?: Settings; gesture?: HandGesture; presets?: GesturePreset[] }
+  | { type: "GET_GESTURE_PRESETS" }
+  | { type: "SAVE_GESTURE_PRESETS"; presets: GesturePreset[] }
+  | { type: "GET_GESTURE_DESTINATIONS" }
+  | { type: "GET_GESTURE_STATUS" }
+  | { type: "CALIBRATE_GESTURE"; gesture: HandGesture }
+  | { type: "CANCEL_GESTURE_CALIBRATION" }
+  | { type: "GESTURE_STATUS"; status: GestureRuntimeStatus }
+  | { type: "GESTURE_TRIGGER"; presetId: string }
+  | { type: "GESTURE_PREVIEW_FRAME"; frame: string | null }
+  | { type: "GET_GESTURE_PREVIEW" }
   | { type: "SAVE_SETTINGS"; settings: Settings }
   | { type: "OPEN_CONTROLLER"; tabId?: number }
   | { type: "START"; tabId?: number }
@@ -262,7 +295,8 @@ export type Message =
     }
   | { type: "RECALIBRATE" };
 export async function send<T = any>(message: Message): Promise<T> {
-  const result = await chrome.runtime.sendMessage(message);
+  const runtime = (globalThis as typeof globalThis & { chrome: { runtime: { sendMessage(message: Message): Promise<any> } } }).chrome.runtime;
+  const result = await runtime.sendMessage(message);
   if (result?.ok === false) throw new Error(result.error || "The action failed. Retry from the popup.");
   return result;
 }

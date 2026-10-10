@@ -74,6 +74,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { CameraPreview } from "./camera-preview";
+import { GestureConfig } from "./gesture-config";
 
 type ProviderStatus = {
   groqKeyCount: number;
@@ -86,6 +87,7 @@ type RunLog = { events: MetricEvent[]; summary: Record<string, unknown> };
 const views = [
   { id: "overview", label: "Overview", icon: Monitor },
   { id: "pointer", label: "Pointer", icon: UserFocus },
+  { id: "gestures", label: "Gestures", icon: Hand },
   { id: "voice", label: "Voice", icon: Microphone },
   { id: "tabs", label: "Tabs", icon: TabsIcon },
   { id: "providers", label: "Providers", icon: Key },
@@ -748,6 +750,14 @@ export function HandsfreeDashboard() {
                 </p>
               </section>
             </div>
+          </TabsContent>
+          <TabsContent value="gestures">
+            <GestureConfig
+              running={running}
+              voiceOnly={settings.voiceOnly}
+              tabsPermission={permissions?.tabs ?? false}
+              onNeedTabs={() => void safe(() => permit("tabs"), "Enable tab access to include your open websites.")}
+            />
           </TabsContent>
           <TabsContent value="voice">
             <div className="dashboard-two-column">
