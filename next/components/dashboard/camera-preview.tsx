@@ -4,17 +4,33 @@ import { useEffect, useRef, useState } from "react";
 import { VideoCamera, VideoCameraSlash } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 
-export function CameraPreview({ running, voiceOnly = false }: { running: boolean; voiceOnly?: boolean }) {
+export function CameraPreview({
+  running,
+  voiceOnly = false,
+}: {
+  running: boolean;
+  voiceOnly?: boolean;
+}) {
   const video = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState("Start a session to see your camera.");
   const [retry, setRetry] = useState(0);
   const [ready, setReady] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    if (!running) setEnabled(false);
+  }, [running]);
   useEffect(() => {
     let cancelled = false;
     let stream: MediaStream | null = null;
     setReady(false);
-    if (!running) {
-      setStatus(voiceOnly ? "Camera off for this voice-only session." : "Start a session to see your camera.");
+    if (!running || !enabled) {
+      setStatus(
+        voiceOnly
+          ? "Camera stays off. Use voice to choose named items and results."
+          : running
+            ? "Tracking is running in the extension. A camera preview is optional."
+            : "Start a session when you're ready. Camera preview is optional.",
+      );
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -48,9 +64,11 @@ export function CameraPreview({ running, voiceOnly = false }: { running: boolean
       stream?.getTracks().forEach((track) => track.stop());
       if (video.current) video.current.srcObject = null;
     };
-  }, [running, voiceOnly, retry]);
+  }, [running, voiceOnly, retry, enabled]);
   return (
-    <div className="dashboard-camera">
+    <div
+      className={`dashboard-camera${ready ? "" : " dashboard-camera-optional"}`}
+    >
       <video
         ref={video}
         autoPlay
@@ -70,15 +88,21 @@ export function CameraPreview({ running, voiceOnly = false }: { running: boolean
           {running && (
             <Button
               variant="outline"
-              onClick={() => setRetry((value) => value + 1)}
+              onClick={() => {
+                setEnabled(true);
+                setRetry((value) => value + 1);
+              }}
             >
-              Retry preview
+              {enabled ? "Retry preview" : "Show camera preview"}
             </Button>
           )}
         </div>
       )}
       {ready && (
-        <span className="dashboard-camera-label">Live preview · mirrored</span>
+        <div className="dashboard-camera-label">
+          Live preview · mirrored{" "}
+          <button onClick={() => setEnabled(false)}>Hide preview</button>
+        </div>
       )}
     </div>
   );
