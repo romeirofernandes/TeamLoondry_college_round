@@ -56,10 +56,31 @@ const sensitivePatterns = [
   /\b(?:passport|aadh?aar|social[ -]?security|ssn|national[ -]?(?:id|identifier|identification|insurance[ -]?number|number)|(?:government|govt)[ -]?(?:issued[ -]?)?(?:id|identifier|identification|number)|state[ -]?id|driver'?s?[ -]?licen[cs]e|birth[ -]?certificate|citizenship[ -]?(?:id|number)|tax(?:payer)?[ -]?(?:id|identifier|identification|number|reference|code|registration)|tin|ein|gstin|gst[ -]?(?:number|id|registration)|vat[ -]?(?:number|id|registration)|pan[ -]?(?:card|number)|voter[ -]?(?:id|number))\b/i,
   /\b(?:medical|health|diagnos(?:is|es|tic)|medications?|prescription|symptoms?|patients?|disabilit(?:y|ies)|allerg(?:y|ies)|blood[ -]?(?:type|group|pressure|sugar|glucose)|hiv|aids|pregnan(?:cy|t)|mental[ -]?(?:health|illness|disorder)|chronic|illness|disease|treatment|therapy|surgery|surgical|vaccin(?:e|ation|ated)|immuni[sz]ation|cholesterol|glucose|bmi|cancers?|tumou?rs?|oncolog(?:y|ical|ist)|malignan(?:t|cy)|diabet(?:es|ic)|asthma|hypertension|stroke|cardiac|heart[ -]?(?:disease|condition)|kidney[ -]?(?:disease|condition)|clinical|psychiatr(?:ic|y|ist)|addiction|infection|hepatitis|hospitali[sz]ation|family[ -]?history|(?:health|disease|surgical|treatment|patient)[ -]?history|history[ -]?of[ -]?(?:illness|disease|cancer|surgery|treatment))\b/i,
   /\b(?:epileps(?:y|ies)|seizures?|migraines?|headaches?|dementia|alzheimer'?s?|parkinson'?s?|multiple[ -]?sclerosis|depression|anxiety|bipolar|schizophrenia|ptsd|adhd|autism|copd|bronchitis|emphysema|apn(?:ea|oea)|arthritis|autoimmune|lupus|eczema|psoriasis|chemotherapy|metastasis|tuberculosis|covid(?:[ -]?19)?|crohn'?s?|irritable[ -]?bowel|celiac|coeliac|ulcers?|thyroid|cirrhosis|endometriosis|infertility|fertility[ -]?treatment)\b/i,
+  /\b(?:heart[ -]?attack|myocardial[ -]?infarction|heart[ -]?failure|arrhythmia|angina|pneumonia|narcolepsy|insomnia|anorexia|bulimia|osteoporosis|fibromyalgia|gout|anemia|anaemia|sickle[ -]?cell|hemophilia|haemophilia|leukemia|leukaemia|lymphoma|melanoma|meningitis|sepsis|polio|measles|mumps|rubella|malaria|dengue|cholera|dyslexia|syndromes?|disorders?|lesions?|fractures?|concussions?|injuries|pain|bleeding|nausea|vomiting|fever|fatigue|dizziness|cough|dosage|doses?|vitals?|pulse|oxygen[ -]?(?:level|saturation)|body[ -]?(?:weight|temperature))\b/i,
 ];
 const vagueName = /^(?:other|answer|response|field|input|text|select|choose|option|yes|no|please specify|untitled|id|identifier|number|code|reference|details?|information|history|status|condition|date|expiry|expiration|secret|confidential|sensitive|identity|personal (?:details|information|data)|(?:please )?(?:enter|describe|specify)(?: here)?|additional (?:details|information)|question\s*\d+)(?:\s*\d+)?$/i;
-const unqualifiedName = /^(?:id|identifier|number|code|reference|details?|information|history|status|condition|date|expiry|expiration)$/i;
 const ordinarySingleName = /^(?:name|firstname|lastname|surname|email|e-mail|phone|telephone|mobile|website|url|address|street|city|state|province|country|postcode|zipcode|zip|postal|company|employer|organization|occupation|job|position|title|department|school|university|college|age|time|quantity|color|colour|size|comments?|feedback|message|notes?|subject|event|location|preference|hobby|username|description)$/i;
+// A missing sensitive keyword is not evidence of safety. Recognize bounded ordinary
+// meanings explicitly; unfamiliar labels remain uncertain even inside a named group.
+const ordinaryMeaningPatterns = [
+  /^(?:(?:first|middle|last|full|given|family|preferred|display|legal|contact|user) )?name$/i,
+  /^(?:(?:work|home|personal|alternate|alternative|contact) )?(?:e mail|email)(?: address)?$/i,
+  /^(?:(?:work|home|personal|alternate|alternative|contact|mobile|cell) )?(?:phone|telephone|mobile|cell)(?: number)?$/i,
+  /^(?:website(?: url| address)?|web site(?: url| address)?|url|country code|dialing code|dialling code)$/i,
+  /^(?:(?:mailing|shipping|billing|delivery|home|work|street|postal) )?address(?: line [12])?$/i,
+  /^(?:(?:shipping|billing|delivery|home|work) )?(?:street(?: address| name| number)?|city|town|state|province|region|country|zip(?: code)?|postal code|post code)$/i,
+  /^(?:company|employer|organization|organisation|business|department|school|university|college)(?: name| address| website| location)?$/i,
+  /^(?:job title|position title|professional title|job role|employment status|employment type|work experience|years of experience|student year|graduation (?:year|date)|course(?: name)?|major|degree|academic (?:grade|score)|exam (?:grade|score))$/i,
+  /^(?:employment|work|job|education|school|academic|order|purchase|travel|project|browser|search) history$/i,
+  /^(?:student|employee|customer|order|product|item|project|booking|reservation|shipment|tracking) (?:id|identifier|number|code|reference|status|details|information|date)$/i,
+  /^(?:product|item|shipping|weather|road) condition$/i,
+  /^(?:event|meeting|appointment|reservation|booking|travel|arrival|departure|delivery|start|end) (?:name|title|date|time|location|details)$/i,
+  /^(?:date of birth|birth date|birthdate|birthday|age|time zone|timezone)$/i,
+  /^(?:(?:favorite|favourite|preferred) )?(?:color|colour|size|language|hobby|hobbies|interests|sport|movie|music|food|book)$/i,
+  /^(?:contact|communication|delivery|shipping) (?:method|preference|preferences|instructions|details|information)$/i,
+  /^(?:(?:additional|other|your|general) )?(?:comments|feedback|message|notes|description|suggestions)$/i,
+  /^(?:message subject|subject line|search(?: query| terms)?|quantity|number of (?:items|tickets|guests|attendees)|terms and conditions|terms of (?:use|service)|newsletter(?: subscription)?|marketing consent)$/i,
+];
 
 function bounded(value: string, length = 180): string {
   return value.replace(/\s+/g, " ").trim().slice(0, length);
@@ -70,14 +91,27 @@ function semanticText(value: string): string {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_./-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function contactKind(value: string): "email" | "phone" | "url" | null {
+function meaningText(value: string): string {
+  return semanticText(value).toLowerCase()
+    .replace(/\s*\((?:required|optional)\)\s*$/i, "")
+    .replace(/[?:*]+$/g, "").trim()
+    .replace(/^(?:please (?:enter|provide|select|choose|describe|specify) |(?:enter|provide|select|choose) |what (?:is|are) (?:your|the) |your )/i, "")
+    .trim();
+}
+
+function ordinaryMeaning(value: string): boolean {
+  const meaning = meaningText(value);
+  return ordinarySingleName.test(meaning) || ordinaryMeaningPatterns.some(pattern => pattern.test(meaning));
+}
+
+function contactKind(value: string): "email" | "phone" | "url" | "conflicting" | null {
   const normalized = semanticText(value).toLowerCase();
   const kinds = [
     /\b(?:email|e mail)\b/.test(normalized) ? "email" : null,
     /\b(?:phone|telephone|mobile|tel)\b/.test(normalized) ? "phone" : null,
     /\b(?:website|web site|url)\b/.test(normalized) ? "url" : null,
   ].filter(Boolean);
-  return kinds.length === 1 ? kinds[0] as "email" | "phone" | "url" : null;
+  return kinds.length > 1 ? "conflicting" : kinds.length === 1 ? kinds[0] as "email" | "phone" | "url" : null;
 }
 
 function parentOf(element: Element): Element | null {
@@ -240,19 +274,32 @@ function classify(element: HTMLElement, members: readonly HTMLElement[], name: s
     item.getAttribute("autocomplete") || "", item.getAttribute("name") || "",
     item instanceof HTMLInputElement ? item.type : "",
   ]);
-  if (labelKind && metadata.some(value => contactKind(value) && contactKind(value) !== labelKind))
+  const metadataKinds = metadata.map(contactKind).filter(Boolean);
+  // Radio member labels name choices, so compare the group's question names.
+  const namingElement = element.matches('input[type="radio"],[role="radio"]') ? group : element;
+  const explicitNames = namingElement ? [associatedLabel(namingElement), referencedText(namingElement, "aria-labelledby"), namingElement.getAttribute("aria-label") || ""].filter(Boolean) : [];
+  const explicitKinds = explicitNames.map(contactKind).filter(Boolean);
+  const typedKind = element instanceof HTMLInputElement ? contactKind(element.type) : null;
+  if (labelKind === "conflicting" || metadataKinds.includes("conflicting") || explicitKinds.includes("conflicting") ||
+      (labelKind && [...metadataKinds, ...explicitKinds].some(kind => kind !== labelKind)) ||
+      (typedKind && typedKind !== labelKind) ||
+      (!labelKind && explicitKinds.length > 0))
     return { status: "blocked", reason: "uncertain" };
-  const clarification = semanticText([groupName(group), ...ancestorContext].join(" "));
-  const meaning = semanticText([name, clarification].join(" "));
-  if (/\b(?:history|conditions?|screening|test results?|records?)\b/i.test(meaning) &&
-      !/\b(?:employment|work|job|education|school|academic|exam|quiz|order|purchase|travel|project|product|item|shipping|weather|terms|road|browser|search)\b/i.test(meaning))
-    return { status: "blocked", reason: "uncertain" };
-  const qualified = clarification.toLowerCase().includes(name.toLowerCase()) && clarification.length > name.length + 2;
-  const unclearName = unqualifiedName.test(name) ? !qualified :
-    vagueName.test(name) && (!clarification || vagueName.test(clarification) || clarification.toLowerCase() === name.toLowerCase());
-  const unknownSingleName = /^[\p{L}][\p{L}\p{N}'-]*$/u.test(name) &&
-    !ordinarySingleName.test(name) && !clarification;
-  if (!name || unclearName || unknownSingleName || questionContext.length >= 1000 || context.length >= 2400)
+  const normalizedName = semanticText(name).toLowerCase();
+  // Context can qualify a vague label only when it states a recognized ordinary
+  // meaning containing that label (e.g. "Number" in "Order number"). Generic
+  // headings and unrelated ordinary fields cannot clarify an unknown label.
+  const clarifications = [groupName(group), ...ancestorContext].map(semanticText);
+  const qualified = vagueName.test(name) && clarifications.some(value => {
+    const words = value.toLowerCase().split(/\s+/);
+    const labelWords = normalizedName.split(/\s+/);
+    const mentionsLabel = words.some((_, index) => labelWords.every((word, offset) => words[index + offset] === word));
+    return mentionsLabel && ordinaryMeaning(value);
+  });
+  if (!name || (!ordinaryMeaning(name) && !qualified) ||
+      explicitNames.some(value => meaningText(value) !== meaningText(name) &&
+        (!ordinaryMeaning(value) || !labelKind || contactKind(value) !== labelKind)) ||
+      questionContext.length >= 1000 || context.length >= 2400)
     return { status: "blocked", reason: "uncertain" };
   return { status: "safe" };
 }
