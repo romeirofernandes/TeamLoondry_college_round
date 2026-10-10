@@ -46,7 +46,7 @@
 
 ### Task 3: Dashboard guidance and cursor choices with integration checks
 
-**Files:** Modify next/components/dashboard/dashboard.tsx, next/app/dashboard/dashboard.css as needed, extension/src/content/overlay.ts, extension/src/ui/index.tsx if legacy controls expose the affected sliders, README.md, docs/testing.md; extend extension/tests/content.test.ts, extension.spec.ts/dashboard-next.mjs as appropriate.
+**Files:** Modify next/components/dashboard/dashboard.tsx, next/app/dashboard/dashboard.css as needed, extension/src/content/overlay.ts, extension/src/ui/index.tsx if legacy controls expose the affected sliders, extension/src/providers.ts for validated wake named-click schema, README.md, docs/testing.md; extend extension/tests/content.test.ts, providers.test.ts, background.test.ts, extension.spec.ts/dashboard-next.mjs as appropriate.
 **Interfaces:** Consume Task 2 Settings.scrollSensitivity and cursorStyle, updated sensitivity/dwell bounds. Apply cursor style to overlay without changing dwell ring, highlight or safety. Consume Task 1 answer feedback.
 - [ ] Read next/AGENTS.md and relevant bundled Next docs before editing Next code. Use existing controls/style patterns; add accessible cursor choices circle/arrow/crosshair/spark, scroll speed, sensitivity 0.2–6, dwell 400–5000ms, with saved preferences.
 - [ ] Explain face rate control (hold small turn to continue, neutral stops), low-effort calibration and hand setup (open palm, complete palm visible, comfortable range, steady dwell, recovery after loss) in dashboard, calibration instructions and README. Reflect Groq answers and deterministic local command examples; update privacy disclosure for page context.
