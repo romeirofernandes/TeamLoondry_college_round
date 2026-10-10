@@ -40,6 +40,16 @@ Command+Shift+Space clicks once at the current pointer. Command+Shift+Up/Down sc
 
 The first package is unsigned by Apple Developer ID. macOS may ask the user to approve opening Handsfree in Privacy & Security. Camera and native input grants are separate. A CI pass on a hosted Mac does not grant permissions on a user's Mac.
 
+## Install the Mac runner candidate
+
+Download and extract the `handsfree-macos-preview` artifact from the [successful Mac run](https://github.com/romeirofernandes/TeamLoondry_college_round/actions/runs/38085545874). Keep the DMG, `install-app.sh`, `update-app.sh`, and `SHA256SUMS` together. On an Apple Silicon Mac running macOS 26 or newer, install the exact tested package with:
+
+```bash
+HANDSFREE_ALLOW_UNSIGNED_MAC=1 bash install-app.sh --local-package Handsfree_0.1.0_aarch64.dmg
+```
+
+The script installs into `~/Applications` by default. If macOS blocks the first launch, open System Settings > Privacy & Security and approve Handsfree. The app then asks separately for camera and native input-control access when you use those features. Check the included `SHA256SUMS` before transferring or storing the downloaded files.
+
 ## Development verification
 
 ```bash
@@ -47,7 +57,7 @@ npm run check
 cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-The Mac workflow builds an arm64 app and DMG on `macos-26`, runs the real installer in a temporary directory with spaces in its path, rejects unsigned installation without an opt-in, verifies the DMG hash, ad-hoc verifies the installed bundle, checks the executable's stopped-first-launch diagnostics, installs over a prior copy, checks a user-data sentinel survives, rejects a corrupted DMG without replacing the app, launches the installed WKWebView and React frontend, captures a screenshot, and checks installer staging cleanup.
+The Mac workflow builds an arm64 app and DMG on `macos-26`, runs the real installer in a temporary directory with spaces in its path, rejects unsigned installation without an opt-in, verifies the DMG hash, ad-hoc verifies the installed bundle, checks the executable's stopped-first-launch diagnostics, installs over a prior copy, checks a user-data sentinel survives, rejects a corrupted DMG without replacing the app, launches the installed WKWebView and React frontend, captures a screenshot, and checks installer staging cleanup. The first two independent runs both passed.
 
 Download the workflow's `handsfree-macos-test-evidence` artifact for the JSON validation report and live Mac-panel screenshot. Hosted runners verify packaging and basic launch. They do not verify an M4's camera, lighting, movement comfort, native app input permission dialogs, or real app control. Finish those checks on a physical M4 with `npm run tauri build`'s exact candidate DMG before calling those features qualified.
 
