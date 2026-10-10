@@ -55,9 +55,11 @@ const sensitivePatterns = [
   /\b(?:credit|debit|payment|card(?:[ -]?(?:number|holder|expiry|expiration|details?))?|cvv|cvc|cc[ -]?(?:number|name|exp|csc|type)|bank|routing|iban|swift|account[ -]?number|upi[ -]?id)\b/i,
   /\b(?:passport|aadh?aar|social[ -]?security|ssn|national[ -]?(?:id|identifier|identification|insurance[ -]?number|number)|(?:government|govt)[ -]?(?:issued[ -]?)?(?:id|identifier|identification|number)|state[ -]?id|driver'?s?[ -]?licen[cs]e|birth[ -]?certificate|citizenship[ -]?(?:id|number)|tax(?:payer)?[ -]?(?:id|identifier|identification|number|reference|code|registration)|tin|ein|gstin|gst[ -]?(?:number|id|registration)|vat[ -]?(?:number|id|registration)|pan[ -]?(?:card|number)|voter[ -]?(?:id|number))\b/i,
   /\b(?:medical|health|diagnos(?:is|es|tic)|medications?|prescription|symptoms?|patients?|disabilit(?:y|ies)|allerg(?:y|ies)|blood[ -]?(?:type|group|pressure|sugar|glucose)|hiv|aids|pregnan(?:cy|t)|mental[ -]?(?:health|illness|disorder)|chronic|illness|disease|treatment|therapy|surgery|surgical|vaccin(?:e|ation|ated)|immuni[sz]ation|cholesterol|glucose|bmi|cancers?|tumou?rs?|oncolog(?:y|ical|ist)|malignan(?:t|cy)|diabet(?:es|ic)|asthma|hypertension|stroke|cardiac|heart[ -]?(?:disease|condition)|kidney[ -]?(?:disease|condition)|clinical|psychiatr(?:ic|y|ist)|addiction|infection|hepatitis|hospitali[sz]ation|family[ -]?history|(?:health|disease|surgical|treatment|patient)[ -]?history|history[ -]?of[ -]?(?:illness|disease|cancer|surgery|treatment))\b/i,
+  /\b(?:epileps(?:y|ies)|seizures?|migraines?|headaches?|dementia|alzheimer'?s?|parkinson'?s?|multiple[ -]?sclerosis|depression|anxiety|bipolar|schizophrenia|ptsd|adhd|autism|copd|bronchitis|emphysema|apn(?:ea|oea)|arthritis|autoimmune|lupus|eczema|psoriasis|chemotherapy|metastasis|tuberculosis|covid(?:[ -]?19)?|crohn'?s?|irritable[ -]?bowel|celiac|coeliac|ulcers?|thyroid|cirrhosis|endometriosis|infertility|fertility[ -]?treatment)\b/i,
 ];
 const vagueName = /^(?:other|answer|response|field|input|text|select|choose|option|yes|no|please specify|untitled|id|identifier|number|code|reference|details?|information|history|status|condition|date|expiry|expiration|secret|confidential|sensitive|identity|personal (?:details|information|data)|(?:please )?(?:enter|describe|specify)(?: here)?|additional (?:details|information)|question\s*\d+)(?:\s*\d+)?$/i;
 const unqualifiedName = /^(?:id|identifier|number|code|reference|details?|information|history|status|condition|date|expiry|expiration)$/i;
+const ordinarySingleName = /^(?:name|firstname|lastname|surname|email|e-mail|phone|telephone|mobile|website|url|address|street|city|state|province|country|postcode|zipcode|zip|postal|company|employer|organization|occupation|job|position|title|department|school|university|college|age|time|quantity|color|colour|size|comments?|feedback|message|notes?|subject|event|location|preference|hobby|username|description)$/i;
 
 function bounded(value: string, length = 180): string {
   return value.replace(/\s+/g, " ").trim().slice(0, length);
@@ -248,7 +250,9 @@ function classify(element: HTMLElement, members: readonly HTMLElement[], name: s
   const qualified = clarification.toLowerCase().includes(name.toLowerCase()) && clarification.length > name.length + 2;
   const unclearName = unqualifiedName.test(name) ? !qualified :
     vagueName.test(name) && (!clarification || vagueName.test(clarification) || clarification.toLowerCase() === name.toLowerCase());
-  if (!name || unclearName || questionContext.length >= 1000 || context.length >= 2400)
+  const unknownSingleName = /^[\p{L}][\p{L}\p{N}'-]*$/u.test(name) &&
+    !ordinarySingleName.test(name) && !clarification;
+  if (!name || unclearName || unknownSingleName || questionContext.length >= 1000 || context.length >= 2400)
     return { status: "blocked", reason: "uncertain" };
   return { status: "safe" };
 }
@@ -325,7 +329,16 @@ function submitCandidates(scope: ParentNode = document): HTMLElement[] {
 function fallbackGroup(elements: readonly HTMLElement[]): boolean {
   if (elements.length === 1) return true;
   const shared = ancestors(elements[0]).find(ancestor => elements.every(element => ancestors(element).includes(ancestor)));
-  return shared instanceof HTMLElement && shared.matches('fieldset,[role="group"],[role="radiogroup"]') && !!groupName(shared);
+  for (let ancestor: Element | null = shared || null; ancestor; ancestor = parentOf(ancestor)) {
+    if (!(ancestor instanceof HTMLElement) || ancestor.matches('html,body')) break;
+    if (ancestor.matches('main,[role="main"]')) continue;
+    if (!ancestor.matches('fieldset,[role="group"],[role="radiogroup"]')) continue;
+    const heading = ancestor.querySelector(':scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > h5,:scope > h6,:scope > [role="heading"],:scope > header > h1,:scope > header > h2,:scope > header > h3,:scope > header > h4,:scope > header > h5,:scope > header > h6');
+    const name = referencedText(ancestor, "aria-labelledby") || ancestor.getAttribute("aria-label") ||
+      staticText(ancestor.querySelector(':scope > legend')) || staticText(heading);
+    if (bounded(name || "") && !/^(?:group|form|section|untitled)$/i.test(bounded(name || ""))) return true;
+  }
+  return false;
 }
 
 const documentId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `doc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
