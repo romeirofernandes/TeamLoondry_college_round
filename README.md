@@ -196,22 +196,22 @@ All 17 skills named in `skills-lock.json` are installed under `.agents/skills/`.
 <!-- handsfree-release:start -->
 ## Install or update the Mac app
 
-Latest tested preview: [v0.2.0-preview.23](https://github.com/romeirofernandes/TeamLoondry_college_round/releases/tag/v0.2.0-preview.23). Apple Silicon, macOS 26+. This preview is unsigned and not notarized.
+Latest tested preview: [v0.2.0-preview.25](https://github.com/romeirofernandes/TeamLoondry_college_round/releases/tag/v0.2.0-preview.25). Apple Silicon, macOS 26+. This preview is unsigned and not notarized.
 
 The repository is private. Collaborators still need an authenticated download; these commands reuse your existing GitHub CLI login without asking you to sign in again. Quit Handsfree before updating.
 
 ```bash
 curl -fL --retry 3 -H "Authorization: Bearer $(gh auth token)" -H "Accept: application/octet-stream" \
-  https://api.github.com/repos/romeirofernandes/TeamLoondry_college_round/releases/assets/629204323 -o /tmp/install-handsfree.sh
-HANDSFREE_ALLOW_UNSIGNED_MAC=1 HANDSFREE_VERSION=v0.2.0-preview.23 bash /tmp/install-handsfree.sh
+  https://api.github.com/repos/romeirofernandes/TeamLoondry_college_round/releases/assets/629220054 -o /tmp/install-handsfree.sh
+HANDSFREE_ALLOW_UNSIGNED_MAC=1 HANDSFREE_VERSION=v0.2.0-preview.25 bash /tmp/install-handsfree.sh
 open "$HOME/Applications/Handsfree.app"
 ```
 
 To update using the separately published update entry point:
 
 ```bash
-gh release download v0.2.0-preview.23 --repo romeirofernandes/TeamLoondry_college_round --pattern update-app.sh --dir /tmp/handsfree-update --clobber
-HANDSFREE_ALLOW_UNSIGNED_MAC=1 HANDSFREE_VERSION=v0.2.0-preview.23 bash /tmp/handsfree-update/update-app.sh
+gh release download v0.2.0-preview.25 --repo romeirofernandes/TeamLoondry_college_round --pattern update-app.sh --dir /tmp/handsfree-update --clobber
+HANDSFREE_ALLOW_UNSIGNED_MAC=1 HANDSFREE_VERSION=v0.2.0-preview.25 bash /tmp/handsfree-update/update-app.sh
 ```
 
 The installer verifies the DMG checksum, stages replacement, preserves app data, and refreshes an existing browser registration. `GH_TOKEN` can supply an existing credential for automation. For a manual download, get the DMG, `SHA256SUMS`, and `install-app.sh` from the release page, keep them together, then run:
