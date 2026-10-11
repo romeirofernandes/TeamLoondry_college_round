@@ -1,8 +1,8 @@
 {
-  "tag": "v0.2.0-preview.25",
+  "tag": "v0.2.0-preview.27",
   "repository": "romeirofernandes/TeamLoondry_college_round",
   "version": "0.2.0",
-  "installerAssetId": 629220054,
+  "installerAssetId": 629377087,
   "platform": "macos-arm64",
   "minimumMacOS": "26",
   "unsigned": true
