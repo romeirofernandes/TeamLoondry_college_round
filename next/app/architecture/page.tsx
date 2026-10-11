@@ -10,12 +10,15 @@ export const metadata: Metadata = {
 };
 
 const stack = [
-  ["TypeScript", "Extension, website and desktop source", "Types define the message protocol, intents and settings shared across extension contexts."],
-  ["Chrome Extension MV3", "extension/manifest.json", "A module service worker coordinates tabs, storage, permissions and the offscreen lifecycle."],
-  ["Web Speech API", "extension/src/speech.ts", "Chrome SpeechRecognition provides the default continuous transcript stream; local processing is requested when available."],
-  ["MediaPipe Tasks Vision", "extension/src/tracking.ts; gesture-worker.ts", "Local face and hand landmarks drive calibrated pointer samples and optional gesture recognition."],
-  ["React + Next.js", "next/app; next/components", "The website hosts landing, dashboard, benchmark and documentation experiences."],
-  ["Groq / OpenRouter / TypeSafe", "extension/src/providers.ts", "Optional provider routes transcribe fallback audio or map bounded supported requests; responses are validated before use."],
+  ["TypeScript + shared.ts", "Defines typed messages, intents and state shared across extension contexts. Runtime validation still handles untrusted or invalid data."],
+  ["Manifest V3 service worker", "Coordinates privileged Chrome APIs, tab management, permissions, session state, storage and action routing."],
+  ["Offscreen document", "Runs long-lived speech, recording, camera tracking and feedback separately from the popup, which may close at any time."],
+  ["Content runtime + DOM", "Interacts directly with webpage elements, rechecks visibility and validity, and rejects unsafe or ambiguous targets."],
+  ["React popup + Next.js dashboard", "Provides reusable session, setup and configuration interfaces. The dashboard stays outside the privileged extension path."],
+  ["Web Speech API + MediaRecorder / Groq", "Uses browser speech as the low-friction default, with optional cloud transcription fallback and explicit privacy/API trade-offs."],
+  ["MediaPipe local tracking", "Processes face and hand landmarks locally for pointer and gesture input. The trade-offs are model size and device performance."],
+  ["Jev / OpenRouter", "Adds broader natural-language interpretation when useful. Latency, cost and data sharing remain bounded by safety checks."],
+  ["chrome.storage + Chrome APIs", "Persists settings, calibration, logs and routines while providing browser capabilities under permission and sender validation."],
 ];
 
 function ArchitectureDiagram() {
@@ -56,6 +59,35 @@ export default function ArchitecturePage() {
       </section>
       <ArchitectureDiagram />
 
+      <section className="mt-16" aria-labelledby="technology-choices">
+        <div className="mb-9 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-muted-foreground">The reasoning behind the stack</p>
+            <h2 id="technology-choices" className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">Technology choices &amp; design rationale</h2>
+          </div>
+          <span className="rounded-full border border-border bg-secondary px-4 py-2 text-xs font-semibold text-muted-foreground">9 decisions · 1 principle</span>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {stack.map(([name, reason], index) => (
+            <article key={name} className="group rounded-2xl border border-border bg-card p-5 transition-colors hover:border-primary hover:bg-secondary">
+              <div className="flex items-start gap-4">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">{String(index + 1).padStart(2, "0")}</span>
+                <div>
+                  <h3 className="text-base font-bold tracking-tight">{name}</h3>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">{reason}</p>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+        <aside className="mt-8 rounded-3xl bg-foreground p-7 text-background md:p-9">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-primary">Design principle</p>
+          <p className="mt-3 max-w-3xl text-lg font-semibold leading-8">Keep privileged browser operations centralized, continuous media tasks isolated, and webpage interactions validated at the content layer.</p>
+          <p className="mt-3 max-w-3xl text-sm leading-6 opacity-70">Cloud services and AI interpretation are optional layers, used only when they provide meaningful value.</p>
+        </aside>
+      </section>
+
+      {false && <>
       <section className="mt-16 border-y border-border py-10" aria-labelledby="architecture-at-a-glance">
         <h2 id="architecture-at-a-glance" className="text-3xl font-semibold tracking-tight">Architecture at a glance</h2>
         <div className="mt-8 grid gap-3 text-sm md:grid-cols-4">
@@ -87,7 +119,7 @@ export default function ArchitecturePage() {
       <section className="mt-20" aria-labelledby="technology-stack">
         <h2 id="technology-stack" className="text-3xl font-semibold tracking-tight">Technology stack, with evidence</h2>
         <div className="mt-7 overflow-x-auto rounded-2xl border border-border">
-          <table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-secondary"><tr><th className="p-4">Technology</th><th className="p-4">Where</th><th className="p-4">Actual role</th></tr></thead><tbody>{stack.map(([name, where, role]) => <tr className="border-t border-border" key={name}><th className="p-4 font-semibold">{name}</th><td className="p-4 font-mono text-xs text-muted-foreground">{where}</td><td className="p-4 text-muted-foreground">{role}</td></tr>)}</tbody></table>
+          <table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-secondary"><tr><th className="p-4">Technology</th><th className="p-4">Rationale</th></tr></thead><tbody>{stack.map(([name, reason]) => <tr className="border-t border-border" key={name}><th className="p-4 font-semibold">{name}</th><td className="p-4 text-muted-foreground">{reason}</td></tr>)}</tbody></table>
         </div>
         <p className="mt-5 text-sm leading-6 text-muted-foreground"><strong className="text-foreground">Technical rationale:</strong> TypeScript suits this browser-native, event-driven system because the same intent/message contracts cross isolated extension contexts. It does not itself guarantee recognition accuracy or webpage compatibility; runtime validation remains necessary.</p>
       </section>
@@ -97,6 +129,7 @@ export default function ArchitecturePage() {
         <div className="rounded-3xl border border-border bg-card p-7"><h2 className="text-2xl font-semibold">Reliability context</h2><p className="mt-4 leading-7 text-muted-foreground">Preliminary supplied trials total 172 seconds Handsfree versus 140 manual (22.9% slower), with difficult product/song names and an incorrect YouTube selection reported. These are one-trial observations, not a statistically significant performance claim.</p></div>
       </section>
       <footer className="mt-20 border-t border-border py-8 text-sm text-muted-foreground">Full source references, editable Mermaid diagrams, decision records and caveats: <code>docs/HANDSFREE_ARCHITECTURE_AND_TECHNOLOGY_DECISIONS.md</code>.</footer>
+      </>}
     </div>
   </main>;
 }
