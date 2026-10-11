@@ -87,14 +87,14 @@ const views = [
   { id: "preferences", label: "Controls", icon: SlidersHorizontal },
   { id: "access", label: "Permissions", icon: Plugs },
   { id: "setup", label: "Setup", icon: UserFocus },
-  { id: "providers", label: "Advanced", icon: GearSix },
 ];
 const viewAliases: Record<string, string> = {
   tabs: "overview",
   pointer: "preferences",
   gestures: "preferences",
   voice: "preferences",
-  activity: "providers",
+  providers: "access",
+  activity: "access",
   help: "overview",
   docs: "overview",
 };
@@ -321,12 +321,10 @@ export function HandsfreeDashboard() {
   }
   const showSetup = !settings.onboardingCompleted || view === "setup";
   const activeView = viewAliases[view] || view;
-  const profileView = ["preferences", "access", "providers"].includes(
-    activeView,
-  );
+  const profileView = ["preferences", "access"].includes(activeView);
   const navigationViews = views.filter((item) =>
     profileView
-      ? ["preferences", "access", "providers"].includes(item.id)
+      ? ["preferences", "access"].includes(item.id)
       : item.id === "overview",
   );
   useEffect(() => {
@@ -357,7 +355,7 @@ export function HandsfreeDashboard() {
       "open browser access": "access",
       "show tabs": "tabs",
       "back to session": "overview",
-      "open advanced": "providers",
+      "open advanced": "access",
       "redo setup": "setup",
     };
     if (destinations[phrase]) {
@@ -1452,13 +1450,112 @@ export function HandsfreeDashboard() {
             </div>
           </TabsContent>
 
-          <TabsContent value="providers">
-            <div className="dashboard-settings-stack">
+          <TabsContent value="access">
+            <section className="dashboard-settings-stack">
               <SectionTitle
-                title="Advanced"
-                description="Testing and local diagnostics."
+                title="Permissions"
+                description="Manage access for your selected controls."
               />
-
+              <div className="dashboard-two-column">
+                <section className="dashboard-panel">
+                  <SectionTitle
+                    title="Browser access"
+                    description="Choose what Handsfree can control in Chrome."
+                  />
+                  <FieldGroup>
+                    {(["pages", "tabs"] as const).map((kind) => (
+                      <SettingSwitch
+                        key={kind}
+                        id={`permission-${kind}`}
+                        label={
+                          kind === "pages" ? "Webpage control" : "Tab commands"
+                        }
+                        hint={
+                          permissions
+                            ? permissions[kind]
+                              ? "Allowed"
+                              : "Not allowed"
+                            : "Checking Chrome permissions"
+                        }
+                        checked={permissions?.[kind] ?? false}
+                        disabled={locked || !permissions}
+                        onChange={(checked) =>
+                          void safe(async () => {
+                            if (checked) await permit(kind);
+                            else
+                              await request({
+                                type: "REVOKE_PERMISSION",
+                                kind,
+                              });
+                            setPermissions(
+                              await request<PermissionState>({
+                                type: "GET_PERMISSIONS",
+                              }),
+                            );
+                          })
+                        }
+                      />
+                    ))}
+                  </FieldGroup>
+                  <div className="dashboard-command-permission">
+                    <div>
+                      <p>Natural-language commands</p>
+                      <small>
+                        {permissions?.provider ? "Allowed" : "Not allowed"}
+                      </small>
+                    </div>
+                    {!permissions?.provider && (
+                      <Button
+                        variant="outline"
+                        disabled={locked}
+                        onClick={() => void safe(() => permit("provider"))}
+                      >
+                        Enable
+                      </Button>
+                    )}
+                  </div>
+                </section>
+                <section className="dashboard-panel">
+                  <SectionTitle
+                    title="Camera & microphone"
+                    description="Device permissions are granted in the extension."
+                  />
+                  <dl className="dashboard-device-status">
+                    {(["camera", "microphone"] as const).map((device) => (
+                      <div key={device}>
+                        <dt>{device === "camera" ? "Camera" : "Microphone"}</dt>
+                        <dd>
+                          {permissions?.[device] === "granted"
+                            ? "Allowed"
+                            : permissions?.[device] === "denied"
+                              ? "Blocked in Chrome"
+                              : permissions?.[device] === "prompt"
+                                ? "Not requested"
+                                : "Not checked"}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <Button
+                    variant="outline"
+                    disabled={locked}
+                    onClick={() =>
+                      void safe(() =>
+                        request({
+                          type: "GRANT_PERMISSIONS",
+                          kind: "devices",
+                          camera: !settings.voiceOnly,
+                          microphone: voiceEnabled(settings),
+                          returnHash: "#access",
+                        }),
+                      )
+                    }
+                  >
+                    <GearSix data-icon="inline-start" aria-hidden="true" />
+                    Manage device access
+                  </Button>
+                </section>
+              </div>
               <details className="dashboard-disclosure">
                 <summary>Message sending for testing</summary>
                 <FieldGroup>
@@ -1655,115 +1752,6 @@ export function HandsfreeDashboard() {
                   Replay setup
                 </Button>
               </details>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="access">
-            <section className="dashboard-settings-stack">
-              <SectionTitle
-                title="Permissions"
-                description="Manage access for your selected controls."
-              />
-              <div className="dashboard-two-column">
-                <section className="dashboard-panel">
-                  <SectionTitle
-                    title="Browser access"
-                    description="Choose what Handsfree can control in Chrome."
-                  />
-                  <FieldGroup>
-                    {(["pages", "tabs"] as const).map((kind) => (
-                      <SettingSwitch
-                        key={kind}
-                        id={`permission-${kind}`}
-                        label={
-                          kind === "pages" ? "Webpage control" : "Tab commands"
-                        }
-                        hint={
-                          permissions
-                            ? permissions[kind]
-                              ? "Allowed"
-                              : "Not allowed"
-                            : "Checking Chrome permissions"
-                        }
-                        checked={permissions?.[kind] ?? false}
-                        disabled={locked || !permissions}
-                        onChange={(checked) =>
-                          void safe(async () => {
-                            if (checked) await permit(kind);
-                            else
-                              await request({
-                                type: "REVOKE_PERMISSION",
-                                kind,
-                              });
-                            setPermissions(
-                              await request<PermissionState>({
-                                type: "GET_PERMISSIONS",
-                              }),
-                            );
-                          })
-                        }
-                      />
-                    ))}
-                  </FieldGroup>
-                  <div className="dashboard-command-permission">
-                    <div>
-                      <p>Natural-language commands</p>
-                      <small>
-                        {permissions?.provider ? "Allowed" : "Not allowed"}
-                      </small>
-                    </div>
-                    {!permissions?.provider && (
-                      <Button
-                        variant="outline"
-                        disabled={locked}
-                        onClick={() => void safe(() => permit("provider"))}
-                      >
-                        Enable
-                      </Button>
-                    )}
-                  </div>
-                </section>
-                <section className="dashboard-panel">
-                  <SectionTitle
-                    title="Camera & microphone"
-                    description="Device permissions are granted in the extension."
-                  />
-                  <dl className="dashboard-device-status">
-                    {(["camera", "microphone"] as const).map((device) => (
-                      <div key={device}>
-                        <dt>{device === "camera" ? "Camera" : "Microphone"}</dt>
-                        <dd>
-                          {permissions?.[device] === "granted"
-                            ? "Allowed"
-                            : permissions?.[device] === "denied"
-                              ? "Blocked in Chrome"
-                              : permissions?.[device] === "prompt"
-                                ? "Not requested"
-                                : "Not checked"}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                  <Button
-                    variant="outline"
-                    disabled={locked}
-                    onClick={() =>
-                      void safe(() =>
-                        request({
-                          type: "GRANT_PERMISSIONS",
-                          kind: "devices",
-                          camera: !settings.voiceOnly,
-                          microphone: voiceEnabled(settings),
-                          returnHash: "#access",
-                        }),
-                      )
-                    }
-                  >
-                    <GearSix data-icon="inline-start" aria-hidden="true" />
-                    Manage device access
-                  </Button>
-                </section>
-              </div>
             </section>
           </TabsContent>
         </Tabs>

@@ -72,12 +72,12 @@ await dashboard.bringToFront();await dashboard.waitForLoadState('domcontentloade
  await dashboard.getByRole('button',{name:'Start session',exact:true}).waitFor();
  if((await send({type:'GET_STATE'})).running)throw new Error('Stop did not release session');
  await dashboard.getByRole('button',{name:'Profile and preferences',exact:true}).click();
- await dashboard.getByRole('tab',{name:'Advanced',exact:true}).click();
+ await dashboard.getByRole('tab',{name:'Permissions',exact:true}).click();
  await dashboard.locator('summary').filter({hasText:'Message sending for testing'}).click();
  await dashboard.getByLabel('Owned test recipients for Gmail and Meet',{exact:true}).fill('gmail:owned@example.test, whatsapp:owned-chat, meet:abc-defg-hij');
  await dashboard.getByRole('button',{name:'Save test recipients',exact:true}).click();
  await expect.poll(async()=>(await send({type:'GET_SETTINGS'})).testMessageRecipients).toEqual(['gmail:owned@example.test','whatsapp:owned-chat','meet:abc-defg-hij']);
- await dashboard.reload();await dashboard.getByRole('tab',{name:'Advanced',exact:true}).click();await dashboard.locator('summary').filter({hasText:'Message sending for testing'}).click();
+ await dashboard.reload();await dashboard.getByRole('tab',{name:'Permissions',exact:true}).click();await dashboard.locator('summary').filter({hasText:'Message sending for testing'}).click();
  await expect(dashboard.getByLabel('Owned test recipients for Gmail and Meet',{exact:true})).toHaveValue('gmail:owned@example.test, whatsapp:owned-chat, meet:abc-defg-hij');
  reports.push({ownedTestRecipientsPersist:true});
  await dashboard.getByRole('tab',{name:'Controls',exact:true}).click();await dashboard.locator('summary').filter({hasText:'Pointer & calibration'}).click();

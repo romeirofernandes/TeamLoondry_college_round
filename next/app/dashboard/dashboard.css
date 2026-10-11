@@ -1258,8 +1258,8 @@
 .dashboard-settings-stack {
   display: grid;
   gap: 24px;
-  max-width: 1040px;
-  margin-inline: auto;
+  width: 100%;
+  min-width: 0;
 }
 .dashboard-settings-stack .dashboard-preferences-panel {
   max-width: none;

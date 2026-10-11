@@ -255,8 +255,13 @@ try {
   await page
     .getByRole("button", { name: "Profile and preferences", exact: true })
     .click();
-  await expect(page.getByRole("tab")).toHaveCount(3);
-  for (const label of ["Controls", "Permissions", "Advanced"]) await expect(page.getByRole("tab", {name: label, exact: true})).toBeVisible();
+  await expect(page.getByRole("tab")).toHaveCount(2);
+  for (const label of ["Controls", "Permissions"]) await expect(page.getByRole("tab", {name: label, exact: true})).toBeVisible();
+  const profileTabs = await page.locator(".dashboard-tab-list").boundingBox();
+  const profileContent = await page.locator('[role="tabpanel"][data-state="active"] .dashboard-settings-stack').boundingBox();
+  expect(Math.abs(profileTabs.width - profileContent.width)).toBeLessThan(2);
+  expect(Math.abs(profileTabs.x - profileContent.x)).toBeLessThan(2);
+  await expect(page.getByRole("tab", {name: "Advanced", exact: true})).toHaveCount(0);
   for (const text of ["Ask questions and use page controls", "Everyday commands with Jev", "What your request shares", "A few words do a lot"]) await expect(page.getByText(text, {exact: true})).toHaveCount(0);
   await expect(page.getByRole("button", {name: "Adjust pointer", exact: true})).toHaveCount(0);
   await expect(
@@ -409,7 +414,7 @@ try {
     path: path.join(root, "test-results", "preferences-new.png"),
     fullPage: true,
   });
-  await page.getByRole("tab", {name: "Advanced", exact: true}).click();
+  await page.getByRole("tab", {name: "Permissions", exact: true}).click();
   await page.locator("summary").filter({hasText: "Run setup again"}).click();
   await page.getByRole("button", { name: "Replay setup", exact: true }).click();
   await expect(

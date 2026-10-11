@@ -74,3 +74,9 @@ Next typecheck and production build pass. The connected dashboard script verifie
 Session uses compact Pointer and Voice activity panels, followed by a full-width Open tabs panel. Camera preview is collapsed until requested. Spoken help sits beside voice activity, tracking metrics remain optional, and the redundant Session navigation row is hidden. Punctuation-only final transcripts show the command prompt. Blocked or unavailable camera status offers an Open permissions action.
 
 Both package typechecks and builds pass; 92 focused extension tests and the connected dashboard checks pass. Camera-preview browser checks now expand its disclosure first. Physical device access and recognition remain manual qualification.
+
+## Profile width and Permissions consolidation, 11 October 2026
+
+Profile now has Controls and Permissions. Message sending for testing, Activity & diagnostics and Run setup again are included below device access in Permissions. Legacy `#providers`, `#activity` and "open advanced" destinations still resolve to Permissions. Both Profile content stacks span the tab navigation width.
+
+Next typecheck/build and both connected browser scripts pass. Profile checks verify two tabs and content width/alignment within two pixels of the tab bar. Existing responsive, setup replay and legacy navigation checks pass.
