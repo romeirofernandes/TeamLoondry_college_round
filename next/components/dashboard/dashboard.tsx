@@ -22,6 +22,7 @@ import {
   UserCircle,
   SpeakerHigh,
   Question,
+  ListChecks,
 } from "@phosphor-icons/react";
 import {
   defaults,
@@ -83,6 +84,7 @@ import { InputChoices, PrimaryPointer, inputLabels } from "./input-choices";
 import { Onboarding } from "./onboarding";
 import { useScreenGuidance } from "./use-screen-guidance";
 import { GestureConfig } from "./gesture-config";
+import { Routines } from "./routines";
 
 type ProviderStatus = {
   groqKeyCount: number;
@@ -102,6 +104,7 @@ const views = [
   { id: "gestures", label: "Gestures", icon: Hand },
   { id: "voice", label: "Voice", icon: Microphone },
   { id: "tabs", label: "Tabs", icon: TabsIcon },
+  { id: "routines", label: "Routines", icon: ListChecks },
   { id: "providers", label: "Advanced", icon: Key },
   { id: "activity", label: "Activity", icon: ChartLine },
 ];
@@ -328,6 +331,7 @@ export function HandsfreeDashboard() {
     "preferences",
     "pointer",
     "gestures",
+    "routines",
     "voice",
     "access",
     "providers",
@@ -339,12 +343,13 @@ export function HandsfreeDashboard() {
           "preferences",
           "pointer",
           "gestures",
+          "routines",
           "voice",
           "access",
           "providers",
           ...(view === "activity" ? ["activity"] : []),
         ].includes(item.id)
-      : ["overview", "tabs", "help"].includes(item.id),
+      : ["overview", "tabs", "routines", "help"].includes(item.id),
   );
   const locked = !connected || connecting || busy;
   function handleDashboardVoice(text: string) {
@@ -1157,6 +1162,9 @@ export function HandsfreeDashboard() {
               tabsPermission={permissions?.tabs ?? false}
               onNeedTabs={() => void safe(() => permit("tabs"), "Enable tab access to include your open websites.")}
             />
+          </TabsContent>
+          <TabsContent value="routines">
+            <Routines running={state.running && !state.paused} disabled={locked} />
           </TabsContent>
           <TabsContent value="voice" className="dashboard-voice-settings">
             <div className="dashboard-two-column">

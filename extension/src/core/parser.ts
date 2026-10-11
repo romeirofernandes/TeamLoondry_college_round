@@ -166,6 +166,18 @@ export function parseFormCommand(text: string): FormCommand | null {
 
 /** Only call in command mode. Dictation bypasses this parser altogether. */
 export function parseIntent(text: string): Intent {
+  const routine = normalizeSpeech(text).replace(/ please$/, "");
+  if (/^(?:start recording|record)(?: a)? routine$/.test(routine)) return { type: "routine-control", command: "start-recording" };
+  if (/^(?:pause routine recording|pause recording)$/.test(routine)) return { type: "routine-control", command: "pause-recording" };
+  if (/^(?:resume routine recording|resume recording)$/.test(routine)) return { type: "routine-control", command: "resume-recording" };
+  if (/^(?:undo last routine step|undo routine step)$/.test(routine)) return { type: "routine-control", command: "undo-step" };
+  if (/^(?:stop recording routine|finish recording routine)$/.test(routine)) return { type: "routine-control", command: "stop-recording" };
+  if (/^(?:list|show) (?:my )?routines$/.test(routine)) return { type: "routine-control", command: "list" };
+  if (/^(?:pause routine|pause playback)$/.test(routine)) return { type: "routine-control", command: "pause-playback" };
+  if (/^(?:resume routine|resume playback)$/.test(routine)) return { type: "routine-control", command: "resume-playback" };
+  if (/^(?:stop routine|stop playback)$/.test(routine)) return { type: "routine-control", command: "stop-playback" };
+  const runRoutine = /^(?:run)(?: routine)? (.+)$/.exec(routine);
+  if (runRoutine) return { type: "routine-control", command: "run", name: runRoutine[1].trim() };
   const formCommand = parseFormCommand(text);
   if (formCommand) return { type: "form-command", command: formCommand };
   const normalized = normalizeSpeech(text).replace(/^(?:(?:could|can|would) you )?(?:please )?/, "").replace(/ please$/, "");

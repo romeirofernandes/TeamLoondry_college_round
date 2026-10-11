@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaults, type Message } from "../src/shared";
+import type { SiteSnapshot } from "../src/sites/types";
 
 type Listener = (
   message: Message,
@@ -1105,5 +1106,169 @@ describe('bounded browser request lifecycle',()=>{
     await send({type:'PAUSE'});await work;expect(signal.aborted).toBe(true);
     finish({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify({action:{type:'click',targetId:'careers'},answer:null,done:false,clarify:null})}}]})});
     for(let i=0;i<30;i++)await Promise.resolve();expect(browser.tabs.sendMessage.mock.calls.some(([,m])=>m.type==='AGENT_ACTION')).toBe(false);
+  });
+});
+
+describe("routine navigation readiness", () => {
+  it.each([
+    ["search YouTube for physics lessons", "YT01", { query: "physics lessons" }],
+    ["open the first video", "YT03", { index: 1 }],
+    ["open video titled Physics basics", "YT04", { query: "physics basics" }],
+    ["pause the video", "YT05", {}],
+    ["play the video", "YT11", {}],
+    ["skip forward ten seconds", "YT06", { value: 10 }],
+    ["set player volume to forty percent", "YT07", { value: 40 }],
+    ["mute YouTube", "YT12", { mode: "mute youtube" }],
+    ["turn captions on", "YT08", { mode: "on" }],
+    ["set playback speed to 1.5", "YT09", { value: 1.5 }],
+  ])("records a successful YouTube command: %s", async (text, id, args) => {
+    const { browser, send } = await setup();
+    const snapshot: SiteSnapshot = { site: "youtube", url: "https://www.youtube.com/watch?v=lesson", documentId: "recording-document", revision: 1, pageType: "watch", entities: [], current: null, capabilities: [] };
+    (browser.tabs.sendMessage as any).mockImplementation(async (_id: number, message: Message) => {
+      if (message.type === "GET_SITE_CONTEXT") return snapshot;
+      if (message.type === "SITE_DIALOGUE") return null;
+      if (message.type === "PAGE_ACTION") return { state: "available", feedback: "Completed." };
+      return { ok: true };
+    });
+    await send({ type: "HEARD", text: "start recording routine" });
+    await send({ type: "HEARD", text: text as string });
+    const session = await send({ type: "GET_ROUTINE_SESSION" });
+    expect(session.draft).toHaveLength(1);
+    expect(session.draft[0].action).toEqual({ type: "site-command", site: "youtube", action: id, args });
+    expect(JSON.stringify(session.draft)).not.toContain("recording-document");
+  });
+
+  it("waits for YouTube app, search results and video metadata before replaying the following commands", async () => {
+    const { browser, send } = await setup();
+    const home = "https://www.youtube.com/";
+    const results = "https://www.youtube.com/results?search_query=physics";
+    const watch = "https://www.youtube.com/watch?v=lesson";
+    let tabUrl = home, loadedUrl = home, appReady = false, resultsReady = false, videoReady = false;
+    const executed: any[] = [];
+    const actions = [
+      { type: "open-site", site: "youtube" },
+      { type: "site-command", site: "youtube", action: "YT01", args: { query: "physics" } },
+      { type: "site-command", site: "youtube", action: "YT03", args: { index: 1 } },
+      { type: "site-command", site: "youtube", action: "YT07", args: { value: 40 } },
+      { type: "site-command", site: "youtube", action: "YT05", args: {} },
+    ];
+    browser.storage.local.get.mockImplementation(async () => ({ settings: defaults, providers: { groqKeys: [], jevKey: "" }, logs: [], voiceRoutines: [{ id: "yt", name: "Study", steps: actions.map((action, i) => ({ id: `step-${i}`, label: `Step ${i}`, action })), createdAt: 1, updatedAt: 1 }] }) as any);
+    (browser.tabs.create as any).mockImplementation(async () => ({ id: 3, url: home, status: "complete" }));
+    (browser.tabs.get as any).mockImplementation(async (id: number) => ({ id, active: true, windowId: 1, index: 2, url: id === 3 ? tabUrl : "https://example.test/", status: "complete" }));
+    browser.tabs.update.mockImplementation(async (_id, options) => { if (options.url) tabUrl = options.url; return {}; });
+    (browser.tabs.sendMessage as any).mockImplementation(async (_id: number, message: Message) => {
+      if (message.type === "GET_PAGE_CONTEXT") return { url: loadedUrl };
+      if (message.type === "GET_SITE_CONTEXT") return appReady ? { site: "youtube", url: loadedUrl, documentId: loadedUrl, revision: 1, pageType: "video", capabilities: [], current: null, entities: resultsReady && loadedUrl === results ? [{ id: "fresh-video", kind: "video", label: "Physics", detail: "Physics" }] : [] } : null;
+      if (message.type === "SITE_DIALOGUE") return null;
+      if (message.type === "PAGE_ACTION" && message.intent.type === "site-action") {
+        executed.push(message.intent);
+        return { state: "available", feedback: "Completed.", ...(message.intent.action === "YT01" ? { navigate: { url: results, newTab: false } } : message.intent.action === "YT03" ? { navigate: { url: watch, newTab: false } } : {}) };
+      }
+      return { ok: true };
+    });
+    vi.stubGlobal("document", { querySelector: () => loadedUrl === watch ? { readyState: videoReady ? 1 : 0 } : null, querySelectorAll: () => [] });
+    (browser.scripting.executeScript as any).mockImplementation(async (details: any) => details.func?.name === "routinePlayerReady" ? [{ result: details.func(...details.args) }] : []);
+    const tick = async () => { await vi.advanceTimersByTimeAsync(250); for (let i = 0; i < 40; i++) await Promise.resolve(); };
+
+    await send({ type: "HEARD", text: "run Study" });
+    await tick();
+    expect(executed).toHaveLength(0);
+    appReady = true;
+    await tick();
+    expect(executed.map(request => request.action)).toEqual(["YT01"]);
+    loadedUrl = results;
+    await tick();
+    expect(executed).toHaveLength(1);
+    await send({ type: "HEARD", text: "pause routine" });
+    await tick();
+    expect(await send({ type: "GET_ROUTINE_SESSION" })).toMatchObject({ playing: false, playbackPaused: true, playbackStep: 2 });
+    resultsReady = true;
+    await send({ type: "HEARD", text: "resume routine" });
+    await tick();
+    expect(executed.map(request => request.action)).toEqual(["YT01", "YT03"]);
+    loadedUrl = watch;
+    await tick();
+    expect(executed).toHaveLength(2);
+    videoReady = true;
+    await tick();
+    expect(executed.map(request => request.action)).toEqual(["YT01", "YT03", "YT07", "YT05"]);
+    expect(executed.map(request => request.url)).toEqual([home, results, watch, watch]);
+    expect(executed.every(request => request.documentId === request.url && !request.entityId)).toBe(true);
+    expect(await send({ type: "GET_ROUTINE_SESSION" })).toMatchObject({ playing: false, playbackPaused: false, feedback: "Finished routine Study." });
+  });
+
+  it("uses Spotify's site player after it is ready, then continues to the next routine step", async () => {
+    const { browser, send } = await setup();
+    const spotifyUrl = "https://open.spotify.com/";
+    let playerReady = false;
+    const dialogueTexts: string[] = [];
+    const pageActions: unknown[] = [];
+    const openedUrls: string[] = [];
+    vi.stubGlobal("document", {
+      querySelectorAll: (selector: string) => selector === '[data-testid="control-button-playpause"]' && playerReady
+        ? [{ getAttribute: (name: string) => name === "aria-label" ? "Pause" : null, title: "" }]
+        : [],
+    });
+    browser.storage.local.get.mockImplementation(async () => ({
+      settings: { ...defaults },
+      providers: { groqKeys: [], jevKey: "" },
+      logs: [],
+      voiceRoutines: [{
+        id: "spotify-routine",
+        name: "Spotify test",
+        steps: [
+          { id: "open", label: "Open spotify", action: { type: "open-site", site: "spotify" } },
+          { id: "play", label: "Media play", action: { type: "media", command: "play" } },
+          { id: "search", label: "Search in background", action: { type: "search", query: "physics notes", background: true } },
+        ],
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+    }));
+    (browser.tabs.create as any).mockImplementation(async (options: any) => {
+      openedUrls.push(options.url);
+      return options.url === spotifyUrl ? { id: 3, url: spotifyUrl, status: "complete" } : { id: 4, url: options.url, status: "complete" };
+    });
+    (browser.tabs.get as any).mockImplementation(async (id: number) => ({
+      id,
+      active: true,
+      windowId: 1,
+      index: id === 3 ? 2 : id - 1,
+      url: id === 3 ? spotifyUrl : "https://example.test/",
+      title: id === 3 ? "Spotify" : "Project notes",
+      status: "complete",
+    }));
+    (browser.tabs.sendMessage as any).mockImplementation(async (id: number, message: Message): Promise<any> => {
+      if (message.type === "GET_PAGE_CONTEXT") return { url: id === 3 ? spotifyUrl : "https://example.test/" };
+      if (message.type === "GET_SITE_CONTEXT") return id === 3 ? { site: "spotify", url: spotifyUrl, documentId: "spotify-document", revision: 1, current: null, entities: [], capabilities: [] } : null;
+      if (message.type === "SITE_DIALOGUE") {
+        dialogueTexts.push(message.text);
+        return null;
+      }
+      if (message.type === "PAGE_ACTION") {
+        pageActions.push(message.intent);
+        if (message.intent.type === "site-action") return { state: "available", feedback: "Spotify playback resumed." };
+        return { ok: true };
+      }
+      return { ok: true };
+    });
+    (browser.scripting.executeScript as any).mockImplementation(async (details: any) => {
+      if (details.files) return [];
+      if (details.args?.[0] === "spotify") return [{ result: details.func(...details.args) }];
+      return [];
+    });
+
+    await send({ type: "HEARD", text: "run routine Spotify test" });
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(dialogueTexts).toHaveLength(0);
+    expect(openedUrls).toEqual([spotifyUrl]);
+
+    playerReady = true;
+    await vi.advanceTimersByTimeAsync(250);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(dialogueTexts).toEqual([]);
+    expect(pageActions).toMatchObject([{ type: "site-action", site: "spotify", action: "S07" }]);
+    expect(openedUrls).toEqual([spotifyUrl, "https://www.google.com/search?q=physics%20notes"]);
   });
 });

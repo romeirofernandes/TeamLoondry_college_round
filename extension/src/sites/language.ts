@@ -194,7 +194,7 @@ function argsFor(
       n > 100
     )
       return null;
-    if (media && /(?:back|rewind|lower)/.test(text)) args.value = -n;
+    if (media && /\b(?:back|rewind|lower)\b/.test(text)) args.value = -n;
     if (spec.operation.kind === "reference" && (n < 1 || n > 10000))
       return null;
   }

@@ -949,13 +949,20 @@ export class SiteExecutor {
         ? candidates.find((e) => e.id === request.entityId)
         : undefined;
       if (!chosen && a.index !== undefined) {
-        // Ordinals require the list that was actually announced.
-        if (!this.choices || !this.fresh(this.choices.request))
+        // YouTube snapshots already contain only visible video cards in screen
+        // order. Explicit video numbers can resolve afresh without old choices.
+        if (request.site === "youtube" && spec.id === "YT03") {
+          chosen = candidates[a.index - 1];
+          if (!chosen) return result("unavailable", "That video number is not visible on this screen.");
+        } else {
+          // Other site ordinals require the list that was actually announced.
+          if (!this.choices || !this.fresh(this.choices.request))
           return result(
             "needs-choice",
             "Ask to list results first, then choose a number.",
           );
-        chosen = this.choices.entities[a.index - 1];
+          chosen = this.choices.entities[a.index - 1];
+        }
       }
       if (!chosen && a.query) {
         const q = norm(a.query).replace(/^the /, "");
@@ -1581,6 +1588,37 @@ export class SiteExecutor {
     const a = request.args;
     if (a.mode?.startsWith("pause")) command = "pause";
     if (a.mode?.startsWith("restart")) command = "restart";
+    if (request.site === "spotify" && ["play", "pause"].includes(command)) {
+      // Spotify's audio element is usually hidden in its web app, so the
+      // generic media-element path cannot observe playback. Use its dedicated
+      // player control and read the control's accessible state instead.
+      const testIdControls = elements('[data-testid="control-button-playpause"]', scope);
+      const namedControls = controls(["Play", "Pause"], scope);
+      const control = testIdControls.length === 1
+        ? testIdControls[0]
+        : namedControls.length === 1
+          ? namedControls[0]
+          : null;
+      if (control) {
+        const isPlaying = () => {
+          const name = norm(label(control));
+          if (name === "pause" || name.startsWith("pause ")) return true;
+          if (name === "play" || name.startsWith("play ")) return false;
+          return null;
+        };
+        const desired = command === "play";
+        const current = isPlaying();
+        if (current === desired)
+          return result("already-satisfied", desired ? "Spotify is already playing." : "Spotify is already paused.", { evidence: "spotify-play-pause-control" });
+        if (current === null)
+          return result("unavailable", "Spotify's play/pause control does not expose its current state. Nothing was toggled.");
+        control.click();
+        const changed = await until(() => isPlaying() === desired, valid);
+        return changed
+          ? result("available", desired ? "Spotify playback resumed." : "Spotify playback paused.", { evidence: "spotify-play-pause-control" })
+          : result("failed", "Spotify's play/pause control changed, but its final state could not be verified. No automatic retry.");
+      }
+    }
     const players = elements("video,audio", scope).filter(
       (e): e is HTMLMediaElement => e instanceof HTMLMediaElement,
     );
@@ -1599,7 +1637,7 @@ export class SiteExecutor {
         if (buttons.length === 1) {
           const before = this.context.inspect()?.current?.id;
           buttons[0].click();
-          return (await until(
+          const changed = await until(
             () =>
               command === "play"
                 ? controls(["Pause"]).length === 1
@@ -1607,13 +1645,10 @@ export class SiteExecutor {
                   ? controls(["Play"]).length === 1
                   : this.context.inspect()?.current?.id !== before,
             valid,
-          ))
-            ? result(
-                "failed",
-                "The player control changed, but actual playback could not be verified. No automatic retry.",
-                { evidence: "player-ui-state" },
-              )
-            : result("failed", "Player state could not be verified.");
+          );
+          return changed
+            ? result("available", command === "play" ? "Playback resumed." : command === "pause" ? "Playback paused." : "Player advanced.", { evidence: "player-ui-state" })
+            : result("failed", "Player state could not be verified. No automatic retry.");
         }
       }
       return result(
