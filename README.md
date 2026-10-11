@@ -194,6 +194,17 @@ Open `http://localhost:3000`. The landing keeps its charcoal/ivory theme, green 
 All 17 skills named in `skills-lock.json` are installed under `.agents/skills/`. That directory, a root `skills/` folder, model caches, build output, and private local notes are gitignored. The lock lists sources and content hashes, not immutable Git commits; installation uses those listed GitHub paths. No keys or real environment files are committed.
 
 
+## Trigger a Mac release
+
+The Mac build and release workflow runs only when a Git tag is pushed. Use a fresh tag, for example:
+
+```bash
+git tag v0.2.0-preview.28
+git push origin v0.2.0-preview.28
+```
+
+Push the workflow change before creating the tag. Ordinary branch pushes and pull requests do not run this workflow. It publishes under the pushed tag after all existing Mac checks pass, then updates the install commands on `main` if the tagged commit is still its tip.
+
 <!-- handsfree-release:start -->
 ## Install or update the Mac app
 

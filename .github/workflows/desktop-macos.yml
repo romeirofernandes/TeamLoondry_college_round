@@ -1,34 +1,13 @@
 name: Desktop macOS build, installation and release
 on:
   push:
-    branches: ["feat/macos-desktop", "main"]
-    paths: ["desktop/**", "shared/**", "extension/**", ".github/workflows/desktop-macos.yml"]
-  pull_request:
-    paths: ["desktop/**", "shared/**", "extension/**", ".github/workflows/desktop-macos.yml"]
-  workflow_dispatch:
+    tags: ["**"]
 permissions:
   contents: read
 concurrency:
   group: handsfree-macos-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  tag-candidate:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Bind candidate tag to the source before long-running checks
-        run: |
-          tag="v0.2.0-preview.${{ github.run_number }}"
-          existing=$(git ls-remote origin "refs/tags/$tag" | cut -f1)
-          if [ -n "$existing" ]; then
-            test "$existing" = "$GITHUB_SHA"
-          else
-            git tag "$tag" "$GITHUB_SHA"
-            git push origin "refs/tags/$tag"
-          fi
   macos:
     runs-on: macos-26
     timeout-minutes: 45
@@ -99,8 +78,7 @@ jobs:
           path: desktop/release/
           if-no-files-found: error
   publish:
-    needs: [macos, tag-candidate]
-    if: github.event_name != 'pull_request'
+    needs: [macos]
     runs-on: macos-26
     permissions:
       contents: write
@@ -119,7 +97,7 @@ jobs:
           cd candidate
           shasum -a 256 -c SHA256SUMS
           python3 -c 'import json; r=json.load(open("macos-validation.json")); assert all(c["status"]=="passed" for c in r["checks"]); assert len(r["checks"])>=12'
-          tag="v0.2.0-preview.${{ github.run_number }}"
+          tag="$GITHUB_REF_NAME"
           gh release create "$tag" --verify-tag --repo "$GITHUB_REPOSITORY" --target '${{ github.sha }}' --draft --prerelease --title "Handsfree $tag · macOS 26 ARM64" --notes-file ../desktop/RELEASE_NOTES.md ./*.dmg ./*.sh ./*.zip ./SHA256SUMS ./macos-validation.json ./*.png
           asset_id=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | select(.name == "install-app.sh") | .apiUrl | split("/")[-1]')
           curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" -o "$RUNNER_TEMP/install-handsfree.sh"
@@ -128,9 +106,9 @@ jobs:
           HANDSFREE_ALLOW_UNSIGNED_MAC=1 HANDSFREE_NO_LAUNCH=1 HANDSFREE_VERSION="$tag" HANDSFREE_INSTALL_DIR="$RUNNER_TEMP/Handsfree network install/Applications" bash "$RUNNER_TEMP/install-handsfree.sh"
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
           cd ..
-          git fetch origin '${{ github.ref_name }}'
-          if [ "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]; then
-            echo "A newer source revision is queued; its release will update the README."
+          git fetch origin refs/heads/main
+          if [ "$(git rev-parse FETCH_HEAD)" != "$(git rev-parse HEAD)" ]; then
+            echo "The tag does not match current main; skipping the README update."
             exit 0
           fi
           git checkout -B release-readme FETCH_HEAD
@@ -139,4 +117,4 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add README.md desktop/release-info.json
           git commit -m "docs(release): install and update commands for $tag [skip ci]"
-          git push origin "HEAD:${{ github.ref_name }}"
+          git push origin HEAD:refs/heads/main
