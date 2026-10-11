@@ -3,14 +3,19 @@ const bridgeWindow = window as Window & { __handsfreeBridge?: boolean };
 if (!bridgeWindow.__handsfreeBridge) {
   bridgeWindow.__handsfreeBridge = true;
   const origin = location.origin;
-  addEventListener("message", (event) => {
+  addEventListener("message", async (event) => {
     if (event.source !== window || event.origin !== origin || event.data?.channel !== "handsfree-dashboard-request") return;
     const { id, message } = event.data;
     if (typeof id !== "string" || id.length > 80 || !message || typeof message.type !== "string") return;
-    void chrome.runtime.sendMessage(message).then(
-      result => window.postMessage({ channel: "handsfree-dashboard-response", id, result }, origin),
-      () => window.postMessage({ channel: "handsfree-dashboard-response", id, result: { ok: false, error: "Extension disconnected. Reload it, then reopen the dashboard from the popup." } }, origin),
-    );
+    try {
+      const result = await chrome.runtime.sendMessage(message);
+      window.postMessage({ channel: "handsfree-dashboard-response", id, result }, origin);
+    } catch {
+      window.postMessage({
+        channel: "handsfree-dashboard-response", id,
+        result: { ok: false, error: "Extension connection lost. Refresh this page, then open the dashboard from the Handsfree popup." },
+      }, origin);
+    }
   });
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "STATE") window.postMessage({ channel: "handsfree-dashboard-state", state: message.state }, origin);
@@ -18,3 +23,5 @@ if (!bridgeWindow.__handsfreeBridge) {
   });
   window.postMessage({ channel: "handsfree-dashboard-ready" }, origin);
 }
+
+export {};
