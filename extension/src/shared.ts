@@ -200,6 +200,26 @@ export const initialState: SessionState = {
   calibrationSnapshots: {},
 };
 export type LinkDisposition = "new-tab" | "background";
+export type RoutineAction =
+  | { type: "open-site"; site: keyof typeof import("./sites/catalogue").siteHomes }
+  | { type: "search"; query: string; background: boolean }
+  | { type: "switch-tab"; intent: { type: "indexed-tab"; index: number } | { type: "named-tab"; name: string } }
+  | { type: "click-target"; query: string }
+  | { type: "scroll"; direction: "up" | "down" | "top" | "bottom" }
+  | { type: "media"; command: "play" | "pause" | "toggle" }
+  | { type: "site-command"; site: "youtube"; action: Extract<import("./sites/types").ActionId, "YT01" | "YT03" | "YT04" | "YT05" | "YT06" | "YT07" | "YT08" | "YT09" | "YT11" | "YT12">; args: import("./sites/types").SiteArgs }
+  | { type: "navigate"; direction: "back" | "forward" };
+export interface RoutineStep { id: string; label: string; action: RoutineAction }
+export interface VoiceRoutine { id: string; name: string; steps: RoutineStep[]; createdAt: number; updatedAt: number }
+export interface RoutineSession {
+  recording: boolean; recordingPaused: boolean; draft: RoutineStep[];
+  playing: boolean; playbackPaused: boolean; playbackRoutineId: string | null;
+  playbackStep: number; feedback: string;
+}
+export const emptyRoutineSession: RoutineSession = {
+  recording: false, recordingPaused: false, draft: [], playing: false,
+  playbackPaused: false, playbackRoutineId: null, playbackStep: 0, feedback: "",
+};
 /** Explicit page-local form operations; answers must never be provider input. */
 export type FormCommand =
   | { type: "list-forms" }
@@ -221,6 +241,7 @@ export type FormCommand =
   | { type: "previous-section" }
   | { type: "submit" };
 export type Intent =
+  | { type: "routine-control"; command: "start-recording" | "pause-recording" | "resume-recording" | "undo-step" | "stop-recording" | "list" | "run" | "pause-playback" | "resume-playback" | "stop-playback"; name?: string }
   | { type: "form-command"; command: FormCommand }
   | {type:"upload-file"}
   | { type: "switch-pointer"; mode: PointerMode }
@@ -321,6 +342,11 @@ export type Message =
   | { type: "OFFSCREEN_COMMAND"; command: "start" | "pause" | "resume" | "stop" | "calibrate" | "settings" | "install-speech" | "ui-start" | "ui-stop" | "narration-start" | "narration-end" | "gesture-calibrate" | "gesture-cancel-calibration" | "gesture-presets"; settings?: Settings; gesture?: HandGesture; presets?: GesturePreset[] }
   | { type: "GET_GESTURE_PRESETS" }
   | { type: "SAVE_GESTURE_PRESETS"; presets: GesturePreset[] }
+  | { type: "GET_ROUTINE_SESSION" }
+  | { type: "GET_ROUTINES" }
+  | { type: "SAVE_ROUTINE"; id?: string; name: string; steps: RoutineStep[] }
+  | { type: "DISCARD_ROUTINE_DRAFT" }
+  | { type: "DELETE_ROUTINE"; id: string }
   | { type: "GET_GESTURE_DESTINATIONS" }
   | { type: "GET_GESTURE_STATUS" }
   | { type: "CALIBRATE_GESTURE"; gesture: HandGesture }

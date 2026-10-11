@@ -262,6 +262,9 @@ try {
   expect(Math.abs(profileTabs.width - profileContent.width)).toBeLessThan(2);
   expect(Math.abs(profileTabs.x - profileContent.x)).toBeLessThan(2);
   await expect(page.getByRole("tab", {name: "Advanced", exact: true})).toHaveCount(0);
+  await page.locator('[data-settings-section="routines"] > summary').click();
+  await expect(page.getByRole("heading", {name: "Voice routines", exact: true})).toBeVisible();
+  await page.locator('[data-settings-section="routines"] > summary').click();
   for (const text of ["Ask questions and use page controls", "Everyday commands with Jev", "What your request shares", "A few words do a lot"]) await expect(page.getByText(text, {exact: true})).toHaveCount(0);
   await expect(page.getByRole("button", {name: "Adjust pointer", exact: true})).toHaveCount(0);
   await expect(
@@ -353,6 +356,7 @@ try {
     "voice",
     "access",
     "providers",
+    "routines",
     "activity",
     "overview",
     "tabs",

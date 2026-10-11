@@ -79,6 +79,7 @@ import { InputChoices, PrimaryPointer, inputLabels } from "./input-choices";
 import { Onboarding } from "./onboarding";
 import { useScreenGuidance } from "./use-screen-guidance";
 import { GestureConfig } from "./gesture-config";
+import { Routines } from "./routines";
 
 type BrowserTab = { id: number; title: string; url: string; active: boolean };
 type RunLog = { events: MetricEvent[]; summary: Record<string, unknown> };
@@ -93,6 +94,7 @@ const viewAliases: Record<string, string> = {
   pointer: "preferences",
   gestures: "preferences",
   voice: "preferences",
+  routines: "preferences",
   providers: "access",
   activity: "access",
   help: "overview",
@@ -352,6 +354,7 @@ export function HandsfreeDashboard() {
       "open pointer": "pointer",
       "open voice": "voice",
       "open gestures": "gestures",
+      "open routines": "routines",
       "open browser access": "access",
       "show tabs": "tabs",
       "back to session": "overview",
@@ -762,6 +765,15 @@ export function HandsfreeDashboard() {
                   onChange={(checked) => save({ spokenFeedback: checked })}
                 />
               </section>
+              <details
+                className="dashboard-settings-section"
+                data-settings-section="routines"
+              >
+                <summary>Voice routines</summary>
+                <div className="dashboard-settings-content">
+                  <Routines running={running} disabled={locked} />
+                </div>
+              </details>
               <details
                 className="dashboard-settings-section"
                 data-settings-section="pointer"

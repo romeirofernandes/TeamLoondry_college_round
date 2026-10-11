@@ -80,3 +80,9 @@ Both package typechecks and builds pass; 92 focused extension tests and the conn
 Profile now has Controls and Permissions. Message sending for testing, Activity & diagnostics and Run setup again are included below device access in Permissions. Legacy `#providers`, `#activity` and "open advanced" destinations still resolve to Permissions. Both Profile content stacks span the tab navigation width.
 
 Next typecheck/build and both connected browser scripts pass. Profile checks verify two tabs and content width/alignment within two pixels of the tab bar. Existing responsive, setup replay and legacy navigation checks pass.
+
+## Voice-routine merge integration, 11 October 2026
+
+Merged incoming routine support while retaining the simplified dashboard. Voice routines is a disclosure in Profile → Controls, with legacy `#routines` navigation and "open routines" resolving there. Profile still has only Controls and Permissions, and former Advanced tools stay in Permissions.
+
+The merged tree passes both package typechecks/builds, 2,920 unit tests, 67 packaged Chromium tests and both connected dashboard/onboarding scripts. The first full Chrome run had a Spotify routine tab-opening timeout; the isolated test, both routine tests together and the full 67-case rerun passed without runtime changes. The intermittent test timeout remains a qualification limitation.

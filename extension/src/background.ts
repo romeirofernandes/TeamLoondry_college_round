@@ -1,7 +1,7 @@
 import {claimDesktop,releaseDesktop,connectDesktop,disconnectDesktop,paired,onDesktopLost} from "./desktop";
 import {uploadFile} from "./file-upload";
-import { parseSite, siteCandidates, unsafeSpeech, isCancellation } from "./sites/language";
-import { siteHomes } from "./sites/catalogue";
+import { parseSite, siteCandidates, unsafeSpeech, isCancellation, makeRequest, validateSiteRequest } from "./sites/language";
+import { siteHomes, catalogue } from "./sites/catalogue";
 import type { SiteResult, SiteSnapshot } from "./sites/types";
 import {
   defaults,
@@ -15,6 +15,11 @@ import {
   type MetricEvent,
   type TargetText,
   type PageContext,
+  type RoutineAction,
+  type RoutineSession,
+  type RoutineStep,
+  type VoiceRoutine,
+  emptyRoutineSession,
 } from "./shared";
 import { parseFormCommand, parseIntent, sessionIntent, wakeRequest } from "./core/parser";
 import { mediaControl } from "./content/media";
@@ -39,7 +44,7 @@ let uiVoiceTab: number | null = null;
 let uiVoiceUntil = 0;
 let narrationToken = 0;
 let lastBroadcast = 0;
-const dashboardMessages = new Set(["GET_STATE", "GET_SETTINGS", "SAVE_SETTINGS", "START", "PAUSE", "RESUME", "STOP", "RECALIBRATE", "HEARD", "ACTION", "GET_LOGS", "CLEAR_LOGS", "METRIC", "GET_PROVIDER_STATUS", "SAVE_PROVIDERS", "SET_DASHBOARD_URL", "GRANT_PERMISSIONS", "INSTALL_SPEECH_PACK", "GET_TABS", "ACTIVATE_TAB"]);
+const dashboardMessages = new Set(["GET_STATE", "GET_SETTINGS", "SAVE_SETTINGS", "START", "PAUSE", "RESUME", "STOP", "RECALIBRATE", "HEARD", "ACTION", "GET_LOGS", "CLEAR_LOGS", "METRIC", "GET_PROVIDER_STATUS", "SAVE_PROVIDERS", "SET_DASHBOARD_URL", "GRANT_PERMISSIONS", "INSTALL_SPEECH_PACK", "GET_TABS", "ACTIVATE_TAB", "GET_ROUTINE_SESSION", "GET_ROUTINES", "SAVE_ROUTINE", "DISCARD_ROUTINE_DRAFT", "DELETE_ROUTINE"]);
 dashboardMessages.add("GET_SITE_CONTEXT");
 dashboardMessages.add("GET_PERMISSIONS");
 dashboardMessages.add("REVOKE_PERMISSION");
@@ -75,6 +80,10 @@ const tabActivations = new Map<number, symbol>();
 let lastTrackingLog = 0;
 let hadTracking = false;
 let logs: MetricEvent[] = [];
+let routineSession: RoutineSession = { ...emptyRoutineSession };
+let playbackToken = 0;
+let routineIdCounter = 0;
+let lastActionSucceeded = false;
 let logsTimer: ReturnType<typeof setTimeout> | undefined;
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({
@@ -90,6 +99,21 @@ const ready = (async () => {
   if (saved.state)
     state = { ...initialState, ...(saved.state as Partial<SessionState>) };
   dashboardTabs = new Set(Array.isArray(saved.dashboardTabs) ? saved.dashboardTabs.filter((id): id is number => typeof id === "number" && Number.isInteger(id)) : []);
+  const routineSaved = await chrome.storage.session.get("routineSession");
+  if (routineSaved.routineSession && typeof routineSaved.routineSession === "object") {
+    const restored = routineSaved.routineSession as RoutineSession;
+    routineSession = {
+      ...emptyRoutineSession,
+      recording: restored.recording === true,
+      recordingPaused: restored.recordingPaused === true,
+      draft: validRoutineSteps(restored.draft) ? restored.draft : [],
+      playing: false,
+      playbackPaused: restored.playing === true || restored.playbackPaused === true,
+      playbackRoutineId: typeof restored.playbackRoutineId === "string" ? restored.playbackRoutineId : null,
+      playbackStep: Number.isInteger(restored.playbackStep) && restored.playbackStep >= 0 ? restored.playbackStep : 0,
+      feedback: typeof restored.feedback === "string" ? restored.feedback.slice(0, 300) : "",
+    };
+  }
   // A restarted worker must not restore a pending confirmation.
 })();
 function uiSender(sender: chrome.runtime.MessageSender) {
@@ -102,6 +126,366 @@ function record(type: string, value?: number) {
       logsTimer = undefined;
       void chrome.storage.local.set({ logs });
     }, 250);
+}
+const routineYouTubeActions = new Set(["YT01", "YT03", "YT04", "YT05", "YT06", "YT07", "YT08", "YT09", "YT11", "YT12"]);
+function safeRoutineAction(value: unknown): value is RoutineAction {
+  if (!value || typeof value !== "object") return false;
+  const action = value as any;
+  if (action.type === "open-site") return typeof action.site === "string" && Object.hasOwn(siteHomes, action.site);
+  if (action.type === "search") return typeof action.query === "string" && action.query.trim().length > 0 && action.query.length <= 200 && typeof action.background === "boolean";
+  if (action.type === "switch-tab") return action.intent?.type === "indexed-tab" && Number.isInteger(action.intent.index) && action.intent.index > 0 && action.intent.index <= 100 || action.intent?.type === "named-tab" && typeof action.intent.name === "string" && action.intent.name.length > 0 && action.intent.name.length <= 100;
+  if (action.type === "click-target") return typeof action.query === "string" && action.query.trim().length > 0 && action.query.length <= 100;
+  if (action.type === "scroll") return ["up", "down", "top", "bottom"].includes(action.direction);
+  if (action.type === "media") return ["play", "pause", "toggle"].includes(action.command);
+  if (action.type === "site-command") return action.site === "youtube" && routineYouTubeActions.has(action.action) && !!validateSiteRequest({ ...action, type: "site-action", documentId: "routine-validation", revision: 0, requestId: "routine-validation" });
+  if (action.type === "navigate") return ["back", "forward"].includes(action.direction);
+  return false;
+}
+function validRoutineSteps(value: unknown): value is RoutineStep[] {
+  return Array.isArray(value) && value.length <= 20 && value.every((step: any) => step && typeof step.id === "string" && step.id.length <= 80 && typeof step.label === "string" && step.label.length <= 160 && safeRoutineAction(step.action));
+}
+async function getRoutines(): Promise<VoiceRoutine[]> {
+  const stored = await chrome.storage.local.get("voiceRoutines");
+  if (!Array.isArray(stored.voiceRoutines)) return [];
+  return stored.voiceRoutines.filter((routine: any) => routine && typeof routine.id === "string" && typeof routine.name === "string" && routine.name.length <= 60 && validRoutineSteps(routine.steps) && typeof routine.createdAt === "number" && typeof routine.updatedAt === "number").slice(0, 20);
+}
+async function setRoutineSession(next: RoutineSession, feedback?: string, announce = false) {
+  routineSession = { ...next, feedback: feedback ?? next.feedback };
+  await chrome.storage.session.set({ routineSession });
+  if (feedback) {
+    await publish({ feedback });
+    // Routine recording is an explicit mode. Always announce its state
+    // transitions, even when optional, general spoken feedback is disabled.
+    if (announce && !settings.spokenFeedback)
+      void chrome.runtime.sendMessage({ type: "SPEAK_FEEDBACK", text: feedback.slice(0, 1200), enabled: true }).catch(() => {});
+  }
+}
+function routineActionFromCommand(text: string, intent: Intent): RoutineAction | null {
+  if (intent.type === "site-action" && intent.site === "youtube" && routineYouTubeActions.has(intent.action))
+    return { type: "site-command", site: "youtube", action: intent.action, args: { ...intent.args } } as RoutineAction;
+  const command = text.normalize("NFKC").trim().toLowerCase().replace(/[.!?,;:]+$/, "").replace(/\s+/g, " ");
+  const site = /^(?:open|take me to) (wikipedia|github|reddit|amazon|spotify|netflix|youtube|chatgpt|chat gpt|ai chat|x|twitter|whatsapp|gmail|google meet|meet|linkedin|irctc|google maps|maps)$/i.exec(command);
+  if (site) {
+    const spoken = site[1].toLowerCase();
+    const id = (spoken === "twitter" ? "x" : ["chat gpt", "ai chat"].includes(spoken) ? "chatgpt" : spoken.replace(/^google /, "")) as keyof typeof siteHomes;
+    return Object.hasOwn(siteHomes, id) ? { type: "open-site", site: id } : null;
+  }
+  if (intent.type === "search") return { type: "search", query: intent.query.slice(0, 200), background: intent.background };
+  if (intent.type === "indexed-tab" || intent.type === "named-tab") return { type: "switch-tab", intent };
+  if (intent.type === "click-target") return { type: "click-target", query: intent.query.slice(0, 100) };
+  if (intent.type === "scroll") return { type: "scroll", direction: intent.direction };
+  if (intent.type === "media-play") return { type: "media", command: "play" };
+  if (intent.type === "media-pause") return { type: "media", command: "pause" };
+  if (intent.type === "media-toggle") return { type: "media", command: "toggle" };
+  // Adapter-routed media commands arrive here as `site-action`, so the
+  // generic media Intent checks above do not describe what was actually run.
+  // Preserve the operation from the adapter action as well as common spoken
+  // equivalents such as Spotify's “continue playing”.
+  if (intent.type === "site-action") {
+    const action = `${intent.site}:${intent.action}`;
+    if (["spotify:S05", "spotify:S07", "netflix:N04", "netflix:N07", "youtube:YT11"].includes(action))
+      return { type: "media", command: "play" };
+    if (["spotify:S06", "netflix:N06", "youtube:YT05"].includes(action))
+      return { type: "media", command: "pause" };
+    if (action === "reddit:R24")
+      return { type: "media", command: intent.args.mode?.startsWith("pause") ? "pause" : "play" };
+  }
+  if (/^(?:continue playing|resume(?: the| this)?(?: music| song| video| episode)?|play(?: the| this)?(?: music| song| video| playback)?)$/.test(command))
+    return { type: "media", command: "play" };
+  if (/^(?:pause(?: the| this)?(?: music| song| video| episode)?|hold(?: the)? music|stop playing for a moment)$/.test(command))
+    return { type: "media", command: "pause" };
+  if (/^(?:toggle playback|play or pause|pause or play)$/.test(command))
+    return { type: "media", command: "toggle" };
+  if (intent.type === "back" || intent.type === "forward") return { type: "navigate", direction: intent.type };
+  return null;
+}
+async function appendRoutineStep(action: RoutineAction) {
+  if (!routineSession.recording || routineSession.recordingPaused) return;
+  if (routineSession.draft.length >= 20) { await publish({ feedback: "This recording reached the 20-step limit. Say “stop recording routine” and review the draft in the dashboard." }); return; }
+  const label = (action.type === "site-command" ? `YouTube: ${catalogue.find(spec => spec.id === action.action)?.description || action.action}${action.args.query ? ` — ${action.args.query}` : action.args.index ? ` — video ${action.args.index}` : action.args.value !== undefined ? ` — ${action.args.value}` : action.args.mode ? ` — ${action.args.mode}` : ""}` : action.type === "open-site" ? `Open ${action.site}` : action.type === "search" ? `Search for ${action.query}${action.background ? " in the background" : " in a new tab"}` : action.type === "switch-tab" ? action.intent.type === "indexed-tab" ? `Switch to tab ${action.intent.index}` : `Switch to ${action.intent.name} tab` : action.type === "click-target" ? `Open ${action.query}` : action.type === "scroll" ? `Scroll ${action.direction}` : action.type === "media" ? `Media ${action.command}` : `Go ${action.direction}`).slice(0, 160);
+  const step: RoutineStep = { id: `step-${Date.now()}-${++routineIdCounter}`, label, action };
+  await setRoutineSession({ ...routineSession, draft: [...routineSession.draft, step] }, `Step ${routineSession.draft.length + 1} recorded: ${label}.`);
+}
+function routineIntent(action: RoutineAction): Intent {
+  if (action.type === "site-command") throw new Error("Site routine steps require a fresh page snapshot.");
+  if (action.type === "open-site") return { type: "new-tab" };
+  if (action.type === "search") return { type: "search", query: action.query, background: action.background };
+  if (action.type === "switch-tab") return action.intent;
+  if (action.type === "click-target") return { type: "click-target", query: action.query };
+  if (action.type === "scroll") return { type: "scroll", direction: action.direction };
+  if (action.type === "media") return { type: action.command === "toggle" ? "media-toggle" : action.command === "play" ? "media-play" : "media-pause" };
+  return { type: action.direction };
+}
+interface RoutineDestination { tabId?: number; url?: string }
+interface RoutineExpectation { site: string; player: boolean; videos?: boolean }
+function routineExpectation(action?: RoutineAction): RoutineExpectation | undefined {
+  if (action?.type !== "site-command") return undefined;
+  return { site: action.site, player: !["YT01", "YT03", "YT04"].includes(action.action), videos: ["YT03", "YT04"].includes(action.action) };
+}
+async function applyRoutineSiteResult(result: SiteResult | null, destination: RoutineDestination, valid: () => boolean): Promise<boolean> {
+  if (!result || !valid()) return false;
+  const succeeded = ["available", "already-satisfied"].includes(result.state);
+  if (succeeded && result.navigate) {
+    const url = new URL(result.navigate.url);
+    if (!["https:", "http:"].includes(url.protocol)) return false;
+    destination.url = url.href;
+    if (result.navigate.newTab) {
+      if (await needTabs() || !valid()) return false;
+      const tab = await chrome.tabs.create({ url: url.href, active: true });
+      if (tab.id === undefined || !valid()) return false;
+      destination.tabId = tab.id;
+      await target(tab.id);
+      if (valid()) await publish({ feedback: result.feedback });
+      return valid();
+    }
+    destination.tabId = state.targetTabId ?? undefined;
+  }
+  await siteResult(result, valid);
+  return succeeded && valid();
+}
+async function executeRoutineAction(step: RoutineStep, destination: RoutineDestination, valid: () => boolean): Promise<boolean> {
+  if (!valid() || !safeRoutineAction(step.action)) return false;
+  if (step.action.type === "open-site") {
+    if (await needTabs() || !valid()) return false;
+    const tab = await chrome.tabs.create({ url: siteHomes[step.action.site], active: true });
+    destination.tabId = tab.id;
+    destination.url = siteHomes[step.action.site];
+    if (tab.id !== undefined) await target(tab.id);
+    return tab.id !== undefined && valid();
+  }
+  if (step.action.type === "search") {
+    if (await needTabs() || !valid()) return false;
+    const url = "https://www.google.com/search?q=" + encodeURIComponent(step.action.query);
+    const tab = await chrome.tabs.create({ url, active: !step.action.background });
+    if (!step.action.background && tab.id !== undefined && valid()) {
+      destination.tabId = tab.id;
+      destination.url = url;
+      await target(tab.id);
+    }
+    return tab.id !== undefined && valid();
+  }
+  if (step.action.type === "click-target") {
+    const targets = await page({ type: "GET_TARGETS" });
+    if (!Array.isArray(targets) || rankTargets(step.action.query, targets).kind !== "match") return false;
+  }
+  const site = await page({ type: "GET_SITE_CONTEXT" });
+  if (!valid()) return false;
+  if (step.action.type === "site-command") {
+    if (site?.site !== step.action.site) return false;
+    const request = makeRequest(site, step.action.action, { ...step.action.args });
+    const result = await page({ type: "PAGE_ACTION", intent: request });
+    return applyRoutineSiteResult(result, destination, valid);
+  }
+  const spoken = step.action.type === "switch-tab" ? step.action.intent.type === "indexed-tab" ? `go to tab ${step.action.intent.index}` : `go to ${step.action.intent.name} tab`
+    : step.action.type === "click-target" ? `click ${step.action.query}`
+    : step.action.type === "scroll" ? `scroll ${step.action.direction}`
+    : step.action.type === "media" ? site?.site === "spotify"
+      ? step.action.command === "play" ? "continue playing" : step.action.command === "pause" ? "pause the music" : "toggle playback"
+      : step.action.command === "toggle" ? "toggle playback" : `${step.action.command} the video`
+    : `go ${step.action.direction}`;
+  if (site?.site) {
+    if (step.action.type === "media") {
+      const request = parseSite(spoken, site);
+      if (request) {
+        const result = await page({ type: "PAGE_ACTION", intent: request });
+        return applyRoutineSiteResult(result, destination, valid);
+      }
+    }
+    const dialogue = await page({ type: "SITE_DIALOGUE", text: spoken });
+    if (dialogue?.state) {
+      return applyRoutineSiteResult(dialogue, destination, valid);
+    }
+    // Spotify hides its audio element from the generic media helper. If its
+    // dedicated site adapter cannot handle a routine step, pause instead of
+    // issuing an unrelated video/audio action and skipping later routine steps.
+    if (site.site === "spotify" && step.action.type === "media") return false;
+  }
+  const intent = routineIntent(step.action);
+  await action(intent, valid);
+  return lastActionSucceeded;
+}
+/** Executed in the active site tab while a routine waits for its next media step. */
+function routinePlayerReady(site: string): boolean {
+  if (site === "spotify") {
+    let controls = [...document.querySelectorAll<HTMLElement>('[data-testid="control-button-playpause"]')];
+    if (controls.length !== 1) controls = [...document.querySelectorAll<HTMLElement>('button,[role="button"]')].filter(control =>
+      /^(?:play|pause)$/i.test((control.getAttribute("aria-label") || control.title || control.textContent || "").trim()) && control.getClientRects().length > 0,
+    );
+    return controls.length === 1 && /^(?:play|pause)(?:\s|$)/i.test(
+      (controls[0].getAttribute("aria-label") || controls[0].title || controls[0].textContent || "").trim(),
+    );
+  }
+  if (site === "youtube") {
+    const video = document.querySelector<HTMLVideoElement>("#movie_player video, video.html5-main-video");
+    return !!video && video.readyState >= 1;
+  }
+  if (site === "netflix")
+    return !!document.querySelector("video, button[aria-label='Play'], button[aria-label='Pause']");
+  return !!document.querySelector("audio, video");
+}
+function routineUrlMatches(actual: string, expected: string): boolean {
+  try {
+    const pageUrl = new URL(actual), destination = new URL(expected);
+    return pageUrl.origin === destination.origin && pageUrl.pathname === destination.pathname &&
+      [...destination.searchParams].every(([key, value]) => pageUrl.searchParams.getAll(key).includes(value));
+  } catch { return false; }
+}
+async function waitForRoutinePage(token: number, expectation?: RoutineExpectation, destination: RoutineDestination = {}): Promise<boolean> {
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline && token === playbackToken && routineSession.playing && !routineSession.playbackPaused) {
+    const tabId = destination.tabId ?? state.targetTabId;
+    if (destination.tabId !== undefined && state.targetTabId !== destination.tabId) return false;
+    if (tabId !== null) {
+      const [tab, context, site] = await Promise.all([
+        chrome.tabs.get(tabId).catch(() => null),
+        page({ type: "GET_PAGE_CONTEXT" }, tabId),
+        expectation ? page({ type: "GET_SITE_CONTEXT" }, tabId) : Promise.resolve(null),
+      ]);
+      if (tab?.status === "complete" && context && typeof context.url === "string" && context.url === tab.url) {
+        if (destination.url && !routineUrlMatches(context.url, destination.url) || expectation && (site?.site !== expectation.site || site.url !== context.url || expectation.videos && !site.entities?.some((entity: { kind: string }) => entity.kind === "video"))) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+          continue;
+        }
+        if (expectation?.player) {
+          const probe = await chrome.scripting.executeScript({ target: { tabId }, func: routinePlayerReady, args: [expectation.site] }).catch(() => []);
+          if (probe[0]?.result !== true) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+            continue;
+          }
+        }
+        return true;
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  return false;
+}
+function routineActionMayNavigate(action: RoutineAction): boolean {
+  return action.type === "open-site" || action.type === "search" || action.type === "switch-tab" || action.type === "click-target" || action.type === "navigate" || action.type === "site-command" && ["YT01", "YT03", "YT04"].includes(action.action);
+}
+async function runRoutine(name: string) {
+  const routines = await getRoutines();
+  const routine = routines.find(item => item.name.toLocaleLowerCase() === name.trim().toLocaleLowerCase());
+  if (!routine) { await setRoutineSession(routineSession, `I couldn't find a routine named ${name}. Say “list my routines” to hear the saved names.`); return; }
+  if (!routine.steps.length) { await setRoutineSession(routineSession, `“${routine.name}” has no steps to run.`); return; }
+  if (routineSession.playbackPaused) { await publish({ feedback: "A routine is paused. Say “resume routine” or “stop routine” before starting another." }); return; }
+  const token = ++playbackToken;
+  await setRoutineSession({ ...routineSession, playing: true, playbackPaused: false, playbackRoutineId: routine.id, playbackStep: 0 }, `Running ${routine.name}.`, true);
+  for (let index = routineSession.playbackStep; index < routine.steps.length; index++) {
+    if (token !== playbackToken || routineSession.playbackPaused || !routineSession.playing) return;
+    const step = routine.steps[index];
+    await setRoutineSession({ ...routineSession, playbackStep: index }, `Preparing step ${index + 1} of ${routine.steps.length}: ${step.label}.`);
+    const valid = () => token === playbackToken && routineSession.playing && !routineSession.playbackPaused && state.running && !state.paused;
+    const destination: RoutineDestination = {};
+    const precondition = routineExpectation(step.action);
+    const prepared = !precondition || await waitForRoutinePage(token, precondition);
+    if (!valid()) return;
+    // Only consume the step once its prerequisites are ready and it is about
+    // to execute. Pausing during a loading wait must not skip that command.
+    if (prepared) await setRoutineSession({ ...routineSession, playbackStep: index + 1 }, `Running step ${index + 1} of ${routine.steps.length}: ${step.label}.`);
+    const success = prepared && await executeRoutineAction(step, destination, valid);
+    if (token !== playbackToken || routineSession.playbackPaused || !routineSession.playing) return;
+    const nextStep = routine.steps[index + 1];
+    const expectation = routineExpectation(nextStep?.action) ?? (step.action.type === "open-site" && nextStep?.action.type === "media"
+      ? { site: step.action.site, player: true } : undefined);
+    const ready = success && (!routineActionMayNavigate(step.action) || await waitForRoutinePage(token, expectation, destination));
+    if (!valid()) return;
+    if (!ready) {
+      const blocked = success && nextStep ? index + 1 : index;
+      await setRoutineSession({ ...routineSession, playing: false, playbackPaused: true, playbackStep: blocked, playbackRoutineId: routine.id }, `Routine paused at step ${blocked + 1}: ${routine.steps[blocked].label}. It could not be confirmed; resolve the page or target, then say “resume routine” or “stop routine”.`, true);
+      return;
+    }
+    await setRoutineSession({ ...routineSession, playbackStep: index + 1 });
+  }
+  if (token === playbackToken) await setRoutineSession({ ...routineSession, playing: false, playbackPaused: false, playbackStep: 0, playbackRoutineId: null }, `Finished routine ${routine.name}.`, true);
+}
+async function routineControl(command: Extract<Intent, {type:"routine-control"}>) {
+  if (command.command === "start-recording") {
+    if (routineSession.playing || routineSession.playbackPaused) { await publish({ feedback: "Stop or finish the paused routine before starting a new recording." }); return; }
+    if (routineSession.recording || routineSession.draft.length) { await publish({ feedback: "A routine draft is already open. Review or discard it in the dashboard before starting another." }); return; }
+    await setRoutineSession({ ...routineSession, recording: true, recordingPaused: false, draft: [] }, "Recording started. Use supported voice commands, then say “stop recording routine” to review it in the dashboard.", true); return;
+  }
+  if (command.command === "pause-recording" || command.command === "resume-recording") {
+    if (!routineSession.recording) { await publish({ feedback: "No routine is being recorded." }); return; }
+    const recordingPaused = command.command === "pause-recording";
+    await setRoutineSession({ ...routineSession, recordingPaused }, recordingPaused ? "Routine recording paused." : "Routine recording resumed.", true); return;
+  }
+  if (command.command === "undo-step") {
+    if (!routineSession.draft.length) { await publish({ feedback: "There is no routine step to undo." }); return; }
+    const draft = routineSession.draft.slice(0, -1);
+    await setRoutineSession({ ...routineSession, draft }, `Removed the last step. ${draft.length} ${draft.length === 1 ? "step" : "steps"} remain.`); return;
+  }
+  if (command.command === "stop-recording") {
+    if (!routineSession.recording) { await publish({ feedback: "No routine is being recorded." }); return; }
+    await setRoutineSession({ ...routineSession, recording: false, recordingPaused: false }, routineSession.draft.length ? `Recording ended. ${routineSession.draft.length} ${routineSession.draft.length === 1 ? "step" : "steps"} captured. Review and save the draft in Dashboard → Routines.` : "Recording ended with no supported successful actions. Try a supported command, then record again.", true); return;
+  }
+  if (command.command === "list") {
+    const routines = await getRoutines();
+    await publish({ feedback: routines.length ? `Saved routines: ${routines.map((routine, i) => `${i + 1}. ${routine.name}`).join("; ")}. Say “run” followed by a name.` : "You have no saved routines yet. Say “start recording a routine” to create one." }); return;
+  }
+  if (command.command === "run") {
+    if (routineSession.playing) { await publish({ feedback: "A routine is already running. Say “pause routine” or “stop routine”." }); return; }
+    if (routineSession.playbackPaused) { await publish({ feedback: "A routine is paused. Say “resume routine” or “stop routine” before starting another." }); return; }
+    void runRoutine(command.name || "").catch(error => publish({ feedback: error instanceof Error ? error.message : "Routine playback failed." })); return;
+  }
+  if (command.command === "pause-playback") {
+    if (!routineSession.playing) { await publish({ feedback: "No routine is currently running." }); return; }
+    ++playbackToken;
+    await setRoutineSession({ ...routineSession, playing: false, playbackPaused: true }, "Routine paused. Say “resume routine” to continue, or “stop routine” to cancel.", true); return;
+  }
+  if (command.command === "resume-playback") {
+    if (!routineSession.playbackPaused || !routineSession.playbackRoutineId) { await publish({ feedback: "There is no paused routine to resume." }); return; }
+    void resumeRoutinePlayback().catch(error => publish({ feedback: error instanceof Error ? error.message : "Routine playback failed." })); return;
+  }
+  if (command.command === "stop-playback") {
+    ++playbackToken;
+    if (!routineSession.playing && !routineSession.playbackPaused) { await publish({ feedback: "No routine is currently running." }); return; }
+    await setRoutineSession({ ...routineSession, playing: false, playbackPaused: false, playbackRoutineId: null, playbackStep: 0 }, "Routine stopped. Completed actions were left as they are.", true);
+  }
+}
+async function resumeRoutinePlayback() {
+    const routines = await getRoutines();
+    const routine = routines.find(item => item.id === routineSession.playbackRoutineId);
+    if (!routine) { await setRoutineSession({ ...routineSession, playbackPaused: false, playbackRoutineId: null }, "The saved routine no longer exists. Playback stopped."); return; }
+    const index = routineSession.playbackStep;
+    const token = ++playbackToken;
+    await setRoutineSession({ ...routineSession, playing: true, playbackPaused: false }, `Resuming ${routine.name}.`, true);
+    for (let i = index; i < routine.steps.length; i++) {
+      if (token !== playbackToken || !routineSession.playing || routineSession.playbackPaused) return;
+      const step = routine.steps[i];
+      await setRoutineSession({ ...routineSession, playbackStep: i }, `Preparing step ${i + 1} of ${routine.steps.length}: ${step.label}.`);
+      const valid = () => token === playbackToken && routineSession.playing && !routineSession.playbackPaused && state.running && !state.paused;
+      const destination: RoutineDestination = {};
+      const precondition = routineExpectation(step.action);
+      const prepared = !precondition || await waitForRoutinePage(token, precondition);
+      if (!valid()) return;
+      if (prepared) await setRoutineSession({ ...routineSession, playbackStep: i + 1 }, `Running step ${i + 1} of ${routine.steps.length}: ${step.label}.`);
+      const success = prepared && await executeRoutineAction(step, destination, valid);
+      if (token !== playbackToken || !routineSession.playing || routineSession.playbackPaused) return;
+      const nextStep = routine.steps[i + 1];
+      const expectation = routineExpectation(nextStep?.action) ?? (step.action.type === "open-site" && nextStep?.action.type === "media"
+        ? { site: step.action.site, player: true } : undefined);
+      const ready = success && (!routineActionMayNavigate(step.action) || await waitForRoutinePage(token, expectation, destination));
+      if (!valid()) return;
+      if (!ready) {
+        const blocked = success && nextStep ? i + 1 : i;
+        await setRoutineSession({ ...routineSession, playing: false, playbackPaused: true, playbackStep: blocked, playbackRoutineId: routine.id }, `Routine paused at step ${blocked + 1}: ${routine.steps[blocked].label}. Resolve the target, then say “resume routine” or “stop routine”.`, true); return;
+      }
+    }
+    await setRoutineSession({ ...routineSession, playing: false, playbackPaused: false, playbackStep: 0, playbackRoutineId: null }, `Finished routine ${routine.name}.`, true); return;
+}
+async function voiceAction(text: string, intent: Intent, current: () => boolean = () => true) {
+  if (intent.type === "click-target") {
+    const targets = await page({ type: "GET_TARGETS" });
+    if (!current() || !Array.isArray(targets) || rankTargets(intent.query, targets).kind !== "match") {
+      await action(intent, current);
+      return;
+    }
+  }
+  await action(intent, current);
+  if (!lastActionSucceeded) return;
+  const step = routineActionFromCommand(text, intent);
+  if (step) await appendRoutineStep(step);
 }
 async function publish(patch: Partial<SessionState>, persist = true) {
   const oldFeedback = state.feedback;
@@ -222,6 +606,9 @@ async function stop() {
   ++planToken; planDestination=null;
   activeProvider?.abort();
   pageRevision++;
+  ++playbackToken;
+  if (routineSession.recording || routineSession.playing || routineSession.playbackPaused)
+    await setRoutineSession({ ...routineSession, recording: false, recordingPaused: false, playing: false, playbackPaused: false, playbackRoutineId: null, playbackStep: 0 }, "Handsfree stopped. Routine playback stopped; any recording draft remains available in the dashboard.", true);
   tabChoices = [];
   gesturePreviewFrame = null;
   record("run-stop");
@@ -252,6 +639,10 @@ async function pause() {
   ++planToken; planDestination=null;
   activeProvider?.abort();
   pageRevision++;
+  if (routineSession.playing) {
+    ++playbackToken;
+    await setRoutineSession({ ...routineSession, playing: false, playbackPaused: true }, "Handsfree paused. Routine playback is paused too; resume Handsfree, then say “resume routine”.");
+  }
   tabChoices = [];
   gesturePreviewFrame = null;
   record("pause");
@@ -351,19 +742,21 @@ async function needTabs() {
   });
   return true;
 }
-async function tabAction(intent: Intent, current: () => boolean) {
+async function tabAction(intent: Intent, current: () => boolean): Promise<boolean> {
   const revision = pageRevision;
   const targetId = state.targetTabId;
   const valid = () => current() && revision === pageRevision && state.running && !state.paused && state.targetTabId === targetId;
-  if (await needTabs() || !valid()) return;
+  if (await needTabs() || !valid()) return false;
   const tabs = await chrome.tabs.query({});
-  if (!valid()) return;
+  if (!valid()) return false;
+  let succeeded = false;
   const browse = tabs.filter(
     (t) => !dashboardTabs.has(t.id ?? -1) && t.id !== controllerTabId && t.id !== undefined && !t.url?.startsWith(chrome.runtime.getURL("")),
   );
   switch (intent.type) {
     case "new-tab":
       await chrome.tabs.create({ active: true, windowId: browse.find(t => t.id === targetId)?.windowId });
+      succeeded = true;
       break;
     case "search":
       await chrome.tabs.create({
@@ -372,6 +765,7 @@ async function tabAction(intent: Intent, current: () => boolean) {
         active: !intent.background,
         windowId: browse.find(t => t.id === targetId)?.windowId,
       });
+      succeeded = true;
       break;
     case "next-tab":
     case "previous-tab": {
@@ -382,7 +776,7 @@ async function tabAction(intent: Intent, current: () => boolean) {
         state.targetTabId ?? -1,
         intent.type === "next-tab" ? "next" : "previous",
       );
-      if (id != null) await activateTab(id, valid);
+      if (id != null) { await activateTab(id, valid); succeeded = state.targetTabId === id; }
       break;
     }
     case "show-tabs": {
@@ -414,7 +808,7 @@ async function tabAction(intent: Intent, current: () => boolean) {
         await publish({ feedback: `There is no tab ${intent.index} in this window.` });
         break;
       }
-      await activateTab(selected.id, valid);
+      await activateTab(selected.id, valid); succeeded = state.targetTabId === selected.id;
       break;
     }
     case "named-tab": {
@@ -434,7 +828,7 @@ async function tabAction(intent: Intent, current: () => boolean) {
               .join("; ") +
             ". Say choose one, choose two, or cancel.",
         });
-      } else await activateTab(Number(matches.ids[0]), valid);
+      } else { const id = Number(matches.ids[0]); await activateTab(id, valid); succeeded = state.targetTabId === id; }
       break;
     }
     case "close-tab":
@@ -444,7 +838,7 @@ async function tabAction(intent: Intent, current: () => boolean) {
       break;
     case "incognito": {
       const allowed = await chrome.extension.isAllowedIncognitoAccess();
-      if (!valid()) return;
+      if (!valid()) return false;
       if (allowed)
         await chrome.windows.create({ incognito: true });
       else
@@ -458,8 +852,10 @@ async function tabAction(intent: Intent, current: () => boolean) {
     case "downloads":
     case "settings":
       await chrome.tabs.create({ url: "chrome://" + intent.type + "/" });
+      succeeded = true;
       break;
   }
+  return succeeded;
 }
 async function activateTab(id: number, current: () => boolean = () => true) {
   const revision = pageRevision;
@@ -631,6 +1027,7 @@ async function siteResult(result: (SiteResult & {dictating?:boolean}) | null, cu
   if (current()) await publish({feedback:result.feedback});
 }
 async function action(intent: Intent, current: () => boolean = () => true) {
+  lastActionSucceeded = false;
   if (!current()) return;
   if (intent.type === "stop") {
     await stop();
@@ -724,7 +1121,7 @@ async function action(intent: Intent, current: () => boolean = () => true) {
       "settings",
     ].includes(intent.type)
   ) {
-    await tabAction(intent, current);
+    lastActionSucceeded = await tabAction(intent, current);
     return;
   }
   if (intent.type === "find") {
@@ -743,7 +1140,7 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     const selected = probes.filter(probe => probe.result?.found).sort((a, b) => (b.result?.score || 0) - (a.result?.score || 0))[0];
     if (selected) {
       const results = await chrome.scripting.executeScript({ target: { tabId, frameIds: [selected.frameId] }, func: mediaControl, args: [intent] });
-      if (current() && pageRevision === revision && state.running && !state.paused) await publish({ feedback: results[0]?.result?.error || "Player updated." });
+      if (current() && pageRevision === revision && state.running && !state.paused) { lastActionSucceeded = !results[0]?.result?.error; await publish({ feedback: results[0]?.result?.error || "Player updated." }); }
       return;
     }
   }
@@ -752,7 +1149,15 @@ async function action(intent: Intent, current: () => boolean = () => true) {
   const authorizationRevision = linkAuthorizationRevision;
   const stillCurrent = () => authorizationRevision === linkAuthorizationRevision && current() && state.running && !state.paused && !state.dictating && state.targetTabId === snapshotTab && pageRevision === revision;
   const result = await page({ type: "PAGE_ACTION", intent });
-  if (intent.type === "site-action") { record(`site-${intent.action}`); await siteResult(result, current); return; }
+  lastActionSucceeded = result?.ok === true && !result?.error;
+  if (intent.type === "site-action") {
+    record(`site-${intent.action}`);
+    // Site adapters return SiteResult.state rather than PAGE_ACTION's `ok`.
+    // Keep that verified outcome so routines only capture successful actions.
+    lastActionSucceeded = result?.state === "available" || result?.state === "already-satisfied";
+    await siteResult(result, current);
+    return;
+  }
   const openDisposition = intent.type === "click-link" || intent.type === "click-target" ? intent.disposition : result?.disposition;
   if (openDisposition && result?.ok && result.link && snapshotTab !== null) {
     if (!stillCurrent() || await needTabs() || !stillCurrent()) return;
@@ -765,6 +1170,7 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     const valid = await page({ type: "VALIDATE_LINK", id: link.id, url: url.href, pageUrl: link.pageUrl }, snapshotTab);
     if (!stillCurrent() || valid?.ok !== true) return;
     await chrome.tabs.create({ url: url.href, active: openDisposition !== "background" });
+    lastActionSucceeded = true;
     return;
   }
   if (typeof result?.dictating === "boolean")
@@ -868,6 +1274,8 @@ async function voicePlan(steps: string[], snapshot: SiteSnapshot) {
       snapshot=next;
     }
     completed++; record(`site-${request.action}`);
+    const routineAction = routineActionFromCommand(step.trim(), request);
+    if (routineAction) await appendRoutineStep(routineAction);
   }
   if(valid())await publish({feedback:`Completed ${completed} verified steps.`});
 }
@@ -901,6 +1309,7 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     return;
   }
   const current = () => revision === pageRevision && state.running && !state.paused;
+  if (parsed.type === "routine-control") { await routineControl(parsed); return; }
   if(/^say that again[.!?]?$/i.test(text.trim())) {
     if(settings.spokenFeedback) await chrome.runtime.sendMessage({type:"SPEAK_FEEDBACK",text:state.feedback,enabled:true}).catch(()=>{});
     return;
@@ -921,7 +1330,7 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
   if (["new-tab", "next-tab", "previous-tab", "show-tabs", "indexed-tab", "close-tab"].includes(parsed.type)
     || parsed.type === "named-tab" && (!conversation?.site || /\btab\b/i.test(text))
     || parsed.type === "search" && (parsed.background || /\b(?:new|fresh|blank) tab\b/i.test(text))) {
-    await action(parsed, current);
+    await voiceAction(text, parsed, current);
     return;
   }
   const openSite = /^(?:open|take me to) (wikipedia|github|reddit|amazon|spotify|netflix|youtube|chatgpt|chat gpt|ai chat|x|twitter|whatsapp|gmail|google meet|meet|linkedin|irctc|google maps|maps)$/i.exec(text.trim().replace(/[.!?]+$/,""));
@@ -929,7 +1338,9 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     const spokenSite = openSite[1].toLowerCase();
     const site = (spokenSite === "twitter" ? "x" : ["chat gpt", "ai chat"].includes(spokenSite) ? "chatgpt" : spokenSite.replace(/^google /, "")) as keyof typeof siteHomes;
     if (await needTabs() || !current()) return;
-    await chrome.tabs.create({url:siteHomes[site]});
+    const tab = await chrome.tabs.create({url:siteHomes[site]});
+    if (tab.id !== undefined) await target(tab.id);
+    if (tab.id !== undefined && state.targetTabId === tab.id) await appendRoutineStep({ type: "open-site", site });
     if(current()) await publish({feedback:`Opening ${site}.`});
     return;
   }
@@ -943,12 +1354,25 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     if(steps.length>1) { await voicePlan(steps,site);return; }
     const dialogue = await page({type:"SITE_DIALOGUE",text});
     if(!current())return;
-    if(dialogue?.state) { await siteResult(dialogue,current); return; }
+    if(dialogue?.state) {
+      await siteResult(dialogue,current);
+      if (current() && ["available", "already-satisfied"].includes(dialogue.state)) {
+        const step = routineActionFromCommand(text, parseSite(text, site) ?? parsed);
+        if (step?.type === "media" || step?.type === "site-command") await appendRoutineStep(step);
+      }
+      return;
+    }
     if((parsed.type==='pause'||parsed.type==='resume') && !['spotify','netflix'].includes(site.site) && !site.capabilities.some(c=>c.state==='available' && ['R24'].includes(c.id))) {await action(parsed,current);return;}
+    // YouTube search and player commands keep their site semantics when
+    // recorded; a background search remains an explicit browser command.
+    if (site.site === "youtube" && !(parsed.type === "search" && parsed.background)) {
+      const request = parseSite(text, site);
+      if (request) { await voiceAction(text, request, current); return; }
+    }
     const explicitBrowser=["new-tab","next-tab","previous-tab","close-tab","history","downloads","settings","incognito","back","forward","scroll","click","stop-typing","start-typing"].includes(parsed.type) || parsed.type==='named-tab' && /\btab\b/i.test(text);
-    if(explicitBrowser) {await action(parsed,current);return;}
+    if(explicitBrowser) {await voiceAction(text,parsed,current);return;}
     const request = parseSite(text,site);
-    if(request) { await action(request,current); return; }
+    if(request) { await voiceAction(text,request,current); return; }
     if(unsafeSpeech(text)) { await publish({feedback:'This is a question, commentary, negation or an excluded account operation. No page action was taken.'}); return; }
     if (/^(next|stop)$/i.test(text.trim())) { await publish({feedback:'Specify what to stop or advance, such as next episode or pause Handsfree.'}); return; }
   }
@@ -970,7 +1394,7 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     if (revision !== pageRevision || !state.running || state.paused) return;
     classifyNamed = rankTargets(parsed.query, Array.isArray(listed) ? listed : []).kind === "none";
   }
-  if (parsed.type !== "unknown" && !classifyNamed && (!site?.site || ["back","forward","scroll","new-tab","next-tab","previous-tab","named-tab","close-tab","choose","confirm","cancel","stop-typing","start-typing","click"].includes(parsed.type))) { await action(parsed); return; }
+  if (parsed.type !== "unknown" && !classifyNamed && (!site?.site || ["back","forward","scroll","new-tab","next-tab","previous-tab","named-tab","close-tab","choose","confirm","cancel","stop-typing","start-typing","click"].includes(parsed.type))) { await voiceAction(text,parsed); return; }
   await providerWork(async signal => {
     const options = jevOptions();
     let tabs: { id: number; title: string }[] = [];
@@ -1063,6 +1487,40 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     case "GET_GESTURE_PRESETS": {
       const saved = await chrome.storage.local.get("gesturePresets");
       return normalizeGesturePresets(saved.gesturePresets);
+    }
+    case "GET_ROUTINE_SESSION":
+      return routineSession;
+    case "GET_ROUTINES":
+      return getRoutines();
+    case "SAVE_ROUTINE": {
+      const name = typeof message.name === "string" ? message.name.normalize("NFKC").trim().replace(/\s+/g, " ") : "";
+      if (!name || name.length > 60) return { ok: false, error: "Choose a routine name from 1 to 60 characters." };
+      if (!validRoutineSteps(message.steps) || !message.steps.length) return { ok: false, error: "A routine needs 1–20 supported steps. Review or remove any invalid step." };
+      const routines = await getRoutines();
+      const existing = message.id ? routines.find(routine => routine.id === message.id) : undefined;
+      if (message.id && !existing) return { ok: false, error: "That saved routine no longer exists. Refresh this dashboard and try again." };
+      if (routines.some(routine => routine.id !== existing?.id && routine.name.toLocaleLowerCase() === name.toLocaleLowerCase())) return { ok: false, error: "A routine already uses that name. Choose a different name." };
+      if (!existing && routines.length >= 20) return { ok: false, error: "You can save up to 20 routines. Delete one before adding another." };
+      const now = Date.now();
+      const saved: VoiceRoutine = { id: existing?.id || `routine-${now}-${++routineIdCounter}`, name, steps: message.steps, createdAt: existing?.createdAt || now, updatedAt: now };
+      const next = existing ? routines.map(routine => routine.id === existing.id ? saved : routine) : [...routines, saved];
+      await chrome.storage.local.set({ voiceRoutines: next });
+      if (existing) await publish({ feedback: `Updated routine “${name}” with ${saved.steps.length} steps.` });
+      else await setRoutineSession({ ...routineSession, recording: false, recordingPaused: false, draft: [] }, `Saved routine “${name}” with ${saved.steps.length} steps.`);
+      return saved;
+    }
+    case "DISCARD_ROUTINE_DRAFT":
+      await setRoutineSession({ ...routineSession, recording: false, recordingPaused: false, draft: [] }, "Routine draft discarded.");
+      return { ok: true };
+    case "DELETE_ROUTINE": {
+      const routines = await getRoutines();
+      if (!routines.some(routine => routine.id === message.id)) return { ok: false, error: "That routine was already deleted." };
+      await chrome.storage.local.set({ voiceRoutines: routines.filter(routine => routine.id !== message.id) });
+      if (routineSession.playbackRoutineId === message.id) {
+        ++playbackToken;
+        await setRoutineSession({ ...routineSession, playing: false, playbackPaused: false, playbackRoutineId: null, playbackStep: 0 }, "The routine being played was deleted. Playback stopped.");
+      }
+      return { ok: true };
     }
     case "SAVE_GESTURE_PRESETS": {
       if (!Array.isArray(message.presets) || message.presets.length > 5) return { ok: false, error: "Use up to five gesture presets." };

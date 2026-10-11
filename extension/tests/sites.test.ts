@@ -22,6 +22,7 @@ const urls: Record<string, string> = {
   spotify: "https://open.spotify.com/search/demo",
   netflix: "https://www.netflix.com/browse",
   x: "https://x.com/home",
+  youtube: "https://www.youtube.com/results?search_query=physics",
 };
 let time = 0;
 beforeEach(() => {
@@ -71,6 +72,11 @@ const fixtures: Record<string, string> = {
   x: '<main><article data-testid="tweet"><div data-testid="tweetText">First test post</div><a href="/demo/status/111">Details</a><button aria-label="Like" aria-pressed="false">Like</button></article><article data-testid="tweet"><div data-testid="tweetText">Second test post</div><a href="/demo/status/222">Details</a><button aria-label="Like" aria-pressed="false">Like</button></article></main>',
 };
 describe("site contract", () => {
+  it("opens a numbered YouTube video directly from the fresh visible order and rejects an absent number", async () => {
+    const engine = fixture("youtube", '<main><ytd-video-renderer><a id="video-title" href="/watch?v=first">First lesson</a></ytd-video-renderer><ytd-video-renderer><a id="video-title" href="/watch?v=second">Second lesson</a></ytd-video-renderer></main>');
+    expect(await engine.run(request(engine, "open the second video"))).toMatchObject({ state: "available", navigate: { url: "https://www.youtube.com/watch?v=second", newTab: false } });
+    expect(await engine.run(request(engine, "open the third video"))).toMatchObject({ state: "unavailable" });
+  });
   it("has unique IDs and exact host boundaries, including X", () => {
     expect(new Set(catalogue.map((a) => a.id)).size).toBe(catalogue.length);
     for (const [site, url] of Object.entries(urls))
