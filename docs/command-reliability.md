@@ -32,3 +32,9 @@ Calibration now has five guided captures and independent directional measurement
 | Calibration guidance | Undirected sweep without individual captures | Five named poses with progress and local photos | Users can follow and review each comfortable pose |
 
 Reload `extension/dist` in chrome://extensions, then refresh controlled pages and the dashboard. Recalibrate Face and Hand separately. No environment files were changed and no deployment or push was performed.
+
+## Tab controls, revised 11 October 2026
+
+Closing the current tab now acts immediately. Form submission and site-specific mutations still require their existing confirmations. New tabs omit the URL so Chrome opens its normal New Tab page. Say `open a new tab with phones under 30k` to open those search results, or say `search for phones under 30k` after opening a tab. Active and background searches stay in the controlled window.
+
+Explicit tab commands run locally before site navigation rules, including switching by number or title. Plain site phrases such as `switch to walking` on Maps and `go to five seconds` in a player retain their site meanings. Next and previous tab commands skip Handsfree controls. A tab operation waiting for Chrome is cancelled when the target or session changes.

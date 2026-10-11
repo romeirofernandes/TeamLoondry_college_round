@@ -93,7 +93,7 @@ pause handsfree
 stop handsfree
 ```
 
-`show tabs` numbers the tabs in the current browser window in tab-strip order. Say `go to tab three`, `switch to the twelfth tab`, or `go to tab 12` to select one. `close tab` or `close this tab` asks for `confirm` before closing; `cancel` leaves it open. `previous page` works like `go back`.
+`show tabs` numbers the tabs in the current browser window in tab-strip order. Say `go to tab three`, `switch to the twelfth tab`, or `go to tab 12` to select one. `close tab`, `close this tab`, or `close the tab` closes the current browser tab immediately. `previous page` works like `go back`.
 
 Say `click` at the cursor position even when no component has snapped. Named finds still select a target for review. Coordinate clicks freeze when tracking is lost or stale. Browser-protected controls may reject synthetic events. Unknown phrases show what was heard and perform no action.
 
@@ -126,18 +126,19 @@ go to tab second handsfree page
 background search for accessible browsing
 search for accessibility tools
 close tab
-confirm
 open history
 open downloads
 open settings
 open incognito
 ```
 
-Tab-title ties ask you to say `choose one`, `choose two`, and so on. A title with no match changes nothing. Close tab always needs a separate confirmation and binds it to the original tab. Incognito also needs Chrome's Allow in incognito setting in Handsfree's extension details. Chrome's own settings/history/downloads pages can open but their contents cannot be controlled by the in-page overlay.
+Tab-title ties ask you to say `choose one`, `choose two`, and so on. A title with no match changes nothing. Close tab acts immediately on the current browser tab. Pausing, stopping or changing the target cancels a tab action that is still waiting for Chrome. Incognito also needs Chrome's Allow in incognito setting in Handsfree's extension details. Chrome's own settings/history/downloads pages can open but their contents cannot be controlled by the in-page overlay.
+
+New tabs open Chrome’s normal New Tab page. Say `open a new tab with phones under 30k` to search immediately, or open a tab first and say `search for phones under 30k`. Say `switch tabs`, `next tab`, `previous tab`, `go to tab two`, or `go to the Gmail tab` to switch. `Show tabs` lists numbers in the controlled window; duplicate titles ask you to choose. These supported commands do not need `hey handsfree`.
 
 ## Providers and arbitrary commands
 
-Exact local commands bypass providers, including `click this`, `open Careers`, `scroll down`, `next tab`, and `search for jazz in a new tab in background`. Other ordinary speech can use Jev. Jev also chooses among current tab titles and bounded page labels. Requests starting with `hey handsfree` use Groq with `qwen/qwen3.8-27b`. Start each arbitrary request with that prefix in the same utterance. Unrecognized ordinary speech does not fall back to arbitrary commands. For example, say `hey handsfree find the careers link`. Matching IDs highlight available top-document controls; say `click this` to activate. Explicit named actions such as `hey handsfree click Careers` use local label matching to activate a real control; ambiguous labels ask for a numbered choice. Find-only requests highlight. Ask `hey handsfree summarize this page`, a page question, or a general question to receive a text answer in the webpage overlay and dashboard feedback. Arbitrary navigation requests can also map to existing browser actions. Submit and close-tab still require a separate confirmation.
+Exact local commands bypass providers, including `click this`, `open Careers`, `scroll down`, `next tab`, and `search for jazz in a new tab in background`. Other ordinary speech can use Jev. Jev also chooses among current tab titles and bounded page labels. Requests starting with `hey handsfree` use Groq with `qwen/qwen3.8-27b`. Start each arbitrary request with that prefix in the same utterance. Unrecognized ordinary speech does not fall back to arbitrary commands. For example, say `hey handsfree find the careers link`. Matching IDs highlight available top-document controls; say `click this` to activate. Explicit named actions such as `hey handsfree click Careers` use local label matching to activate a real control; ambiguous labels ask for a numbered choice. Find-only requests highlight. Ask `hey handsfree summarize this page`, a page question, or a general question to receive a text answer in the webpage overlay and dashboard feedback. Arbitrary navigation requests can also map to existing browser actions. Form submission still requires a separate confirmation. Closing a tab acts immediately.
 
 Provider output is validated. Unknown IDs, unsupported actions, ambiguous results, timeouts, and provider errors cause no activation. Up to 1,500 target labels can be sent, including offscreen targets. Closed shadow roots and cross-origin iframe contents are not scanned.
 

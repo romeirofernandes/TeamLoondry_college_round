@@ -224,7 +224,7 @@ test("unknown phrases and missing-key find are explicit no-ops", async () => {
     true,
   );
 });
-test("tab switch by title works and closing always requires confirmation", async () => {
+test("tab switching by title and number works and closing is immediate", async () => {
   const second = await context.newPage();
   await second.goto("http://127.0.0.1:4177/second");
   await expect
@@ -266,13 +266,13 @@ test("tab switch by title works and closing always requires confirmation", async
     )
     .toBe("Second Handsfree page");
   await heard("close this tab");
-  expect(second.isClosed()).toBe(false);
-  await heard("cancel");
-  expect(second.isClosed()).toBe(false);
-  await heard("close tab");
-  await heard("confirm");
   await expect.poll(() => second.isClosed()).toBe(true);
+  await expect.poll(async () => worker.evaluate(async () => {
+    const { state } = await chrome.storage.session.get("state");
+    return (await chrome.tabs.get((state as any).targetTabId)).title;
+  })).toBe("Handsfree test page");
 });
+
 async function offscreenCount() {
   return worker.evaluate(async () => (await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
@@ -637,4 +637,50 @@ test("final transcripts activate real multiline fragments and reject changed bas
   await heard("click this");
   expect(await page.locator("body").getAttribute("data-relative-activated")).toBeNull();
   await expect(page.locator("#handsfree-assist-overlay .feedback")).toContainText("changed");
+});
+
+// Keep Chrome's real New Tab page and Google network state in a separate profile.
+test("new tabs use Chrome's New Tab page and accept spoken searches", async () => {
+  const dist = path.join(staging, "extension");
+  const isolated = await chromium.launchPersistentContext(path.join(staging, "new-tab-profile"), {
+    executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
+    headless: true,
+    args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, "--no-sandbox", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+  });
+  try {
+    const tabWorker = isolated.serviceWorkers()[0] || await isolated.waitForEvent("serviceworker");
+    const popup = await isolated.newPage();
+    await popup.goto(`chrome-extension://${tabWorker.url().split("/")[2]}/popup.html`);
+    const command = (msg: Message): Promise<any> => popup.evaluate(msg => chrome.runtime.sendMessage(msg), msg);
+    const say = (text: string) => command({ type: "HEARD", text });
+    const fixture = await isolated.newPage();
+    await fixture.goto("http://127.0.0.1:4177");
+    const originalTab = await tabWorker.evaluate(async () => (await chrome.tabs.query({ url: "http://127.0.0.1:4177/*" }))[0].id!);
+    await command({ type: "SAVE_PROVIDERS", groqKeys: [], jevKey: "" });
+    await command({ type: "SAVE_SETTINGS", settings: { ...(await command({ type: "GET_SETTINGS" })), voiceOnly: true } });
+    await command({ type: "START", tabId: originalTab });
+    await say("open a new tab");
+    await expect.poll(() => tabWorker.evaluate(async () => {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      return tabs[0]?.url || tabs[0]?.pendingUrl;
+    })).toMatch(/^chrome:\/\/(?:newtab|new-tab-page)\//);
+    await expect.poll(async () => (await command({ type: "GET_STATE" })).feedback).toContain('Say "search for"');
+    for (const phrase of ["search for phones under 30k", "open a new tab with phones under 30k"]) {
+      const previousIds = await tabWorker.evaluate(async () => (await chrome.tabs.query({})).map(tab => tab.id!));
+      await say(phrase);
+      await expect.poll(() => tabWorker.evaluate(async previous => {
+        const { state } = await chrome.storage.session.get("state");
+        const tab = await chrome.tabs.get((state as any).targetTabId);
+        const url = new URL(tab.url || tab.pendingUrl || "about:blank");
+        return !previous.includes(tab.id!) && !!tab.active && url.origin === "https://www.google.com" && url.pathname === "/search" && url.searchParams.get("q");
+      }, previousIds)).toBe("phones under 30k");
+    }
+    await say("go to tab handsfree test page");
+    await expect.poll(() => tabWorker.evaluate(async () => {
+      const { state } = await chrome.storage.session.get("state");
+      return (await chrome.tabs.get((state as any).targetTabId)).id;
+    })).toBe(originalTab);
+  } finally {
+    await isolated.close();
+  }
 });

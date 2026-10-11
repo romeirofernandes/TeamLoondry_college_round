@@ -171,7 +171,15 @@ export function parseIntent(text: string): Intent {
   const normalized = normalizeSpeech(text).replace(/^(?:(?:could|can|would) you )?(?:please )?/, "").replace(/ please$/, "");
   const pointer = /^(?:use|switch to) (?:the )?(head|face|hand|hands)(?: (?:pointer|control))?$/.exec(normalized);
   if (pointer) return { type: "switch-pointer", mode: /^(head|face)$/.test(pointer[1]) ? "face" : "hand" };
-  if (/^(?:(?:open|create|make)(?: me)? )?(?:a |another )?(?:new|fresh|blank) tab$/.test(normalized)) return { type: "new-tab" };
+  const newTab = /^(?:(?:open|create|make)(?: me)? )?(?:a |another )?(?:new|fresh|blank) tab(?: (?:with|for|and search(?: for)?|and look for|search(?: for)?) (.+))?$/.exec(normalized);
+  if (newTab) {
+    if (!newTab[1]) return { type: "new-tab" };
+    const background = / in (?:the )?background$/.test(newTab[1]);
+    const query = newTab[1].replace(/^(?:a )?(?:search|query)(?: for)? /, "").replace(/ in (?:the )?background$/, "");
+    if (query) return { type: "search", query, background };
+  }
+  if (/^close (?:(?:the )?(?:current|active) |(?:the|this) )?tab$/.test(normalized)) return { type: "close-tab" };
+  if (/^(?:switch|change)(?: the)? tabs$/.test(normalized)) return { type: "next-tab" };
   const endScroll = /^(?:scroll|go|move|jump)(?: all the way)? to (?:the )?(top|bottom)(?: of (?:the |this )?page)?$/.exec(normalized);
   if (endScroll) return { type: "scroll", direction: endScroll[1] as "top" | "bottom" };
   if (/^(?:play|resume)(?: (?:the |this )?(?:video|movie|music|song|playback))?$/.test(normalized) && normalized !== "resume") return { type: "media-play" };

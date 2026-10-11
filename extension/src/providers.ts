@@ -325,7 +325,7 @@ const descriptions: Record<(typeof simpleTypes)[number], string> = {
   "new-tab": "Open a new browser tab.",
   "next-tab": "Switch to the next tab.",
   "previous-tab": "Switch to the previous tab.",
-  "close-tab": "Request closure of the current tab, subject to confirmation.",
+  "close-tab": "Close the current browser tab immediately.",
   incognito: "Open an incognito window.",
   history: "Open browser history.",
   downloads: "Open browser downloads.",

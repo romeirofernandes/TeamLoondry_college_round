@@ -190,7 +190,7 @@ describe("background command and permission boundary", () => {
   it("opens a new tab from ordinary phrasing without selecting a page target", async () => {
     const { browser, send } = await setup();
     await send({ type: "HEARD", text: "open a fresh tab please" });
-    expect(browser.tabs.create).toHaveBeenCalledWith({ url: "about:blank" });
+    expect(browser.tabs.create).toHaveBeenCalledWith({ active: true, windowId: 1 });
   });
   it("accepts configurable resume speech while paused and ignores other speech", async () => {
     const { browser, send } = await setup({ settings: { pausePhrase: "take a break", resumePhrase: "carry on" } });
@@ -253,37 +253,51 @@ describe("background command and permission boundary", () => {
     );
   });
 
-  it("only closes the requested tab after a separate confirmation", async () => {
+  it("closes the current tab immediately without a separate confirmation", async () => {
     const { browser, send } = await setup();
-    await send({ type: "HEARD", text: "close tab" });
-    expect(browser.tabs.remove).not.toHaveBeenCalled();
-    await send({ type: "HEARD", text: "confirm" });
+    await send({ type: "HEARD", text: "close the tab" });
     expect(browser.tabs.remove).toHaveBeenCalledExactlyOnceWith(1);
     await send({ type: "HEARD", text: "confirm" });
     expect(browser.tabs.remove).toHaveBeenCalledTimes(1);
   });
 
-  it("does not close after confirmation expires", async () => {
+  it("does not close tabs while paused or stopped", async () => {
     const { browser, send } = await setup();
+    await send({ type: "PAUSE" });
+    await send({ type: "HEARD", text: "close the tab" });
+    await send({ type: "STOP" });
     await send({ type: "HEARD", text: "close tab" });
-    vi.setSystemTime(11001);
-    await send({ type: "HEARD", text: "confirm" });
     expect(browser.tabs.remove).not.toHaveBeenCalled();
-    expect((await send({ type: "GET_STATE" })).feedback).toContain("expired");
   });
 
-  it("cancels tab close on a target change, pause, and explicit cancel", async () => {
+  it("opens the spoken new-tab query locally, even on a supported site", async () => {
+    const { browser, send, fetch } = await setup({ jevKey: "fixture-jev" });
+    const original = browser.tabs.sendMessage.getMockImplementation()!;
+    browser.tabs.sendMessage.mockImplementation(async (id, message) => {
+      if (message.type === "GET_SITE_CONTEXT") return { site: "github", capabilities: [] } as any;
+      return original(id, message);
+    });
+    await send({ type: "HEARD", text: "open a new tab with phones under 30k" });
+    expect(browser.tabs.create).toHaveBeenCalledExactlyOnceWith({
+      url: "https://www.google.com/search?q=phones%20under%2030k", active: true, windowId: 1,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["PAUSE", "STOP", "target-change"])("does not close a stale target after %s during a tab read", async change => {
     const { browser, send } = await setup();
-    await send({ type: "HEARD", text: "close tab" });
-    await send({ type: "START", tabId: 2 });
-    await send({ type: "HEARD", text: "confirm" });
-    await send({ type: "HEARD", text: "close tab" });
-    await send({ type: "PAUSE" });
-    await send({ type: "RESUME" });
-    await send({ type: "HEARD", text: "confirm" });
-    await send({ type: "HEARD", text: "close tab" });
-    await send({ type: "HEARD", text: "cancel" });
-    await send({ type: "HEARD", text: "confirm" });
+    let release!: () => void;
+    const original = browser.tabs.query.getMockImplementation()!;
+    const waiting = new Promise<void>(resolve => browser.tabs.query.mockImplementation(() => {
+      resolve();
+      return new Promise(resolver => { release = () => { void original().then(resolver); }; });
+    }));
+    const closing = send({ type: "HEARD", text: "close the tab" });
+    await waiting;
+    if (change === "target-change") await send({ type: "START", tabId: 2 });
+    else await send({ type: change as "PAUSE" | "STOP" });
+    release();
+    await closing;
     expect(browser.tabs.remove).not.toHaveBeenCalled();
   });
 
@@ -661,7 +675,7 @@ describe('final speech routing regressions', () => {
     await send({ type: 'HEARD', text: 'scroll down' });
     await send({ type: 'HEARD', text: 'search for accessible design in a new tab in background' });
     expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'scroll', direction: 'down' } });
-    expect(browser.tabs.create).toHaveBeenCalledWith({ url: 'https://www.google.com/search?q=accessible%20design', active: false });
+    expect(browser.tabs.create).toHaveBeenCalledWith({ url: 'https://www.google.com/search?q=accessible%20design', active: false, windowId: 1 });
     expect(fetch).not.toHaveBeenCalled();
   });
   it('clicks immediately during provider work and suppresses its stale action', async () => {

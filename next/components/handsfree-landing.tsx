@@ -79,7 +79,7 @@ const faq = [
   {
     question: "What can I say?",
     answer:
-      "Core commands include “scroll up,” “scroll down,” “go back,” “go forward,” “click this,” “open this,” “start typing,” and “stop typing.” Tab commands cover new tabs, background searches, next or previous tab, switching by title, and Chrome history, downloads, settings, or incognito. Closing a tab requires confirmation. Jev can map other command phrases when configured. Say “hey handsfree” before a request to use Groq. Unrecognized requests show what was heard and take no action.",
+      "Core commands include “scroll up,” “scroll down,” “go back,” “go forward,” “click this,” “open this,” “start typing,” and “stop typing.” Tab commands cover new tabs, background searches, next or previous tab, switching by title, and Chrome history, downloads, settings, or incognito. Closing a tab acts immediately. New tab opens Chrome’s normal New Tab page. Say “open a new tab with phones under 30k” to open search results. Jev can map other command phrases when configured. Say “hey handsfree” before a request to use Groq. Unrecognized requests show what was heard and take no action.",
   },
   {
     question: "How does “hey handsfree, find careers” work?",

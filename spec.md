@@ -24,7 +24,7 @@ Handsfree, a Chrome extension only with no backend and no OS control. It moves a
 12. As a user, I want to say click this or open this on the snapped target, so that voice plus cursor combine.
 13. As a user, I want scroll by voice plus edge hold, so that I can read long pages.
 14. As a user, I want fixed commands for scroll up, scroll down, go back, go forward, click this, open this, start typing, stop typing, so that core moves stay deterministic.
-15. As a user, I want tab voice for new tab, background search, next tab, previous tab, close tab with confirm, go to named tab, open incognito, open history, open downloads, open settings, so that tab work stays handsfree.
+15. As a user, I want tab voice for new tab, background search, next tab, previous tab, close tab immediately, go to named tab, open incognito, open history, open downloads, open settings, so that tab work stays handsfree.
 16. As a user, I want arbitrary find like find careers page to scan live DOM even outside viewport, scroll plus highlight the match, ask on ties, do nothing on no match, so that it never guesses in silence.
 17. As a user, I want unknown phrases to show what was heard with no action, so that errors are clear.
 18. As a user, I want dictation that only inserts text and never fires commands, with clear on state, explicit stop, manual corrections for now, separate confirm for submit, so that typing stays safe.
@@ -46,7 +46,7 @@ Handsfree, a Chrome extension only with no backend and no OS control. It moves a
 - Speech seam: one recognizer adapter behind an interface, Web Speech API for v1, text normalize plus alias match for fixed, LLM path only for arbitrary, dictation text never routes to commands.
 - Intent seam: fixed parser deterministic, tab plus arbitrary behind same interface so new phrases add without rework, arbitrary rank by text plus accessible name.
 - Browser seam: content script owns overlay plus snappy plus hit test plus dwell plus scroll plus focus plus insert, background service worker owns tab reads plus switches plus LLM fetch to keep page CORS clean, settings plus calibration in chrome storage local.
-- Safety seam: one gate checks confidence plus dwell time plus pause state before any activate, sensitive submit needs separate confirm, close tab needs confirm.
+- Safety seam: one gate checks confidence plus dwell time plus pause state before any activate, sensitive submit needs separate confirm, close tab acts immediately.
 - Snappy shape follows react grab primitives idea: point hit test with grabbable filter for links plus buttons plus inputs plus interactives, outline plus label, ignore flag on overlay subtree.
 - Calibration rule: neutral plus range set once, dead zone middle, One Euro smoothing, slow drift adapt, one click recalibrate.
 - Permission order: camera plus mic first with preview, tab read on first tab or find use, deny keeps voice only path.
@@ -67,5 +67,5 @@ Handsfree, a Chrome extension only with no backend and no OS control. It moves a
 ## Further notes
 
 - Keys live local only, arbitrary off without key with message.
-- Tab close plus form submit always need confirm.
+- Form submit always needs confirm. Tab close acts immediately.
 - Popup content locked for now with freedom to alter when needed: start plus stop, camera plus mic status plus preview, calibrate plus recalibrate, sensitivity plus dwell sliders, voice plus dictation status plus last heard, error text with fix hints.

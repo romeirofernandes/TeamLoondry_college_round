@@ -13,6 +13,23 @@ describe("explicit arbitrary request prefix", () => {
   });
 });
 
+describe("tab commands", () => {
+  it.each([
+    ["close the tab", { type: "close-tab" }],
+    ["please close the current tab", { type: "close-tab" }],
+    ["open a new tab with phones under 30k", { type: "search", query: "phones under 30k", background: false }],
+    ["open a new tab and search for phones under 30k", { type: "search", query: "phones under 30k", background: false }],
+    ["new tab with a search for phones under 30k", { type: "search", query: "phones under 30k", background: false }],
+    ["open a new tab with phones under 30k in background", { type: "search", query: "phones under 30k", background: true }],
+    ["switch tabs", { type: "next-tab" }],
+    ["switch to the next tab", { type: "next-tab" }],
+    ["go to the second tab", { type: "indexed-tab", index: 2 }],
+    ["go to the Gmail tab", { type: "named-tab", name: "gmail" }],
+  ])("parses %s", (text, intent) => {
+    expect(parseIntent(text as string)).toEqual(intent);
+  });
+});
+
 describe("fixed speech and explicit query commands", () => {
   it.each([
     [" Scroll DOWN! ", { type: "scroll", direction: "down" }],

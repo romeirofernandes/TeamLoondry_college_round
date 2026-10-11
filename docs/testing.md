@@ -64,7 +64,7 @@ Use non-sensitive sample forms. Browser compatibility limits described in README
 
 For each task, mark task start, perform a defined task, then mark task complete. Record selection errors and accidental activations using the annotation buttons. Export each run before clearing the log.
 
-A task might be: open a link, find an offscreen target, enter a sentence, submit with confirmation, switch to a named tab, and close that tab with confirmation.
+A task might be: open a link, find an offscreen target, enter a sentence, submit with confirmation, switch to a named tab, and close that tab immediately. Also open a normal new tab, say “search for phones under 30k,” and try “open a new tab with phones under 30k.”
 
 Report:
 

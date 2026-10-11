@@ -318,5 +318,5 @@ test("bounded plans stop at a confirmation and cancellation leaves the fixture u
 
 test("explicit new-tab commands outrank broad site open rules",async()=>{
  await open('github');const count=context.pages().length;await heard('open a fresh tab');await expect.poll(()=>context.pages().length).toBe(count+1);
- const created=context.pages().find(p=>p!==page&&p!==controls&&p.url()==='about:blank');expect(created).toBeTruthy();await created!.close();
+ const created=context.pages().find(p=>p!==page&&p!==controls&&/^chrome:\/\/(?:newtab|new-tab-page)\//.test(p.url()));expect(created).toBeTruthy();await created!.close();
 });

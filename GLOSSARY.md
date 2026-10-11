@@ -27,7 +27,7 @@ The titles of the user's open tabs available for choosing a tab by name.
 Spoken words inserted as text into an editable field.
 
 **Confirmation**:
-A separate deliberate approval of a pending form submission or tab close.
+A separate deliberate approval of a pending form submission. Tab closing acts immediately.
 
 **Broad hand hold**:
 A steady hand position used to confirm a target without requiring a pinch.

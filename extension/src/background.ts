@@ -70,7 +70,6 @@ function jevOptions() {
 function isDashboard(url?: string) {
   try { const candidate = new URL(url || ""); const configured = new URL(settings.dashboardUrl); return candidate.origin === configured.origin && candidate.pathname === configured.pathname; } catch { return false; }
 }
-let pendingClose: { id: number; expires: number } | null = null;
 let tabChoices: number[] = [];
 const tabActivations = new Map<number, symbol>();
 let lastTrackingLog = 0;
@@ -158,8 +157,9 @@ async function attach(tabId: number) {
     const tab = await chrome.tabs.get(tabId);
     if (!supported(tab.url)) {
       await publish({
-        feedback:
-          "This is a protected browser page. Handsfree controls supported HTTP or HTTPS webpages only.",
+        feedback: /^chrome:\/\/(?:newtab|new-tab-page)(?:\/|$)/.test(tab.url ?? tab.pendingUrl ?? "")
+          ? 'New tab ready. Say "search for" followed by your query, or use the address bar.'
+          : "This is a protected browser page. Handsfree controls supported HTTP or HTTPS webpages only.",
       });
       return false;
     }
@@ -189,7 +189,6 @@ async function target(tabId: number) {
       dictating: false,
       settings: pageSettings(),
     });
-  pendingClose = null;
   tabChoices = [];
   await publish({ targetTabId: tabId, dictating: false, confidence: 0 });
   await attach(tabId);
@@ -223,7 +222,6 @@ async function stop() {
   ++planToken; planDestination=null;
   activeProvider?.abort();
   pageRevision++;
-  pendingClose = null;
   tabChoices = [];
   gesturePreviewFrame = null;
   record("run-stop");
@@ -254,7 +252,6 @@ async function pause() {
   ++planToken; planDestination=null;
   activeProvider?.abort();
   pageRevision++;
-  pendingClose = null;
   tabChoices = [];
   gesturePreviewFrame = null;
   record("pause");
@@ -355,21 +352,25 @@ async function needTabs() {
   return true;
 }
 async function tabAction(intent: Intent, current: () => boolean) {
-  if (await needTabs() || !current()) return;
+  const revision = pageRevision;
+  const targetId = state.targetTabId;
+  const valid = () => current() && revision === pageRevision && state.running && !state.paused && state.targetTabId === targetId;
+  if (await needTabs() || !valid()) return;
   const tabs = await chrome.tabs.query({});
-  if (!current()) return;
+  if (!valid()) return;
   const browse = tabs.filter(
-    (t) => !dashboardTabs.has(t.id ?? -1) && t.id !== controllerTabId && t.id !== undefined,
+    (t) => !dashboardTabs.has(t.id ?? -1) && t.id !== controllerTabId && t.id !== undefined && !t.url?.startsWith(chrome.runtime.getURL("")),
   );
   switch (intent.type) {
     case "new-tab":
-      await chrome.tabs.create({ url: "about:blank" });
+      await chrome.tabs.create({ active: true, windowId: browse.find(t => t.id === targetId)?.windowId });
       break;
     case "search":
       await chrome.tabs.create({
         url:
           "https://www.google.com/search?q=" + encodeURIComponent(intent.query),
         active: !intent.background,
+        windowId: browse.find(t => t.id === targetId)?.windowId,
       });
       break;
     case "next-tab":
@@ -381,7 +382,7 @@ async function tabAction(intent: Intent, current: () => boolean) {
         state.targetTabId ?? -1,
         intent.type === "next-tab" ? "next" : "previous",
       );
-      if (id != null) await activateTab(id, current);
+      if (id != null) await activateTab(id, valid);
       break;
     }
     case "show-tabs": {
@@ -413,7 +414,7 @@ async function tabAction(intent: Intent, current: () => boolean) {
         await publish({ feedback: `There is no tab ${intent.index} in this window.` });
         break;
       }
-      await activateTab(selected.id, current);
+      await activateTab(selected.id, valid);
       break;
     }
     case "named-tab": {
@@ -433,20 +434,17 @@ async function tabAction(intent: Intent, current: () => boolean) {
               .join("; ") +
             ". Say choose one, choose two, or cancel.",
         });
-      } else await activateTab(Number(matches.ids[0]), current);
+      } else await activateTab(Number(matches.ids[0]), valid);
       break;
     }
     case "close-tab":
-      if (state.targetTabId === null) break;
-      pendingClose = { id: state.targetTabId, expires: Date.now() + 10000 };
-      await publish({
-        feedback: "Close this tab? Say confirm within 10 seconds, or cancel.",
-      });
-      record("confirmation-request");
+      if (targetId === null || !browse.some(t => t.id === targetId)) break;
+      await chrome.tabs.remove(targetId);
+      record("tab-close");
       break;
     case "incognito": {
       const allowed = await chrome.extension.isAllowedIncognitoAccess();
-      if (!current()) return;
+      if (!valid()) return;
       if (allowed)
         await chrome.windows.create({ incognito: true });
       else
@@ -676,7 +674,6 @@ async function action(intent: Intent, current: () => boolean = () => true) {
       await action({ type: "choose", index: intent.command.index }, current);
       return;
     }
-    pendingClose = null;
     const command = intent.command;
     if (("query" in command && command.query.length > 500) ||
         ("option" in command && command.option.length > 1000) ||
@@ -696,24 +693,9 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     ++planToken; planDestination=null;
     await page({type:"SITE_DIALOGUE",text:"cancel"});
     linkAuthorizationRevision++;
-    pendingClose = null;
     tabChoices = [];
     await page({ type: "PAGE_ACTION", intent });
     await publish({ feedback: "Cancelled." });
-    return;
-  }
-  if (intent.type === "confirm" && pendingClose) {
-    const pending = pendingClose;
-    pendingClose = null;
-    if (pending.expires < Date.now() || pending.id !== state.targetTabId) {
-      await publish({
-        feedback:
-          "Confirmation expired or the target tab changed. Nothing closed.",
-      });
-      return;
-    }
-    await chrome.tabs.remove(pending.id);
-    record("tab-close");
     return;
   }
   if (intent.type === "choose" && tabChoices.length) {
@@ -726,7 +708,6 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     await activateTab(id, current);
     return;
   }
-  pendingClose = null;
   if (
     [
       "new-tab",
@@ -929,6 +910,13 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
   const wakeForm = wake === null ? null : parseFormCommand(wake);
   if (parsed.type === "form-command" || wakeForm) {
     await action(wakeForm ? { type: "form-command", command: wakeForm } : parsed, current);
+    return;
+  }
+  // Explicit tab commands stay local even on sites with their own navigation rules.
+  if (["new-tab", "next-tab", "previous-tab", "show-tabs", "indexed-tab", "close-tab"].includes(parsed.type)
+    || parsed.type === "named-tab" && (!conversation?.site || /\btab\b/i.test(text))
+    || parsed.type === "search" && (parsed.background || /\b(?:new|fresh|blank) tab\b/i.test(text))) {
+    await action(parsed, current);
     return;
   }
   const openSite = /^(?:open|take me to) (wikipedia|github|reddit|amazon|spotify|netflix|youtube|chatgpt|chat gpt|ai chat|x|twitter|whatsapp|gmail|google meet|meet|linkedin|irctc|google maps|maps)$/i.exec(text.trim().replace(/[.!?]+$/,""));
@@ -1207,7 +1195,6 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
         linkAuthorizationRevision++;
         ++planToken;
         planDestination = null;
-        pendingClose = null;
         tabChoices = [];
         await publish({ confidence: 0, calibrationProgress: null, calibrationStage: "", calibrationSnapshots: {}, ...(!inputMethods(settings).includes("voice") ? { dictating: false, interimTranscript: "" } : {}) });
       }
@@ -1398,7 +1385,6 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
     if (change.status === "loading") {
       activeProvider?.abort();
       pageRevision++;
-      pendingClose = null;
       tabChoices = [];
       await publish({ dictating: false, confidence: 0 });
     }
@@ -1412,7 +1398,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     if (tabId === state.targetTabId) {
       activeProvider?.abort();
       pageRevision++;
-      pendingClose = null;
       await publish({ targetTabId: null, dictating: false, confidence: 0 });
     }
   });
@@ -1428,7 +1413,6 @@ chrome.permissions.onAdded?.addListener(() => {
 });
 chrome.permissions.onRemoved?.addListener(() => {
   void ready.then(async () => {
-    pendingClose = null;
     tabChoices = [];
     activeProvider?.abort();
     pageRevision++;

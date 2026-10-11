@@ -1558,11 +1558,12 @@ export function HandsfreeDashboard() {
                 />
                 <CommandList
                   items={[
-                    ["New tab", "Open a fresh tab"],
+                    ["New tab", "Open Chrome’s New Tab page. Say search for, followed by your query"],
                     ["Next tab", "Move to the next tab"],
                     ["Previous tab", "Move to the previous tab"],
                     ["Go to Wikipedia", "Switch to a matching title"],
-                    ["Close tab", "Ask to close, then say confirm"],
+                    ["Close tab", "Close the current tab immediately"],
+                    ["Open a new tab with phones under 30k", "Open search results for phones under 30k"],
                     ["Search for jazz", "Search in a new tab"],
                     [
                       "Background search for jazz",
@@ -1572,7 +1573,7 @@ export function HandsfreeDashboard() {
                   ]}
                 />
                 <p className="dashboard-hint">
-                  Closing a tab always needs confirmation. Chrome settings pages
+                  Closing a tab acts immediately. Chrome settings pages
                   and the Web Store cannot use the pointer overlay.
                 </p>
               </section>
