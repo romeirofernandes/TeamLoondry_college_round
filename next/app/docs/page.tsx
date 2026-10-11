@@ -113,6 +113,9 @@ export default function DocsPage() {
       <header className="docs-header">
         <BrandLogo href="/" />
         <div className="docs-header-actions">
+          <a href="/benchmark">
+            Benchmark report <ArrowUpRight aria-hidden="true" />
+          </a>
           <a href="/dashboard">
             Open Handsfree <ArrowUpRight aria-hidden="true" />
           </a>
