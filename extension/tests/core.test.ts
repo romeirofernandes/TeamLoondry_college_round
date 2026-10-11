@@ -42,7 +42,7 @@ describe("fixed speech and explicit query commands", () => {
     ["stop typing", { type: "stop-typing" }],
     ["confirm", { type: "confirm" }],
     ["cancel", { type: "cancel" }],
-    ["submit form", { type: "submit" }],
+    ["submit form", { type: "form-command", command: { type: "submit" } }],
     ["pause handsfree", { type: "pause" }],
     ["resume handsfree", { type: "resume" }],
     ["stop handsfree", { type: "stop" }],
@@ -72,7 +72,7 @@ describe("fixed speech and explicit query commands", () => {
       "search for gardening",
       { type: "search", query: "gardening", background: false },
     ],
-    ["choose two", { type: "choose", index: 2 }],
+    ["choose two", { type: "form-command", command: { type: "choose", index: 2 } }],
   ])("parses %s deterministically", (phrase, intent) => {
     expect(parseIntent(phrase)).toEqual(intent);
   });

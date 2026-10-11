@@ -187,6 +187,18 @@ test("dictation words do not navigate; submission requires confirmation", async 
   await heard("start typing");
   expect((await message({ type: "GET_STATE" })).dictating).toBe(false);
 });
+test("merged form commands keep literal answers local and out of stored transcripts", async () => {
+  await heard("fill Notes with Case Sensitive Answer");
+  await expect(page.locator("#notes")).toHaveValue("Case Sensitive Answer");
+  await heard("hey handsfree change Notes to Another Literal Answer");
+  await expect(page.locator("#notes")).toHaveValue("Another Literal Answer");
+  expect((await message({ type: "GET_STATE" })).lastHeard).toBe("Form command");
+  const stored = await worker.evaluate(async () => JSON.stringify(await chrome.storage.session.get("state")));
+  expect(stored).not.toContain("Case Sensitive Answer");
+  expect(stored).not.toContain("Another Literal Answer");
+  await expect(page.locator("#submissions")).toHaveText("0");
+});
+
 test("low confidence and pause block activation; escape pauses immediately", async () => {
   await point("#count", 0);
   await heard("click this");

@@ -782,6 +782,18 @@ describe('provider cancellation ordering', () => {
 });
 
 describe('local tab switching', () => {
+  it('keeps numbered tab choices available alongside local form choices', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    browser.tabs.query.mockResolvedValue([
+      { id: 1, windowId: 1, index: 0, url: 'https://example.test/', title: 'Inbox' },
+      { id: 2, windowId: 1, index: 1, url: 'https://example.test/inbox', title: 'Inbox' },
+    ]);
+    await send({ type: 'HEARD', text: 'switch to tab Inbox' });
+    expect((await send({ type: 'GET_STATE' })).feedback).toContain('Choose a tab');
+    await send({ type: 'HEARD', text: 'choose two' });
+    expect(browser.tabs.update).toHaveBeenCalledWith(2, { active: true });
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it('switches next, previous and named tabs with Jev offline', async () => {
     const { browser, send, fetch } = await setup({ jevKey: 'fixture-jev' });
     fetch.mockRejectedValue(new Error('offline'));
@@ -811,6 +823,33 @@ describe('local tab switching', () => {
     await send({ type: 'HEARD', text: 'go to tab three' });
     expect(browser.tabs.update).toHaveBeenCalledWith(3, { active: true });
     expect((await send({ type: 'GET_STATE' })).targetTabId).toBe(3);
+  });
+});
+
+describe('merged local form routing', () => {
+  it.each(['fill Name with Case Sensitive Answer', 'hey handsfree fill Name with Case Sensitive Answer'])('keeps %s local and redacts the stored answer', async text => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq', jevKey: 'fixture-jev' });
+    await send({ type: 'HEARD', text });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, {
+      type: 'PAGE_ACTION', intent: { type: 'form-command', command: { type: 'fill', query: 'Name', value: 'Case Sensitive Answer' } },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect((await send({ type: 'GET_STATE' })).lastHeard).toBe('Form command');
+    expect(JSON.stringify(browser.storage.session.set.mock.calls)).not.toContain('Case Sensitive Answer');
+  });
+
+  it('preserves site choices instead of sending them to disabled generic form controls', async () => {
+    const { browser, send, fetch } = await setup({ key: 'fixture-groq' });
+    const original = browser.tabs.sendMessage.getMockImplementation()!;
+    browser.tabs.sendMessage.mockImplementation(async (id, message) => {
+      if (message.type === 'GET_SITE_CONTEXT') return { site: 'github', capabilities: [] } as any;
+      if (message.type === 'SITE_DIALOGUE') return { state: 'verified', feedback: 'Site choice selected.' } as any;
+      return original(id, message);
+    });
+    await send({ type: 'HEARD', text: 'choose two' });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'SITE_DIALOGUE', text: 'choose 2' });
+    expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: 'PAGE_ACTION', intent: { type: 'form-command', command: { type: 'choose', index: 2 } } });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 

@@ -908,8 +908,13 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
   if (isCancellation(text)) { await action({type:"cancel"},current); return; }
   const wake = wakeRequest(originalText);
   const wakeForm = wake === null ? null : parseFormCommand(wake);
-  if (parsed.type === "form-command" || wakeForm) {
-    await action(wakeForm ? { type: "form-command", command: wakeForm } : parsed, current);
+  const formCommand = parsed.type === "form-command" ? parsed.command : wakeForm;
+  if (formCommand?.type === "choose" && conversation?.site && !tabChoices.length) {
+    // Site adapters own their numbered choices; generic forms are disabled there.
+    parsed = { type: "choose", index: formCommand.index };
+    text = `choose ${formCommand.index}`;
+  } else if (formCommand) {
+    await action({ type: "form-command", command: formCommand }, current);
     return;
   }
   // Explicit tab commands stay local even on sites with their own navigation rules.
