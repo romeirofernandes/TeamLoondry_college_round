@@ -893,51 +893,61 @@ export class SiteExecutor {
         navigate: { url: new URL(path, s.url).href, newTab: false },
       });
     }
-    if (spec.id === "WA01" && a.query && !request.entityId &&
-      !s.entities.some(e => e.kind === "chat" && norm(e.label) === norm(a.query!))) {
+    if (spec.id === "WA01" && a.query && !request.entityId) {
       const inputs = elements(
         '#side [contenteditable="true"][role="textbox"],#pane-side input[aria-label="Search chats"],#side input[aria-label="Search chats"],#side [aria-label="Search input textbox"],input[aria-label="Search or start a new chat"],[role="textbox"][aria-label="Search or start a new chat"],#side input[placeholder*="Search"],#side [contenteditable="true"][data-tab="3"]',
       ).filter(editable);
-      if (inputs.length !== 1 || !editable(inputs[0]))
+      const visibleExactMatch = s.entities.some(
+        (entity) =>
+          entity.kind === "chat" && norm(entity.label) === norm(a.query!),
+      );
+      if (inputs.length === 0 && visibleExactMatch) {
+        // Minimal layouts can open an exact visible match without search.
+      } else if (inputs.length !== 1) {
         return result(
           "unavailable",
           "The chat-search field is unavailable. Only rendered chats can be selected here.",
         );
-      const input = inputs[0];
-      input.focus();
-      if (input instanceof HTMLInputElement) setInput(input, a.query);
-      else {
-        const range = document.createRange();
-        range.selectNodeContents(input);
-        getSelection()?.removeAllRanges();
-        getSelection()?.addRange(range);
-        insertText(input, a.query);
+      } else {
+        const input = inputs[0];
+        input.focus();
+        if (input instanceof HTMLInputElement) setInput(input, a.query);
+        else {
+          const range = document.createRange();
+          range.selectNodeContents(input);
+          getSelection()?.removeAllRanges();
+          getSelection()?.addRange(range);
+          insertText(input, a.query);
+        }
+        let signature = "", stableSince = performance.now();
+        const started = stableSince;
+        const settled = await until(() => {
+          const chats =
+            this.context.inspect()?.entities.filter((entity) => entity.kind === "chat") ||
+            [];
+          const next = chats.map((entity) => entity.id + ":" + entity.label).join("|");
+          if (next !== signature) {
+            signature = next;
+            stableSince = performance.now();
+          }
+          return (
+            performance.now() - started >= 400 &&
+            performance.now() - stableSince >= 200 &&
+            !elements('#side [aria-busy="true"],#pane-side [aria-busy="true"]').length &&
+            chats.some((entity) => norm(entity.label).includes(norm(a.query!)))
+          );
+        }, valid, 8000);
+        if (!settled)
+          return result(
+            "unavailable",
+            "The chat search did not settle. No chat was opened.",
+          );
+        const refreshed = this.context.inspect();
+        if (!valid() || !refreshed)
+          return result("unavailable", "The chat-search request was cancelled.");
+        s = refreshed;
+        request = { ...request, revision: refreshed.revision };
       }
-      let signature = "", stableSince = performance.now();
-      const started = stableSince;
-      const settled = await until(() => {
-        const chats =
-          this.context.inspect()?.entities.filter((e) => e.kind === "chat") ||
-          [];
-        const next = chats.map(e => e.id + ":" + e.label).join("|");
-        if(next !== signature){signature=next;stableSince=performance.now();}
-        return (
-          performance.now()-started >= 400 && performance.now()-stableSince >= 200 &&
-          !elements('#side [aria-busy="true"],#pane-side [aria-busy="true"]')
-            .length &&
-          chats.some((e) => norm(e.label).includes(norm(a.query!)))
-        );
-      }, valid, 8000);
-      if (!settled)
-        return result(
-          "unavailable",
-          "The chat search did not settle. No chat was opened.",
-        );
-      const refreshed = this.context.inspect();
-      if (!valid() || !refreshed)
-        return result("unavailable", "The chat-search request was cancelled.");
-      s = refreshed;
-      request = { ...request, revision: refreshed.revision };
     }
     if (spec.id === "G08") {
       const query = a.query;

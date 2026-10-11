@@ -1,7 +1,7 @@
 # Private password entry and password-manager popup access
 
 Date: 2026-10-11
-Status: proposed design for review; product implementation has not started
+Status: approved by user; implemented locally with automated verification. Physical native-popup qualification remains a target-Mac check.
 Execution: directly in the existing main checkout, without subagents. Preserve existing local changes. Do not push this feature without the user's later approval.
 
 ## User goal and agreed requirements

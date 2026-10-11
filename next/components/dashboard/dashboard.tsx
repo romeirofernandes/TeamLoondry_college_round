@@ -954,7 +954,7 @@ export function HandsfreeDashboard() {
                         description="Five guided captures in 15 seconds. Each mode saves its own comfortable movement range."
                       />
                       <CameraPreview
-                        running={running && !settings.voiceOnly}
+                        running={running && !settings.voiceOnly && !state.privateInput}
                         voiceOnly={settings.voiceOnly}
                       />
                       <Calibration state={state} />
@@ -1271,7 +1271,7 @@ export function HandsfreeDashboard() {
                   <details className="dashboard-disclosure dashboard-preview-disclosure">
                     <summary>Camera preview</summary>
                     <CameraPreview
-                      running={running && !settings.voiceOnly}
+                      running={running && !settings.voiceOnly && !state.privateInput}
                       voiceOnly={settings.voiceOnly}
                     />
                   </details>

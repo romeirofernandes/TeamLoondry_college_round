@@ -42,7 +42,7 @@ function Popup() {
     let stream: MediaStream | null = null;
     setPreview(false);
     setPreviewError("");
-    if (!state.running || state.voiceOnly) return;
+    if (!state.running || state.voiceOnly || state.privateInput) return;
     void navigator.mediaDevices
       .getUserMedia({
         video: { width: { ideal: 480 }, height: { ideal: 300 } },
@@ -66,7 +66,7 @@ function Popup() {
       stream?.getTracks().forEach((track) => track.stop());
       if (video.current) video.current.srcObject = null;
     };
-  }, [state.running, state.voiceOnly, retry]);
+  }, [state.running, state.voiceOnly, state.privateInput, retry]);
 
   async function run(work: () => Promise<unknown>) {
     if (busy) return;
@@ -88,6 +88,7 @@ function Popup() {
     }
   }
   async function start() {
+    if(state.privateInput){await send({type:"START"});return;}
     const release=await captureCheck();
     try{
     // These prompts belong to this extension origin. A denied camera must not block microphone access.
@@ -134,7 +135,7 @@ function Popup() {
           {state.running ? (state.paused ? "Paused" : "Running") : "Ready"}
         </span>
       </header>
-      {state.running && !state.voiceOnly && (
+      {state.running && !state.voiceOnly && !state.privateInput && (
         <div className="camera-preview">
           <video
             ref={video}
@@ -205,7 +206,7 @@ function Popup() {
         )}
       </div>
       <p className="feedback" role="status" aria-live="polite">
-        {notice || state.feedback}
+        {notice || (state.privateInput ? "Private entry: microphone off. Finish with the on-page keyboard, then choose Resume voice." : state.feedback)}
       </p>
       <button
         className="website-button"
