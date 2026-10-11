@@ -18,6 +18,7 @@ const topics = [
   ["commands", "Voice commands"],
   ["websites", "Supported websites"],
   ["how-it-works", "How commands work"],
+  ["architecture", "Architecture"],
   ["site-adapters", "Site adapters"],
 ];
 const commandGroups = [
@@ -333,6 +334,26 @@ export default function DocsPage() {
                 keep recognition local.
               </p>
             </details>
+          </section>
+          <section id="architecture" className="docs-section">
+            <h2>System architecture</h2>
+            <p>
+              Handsfree separates long-lived device capture, privileged browser
+              operations and webpage DOM interaction into Chrome extension
+              contexts. The service worker coordinates their typed messages;
+              the webpage runtime remains responsible for what it can safely
+              see and activate.
+            </p>
+            <p>
+              The technical reference documents the actual command lifecycle,
+              permissions, provider boundaries, trade-offs, tests and
+              preliminary benchmark context. It distinguishes source-verified
+              facts from engineering rationale and open questions.
+            </p>
+            <a className="docs-footer-link" href="/architecture">
+              Open system architecture &amp; technology decisions
+              <ArrowUpRight aria-hidden="true" />
+            </a>
           </section>
           <section id="site-adapters" className="docs-section">
             <h2>Inside the site adapters</h2>

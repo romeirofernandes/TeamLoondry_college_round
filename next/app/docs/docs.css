@@ -119,6 +119,20 @@
   font-size: 0.875em;
   overflow-wrap: anywhere;
 }
+.docs-footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin-top: 16px;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+.docs-footer-link svg {
+  width: 18px;
+  height: 18px;
+}
 .docs-steps {
   list-style: decimal;
   padding-inline-start: 24px;
