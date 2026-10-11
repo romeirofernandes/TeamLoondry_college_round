@@ -1,3 +1,5 @@
+import {readingPreferences} from "./reading/model";
+import { docsInput } from "./editing/docs-input";
 import {claimDesktop,releaseDesktop,connectDesktop,disconnectDesktop,paired,onDesktopLost} from "./desktop";
 import {uploadFile} from "./file-upload";
 import { parseSite, siteCandidates, unsafeSpeech, isCancellation, makeRequest, validateSiteRequest } from "./sites/language";
@@ -25,7 +27,7 @@ import { parseFormCommand, parseIntent, sessionIntent, wakeRequest } from "./cor
 import { mediaControl } from "./content/media";
 import { bundledProviders } from "./provider-config";
 import { rankTabs, rankTargets, adjacentTabId } from "./core/ranking";
-import { mapCommand, resolveAgentStep, resolveArbitrary, transcribeAudio, jevKeys } from "./providers";
+import { mapCommand, resolveAgentStep, resolveArbitrary, transcribeAudio, jevKeys, cleanRamble, resolveReadingRange } from "./providers";
 import { appendMetric, summarizeMetrics } from "./core/metrics";
 import { normalizeGesturePresets } from "./gestures";
 import type { GesturePreset, GestureRuntimeStatus } from "./shared";
@@ -33,6 +35,9 @@ import type { GesturePreset, GestureRuntimeStatus } from "./shared";
 let state: SessionState = { ...initialState };
 let settings: Settings = { ...defaults };
 let pageRevision = 0;
+let readingAudio = "";
+let zoomRecord: {tabId:number;url:string;before:number;after:number;settings:chrome.tabs.ZoomSettings}|null=null;
+let writingProposal:{text:string;expected:string;revision:number;binding:number}|null=null;
 let planToken = 0;
 let planDestination: string | null = null;
 let linkAuthorizationRevision = 0;
@@ -519,6 +524,7 @@ async function pageState(tabId = state.targetTabId) {
   return page(
     {
       type: "PAGE_STATE",
+      activityMode: state.activityMode, modeAutomatic: state.modeAutomatic,
       running: state.running,
       paused: state.paused,
       dictating: state.dictating,
@@ -574,7 +580,8 @@ async function target(tabId: number) {
       settings: pageSettings(),
     });
   tabChoices = [];
-  await publish({ targetTabId: tabId, dictating: false, confidence: 0 });
+  readingAudio=""; writingProposal=null; zoomRecord=null;
+  await publish({ targetTabId: tabId, dictating: false, confidence: 0, activityMode:"browsing", modeAutomatic:true, modeReason:"New tab. Waiting for deliberate task evidence." });
   await attach(tabId);
 }
 async function ensureOffscreen() {
@@ -1055,6 +1062,7 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     return;
   }
   if (!state.running || state.paused) return;
+  if(intent.type === "activity-mode" || intent.type === "reading-command" || intent.type === "writing-command"){await activityAction(intent,current);lastActionSucceeded=true;return;}
   if(intent.type==="upload-file"){if(state.targetTabId===null)return;const tab=state.targetTabId,revision=pageRevision;try{const result=await uploadFile(tab,()=>current()&&state.running&&!state.paused&&state.targetTabId===tab&&pageRevision===revision);await publish({feedback:result});}catch(e){await publish({feedback:e instanceof Error?e.message:String(e)});}return;}
   record(intent.type === "unknown" ? "command-unknown" : "command-recognized");
   record("command-" + intent.type);
@@ -1279,6 +1287,56 @@ async function voicePlan(steps: string[], snapshot: SiteSnapshot) {
   }
   if(valid())await publish({feedback:`Completed ${completed} verified steps.`});
 }
+async function chooseMode(mode:"reading"|"writing"|"browsing",automatic:boolean,reason:string){
+  if(state.activityMode!==mode){activeProvider?.abort();pageRevision++;writingProposal=null;readingAudio="";}
+  await publish({activityMode:mode,modeAutomatic:automatic,modeReason:reason,dictating:state.activityMode===mode?state.dictating:false,feedback:`${mode[0].toUpperCase()+mode.slice(1)} mode. ${reason}`});
+  await pageState();
+}
+async function activityAction(intent:Extract<Intent,{type:"activity-mode"|"reading-command"|"writing-command"}>,current:()=>boolean){
+  if(intent.type==="activity-mode"){
+    if(intent.mode==="auto"){await publish({modeAutomatic:true,modeReason:"Automatic detection enabled."});await pageState();return;}
+    await chooseMode(intent.mode,false,"Selected by you. Held until a clear new task.");
+    if(intent.mode==="writing"){const context=await page({type:"MODE_CONTEXT"});if(context?.longEditor||context?.docs?.editable)await action({type:"start-typing"});else await publish({feedback:"Writing mode selected. Choose a supported long-form editor, then say start dictation."});}
+    return;
+  }
+  if(intent.type==="reading-command"){
+    if(state.activityMode!=="reading")await chooseMode("reading",false,"Reading command selected.");
+    const tabId=state.targetTabId,revision=pageRevision;if(tabId===null)return;
+    const valid=()=>state.running&&!state.paused&&state.targetTabId===tabId&&pageRevision===revision;
+    if(intent.command.startsWith("zoom")){
+      const tab=await chrome.tabs.get(tabId),before=await chrome.tabs.getZoom(tabId),saved=await chrome.tabs.getZoomSettings(tabId);
+      if(!valid())return;
+      if(intent.command==="zoom-restore"){
+        if(!zoomRecord||zoomRecord.tabId!==tabId||zoomRecord.url!==tab.url||Math.abs(zoomRecord.after-before)>.001)throw new Error("The page or zoom changed. Your current zoom was preserved.");
+        await chrome.tabs.setZoom(tabId,zoomRecord.before);await chrome.tabs.setZoomSettings(tabId,zoomRecord.settings);zoomRecord=null;
+      }else{
+        const value=intent.command==="zoom"?intent.value!:Math.round((before+(intent.command==="zoom-in"?.25:-.25))*100)/100;
+        if(!Number.isFinite(value)||value<.5||value>3)throw new Error("Choose page zoom from 50 to 300 percent.");
+        await chrome.tabs.setZoomSettings(tabId,{mode:"automatic",scope:"per-tab"});if(!valid())return;await chrome.tabs.setZoom(tabId,value);
+        const after=await chrome.tabs.getZoom(tabId);if(Math.abs(after-value)>.001)throw new Error("The browser could not verify page zoom.");
+        if(!zoomRecord||zoomRecord.tabId!==tabId||zoomRecord.url!==tab.url)zoomRecord={tabId,url:tab.url||"",before,after,settings:saved};else zoomRecord.after=after;
+      }
+      await publish({feedback:`Page zoom ${Math.round((await chrome.tabs.getZoom(tabId))*100)} percent.`});await pageState();return;
+    }
+    const result=await page({type:"PAGE_ACTION",intent});
+    if(result?.complex){
+      const abort=new AbortController();activeProvider=abort;
+      try{const range=await resolveReadingRange(intent.text||"",result.text,groqOptions(),abort.signal);if(!valid())return;const selected=await page({type:"READ_SELECT",start:result.start+range.start,end:result.start+range.end,revision:result.revision});if(selected?.error)throw new Error(selected.error);await publish({feedback:"Highlighted the requested passage. Say read the selected passage."});}finally{if(activeProvider===abort)activeProvider=null;}
+    }else if(result?.error)throw new Error(result.error);
+    return;
+  }
+  if(intent.command==="verbatim"||intent.command==="cleaned"){await publish({writingVerbatim:intent.command==="verbatim",feedback:intent.command==="verbatim"?"Verbatim dictation. Cleanup is off.":"Cleaned dictation. Current segments may be processed by Groq."});return;}
+  if(!state.dictating)throw new Error("Start dictation in the editor before using writing corrections.");
+  if(intent.command==="paragraph"){const result=await page({type:"DICTATE",text:"\n\n"});if(result?.error)throw new Error(result.error);return;}
+  const revision=pageRevision,tab=state.targetTabId;const valid=()=>revision===pageRevision&&state.targetTabId===tab&&state.running&&!state.paused&&state.dictating;
+  if(intent.command==="readback"){const context=await page({type:"EDIT_CONTEXT"});if(!context?.text)throw new Error("No unchanged recent segment to read back.");await chrome.runtime.sendMessage({type:"SPEAK_FEEDBACK",text:context.text,enabled:true});return;}
+  if(intent.command==="rewrite"){
+    const context=await page({type:"EDIT_CONTEXT"});if(!context?.text)throw new Error("No unchanged recent segment to revise.");const abort=new AbortController();activeProvider=abort;
+    try{const text=await cleanRamble(context.text,groqOptions(),abort.signal,intent.instruction);if(!valid())return;writingProposal={text,expected:context.expected,revision,binding:context.binding};await page({type:"TRANSCRIPT",text:`Proposed revision: ${text}`,final:true});await publish({feedback:"Revision preview ready. Say apply revision or cancel revision."});}finally{if(activeProvider===abort)activeProvider=null;}
+    return;
+  }
+  const result=await page({type:"EDIT_APPLY",command:intent.command,from:intent.from,to:intent.to});if(result?.error)throw new Error(result.error);
+}
 /** Persist command state without retaining literal form answers or dictation. */
 function storedTranscript(text: string): string {
   if (state.dictating) return "Dictation";
@@ -1294,6 +1352,15 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
   if (revision !== pageRevision || !state.running || state.paused) return;
   await publish({ lastHeard: storedTranscript(text), interimTranscript: "" });
   if (revision !== pageRevision || !state.running || state.paused) return;
+  if(parsed.type==="activity-mode"||parsed.type==="reading-command"||parsed.type==="writing-command"){await activityAction(parsed,()=>revision===pageRevision);return;}
+  if(state.activityMode==="reading" && (parsed.type==="choose" || parsed.type==="form-command"&&parsed.command.type==="choose")){
+    const index=parsed.type==="choose"?parsed.index:(parsed as Extract<Intent,{type:"form-command"}>).command as {type:"choose";index:number};
+    const response=await page({type:"PAGE_ACTION",intent:{type:"reading-command",command:"choose",text:String(typeof index==="number"?index:index.index)}});
+    if(response?.ok)return;
+  }
+  if(state.activityMode==="reading" && parsed.type==="find"){await activityAction({type:"reading-command",command:"find",text:parsed.query},()=>revision===pageRevision);return;}
+  if(/^cancel revision[.!?]?$/i.test(text.trim())){writingProposal=null;await publish({feedback:"Revision cancelled. Your draft was preserved."});return;}
+  if(/^apply revision[.!?]?$/i.test(text.trim())){const p=writingProposal;if(!p||p.revision!==pageRevision)throw new Error("No current revision proposal.");const context=await page({type:"EDIT_CONTEXT"});if(context?.binding!==p.binding||context?.expected!==p.expected)throw new Error("The revision editor changed. Ask for the revision again.");writingProposal=null;const result=await page({type:"EDIT_APPLY",command:"revise",text:p.text,expected:p.expected});if(result?.error)throw new Error(result.error);return;}
   const conversation: SiteSnapshot | null = await page({type:"GET_SITE_CONTEXT"});
   if (revision !== pageRevision || !state.running || state.paused) return;
   if (conversation?.site === "meet" && conversation.meetingActive) {
@@ -1304,7 +1371,16 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
   }
   if (state.dictating && parsed.type !== "stop-typing") {
     const literal = text.toLowerCase().startsWith("literal ") ? text.slice(8) : text;
-    const result = await page({ type: "DICTATE", text: literal });
+    const context=await page({type:"EDIT_CONTEXT"});
+    const verbatim=state.writingVerbatim||/^literal /i.test(text);
+    let cleaned=literal;
+    if(state.activityMode==="writing"&&!verbatim){
+      const abort=new AbortController();activeProvider=abort;
+      try{cleaned=await cleanRamble(literal,groqOptions(),abort.signal);}finally{if(activeProvider===abort)activeProvider=null;}
+      if(revision!==pageRevision||!state.running||state.paused||!state.dictating)return;
+      await page({type:"TRANSCRIPT",text:cleaned,final:true});
+    }
+    const result = await page({ type: "DICTATE", text: cleaned, ...(context?.binding!==undefined?{binding:context.binding,expected:context.expected}:{}) });
     if (result?.error) await publish({ feedback: result.error });
     return;
   }
@@ -1431,12 +1507,31 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
   if (dashboard && !dashboardMessages.has(message.type)) return { ok: false, error: "This action is not available to the dashboard." };
   if (!trusted && sender.tab?.id !== state.targetTabId)
     return { ok: false, error: "Inactive page." };
-  if (!trusted && !["SET_STATE", "METRIC", "PAUSE"].includes(message.type))
+  if (!trusted && !["SET_STATE", "METRIC", "PAUSE", "MODE_EVIDENCE", "DOCS_INPUT", "READING_AUDIO", "READING_PREFERENCES"].includes(message.type))
     return {
       ok: false,
       error: "This message is reserved for extension controls.",
     };
   switch (message.type) {
+    case "READING_PREFERENCES": {
+      if(!internal&&(sender.frameId!==0||sender.tab?.id!==state.targetTabId))return {ok:false};
+      if(message.value!==undefined){const value=readingPreferences(message.value);await chrome.storage.local.set({readingPreferences:value});return value;}
+      return readingPreferences((await chrome.storage.local.get("readingPreferences")).readingPreferences);
+    }
+    case "MODE_EVIDENCE": {
+      if(trusted||sender.frameId!==0||!state.running||state.paused||!["browsing","reading","writing"].includes(message.mode)||![["writing","composition"],["reading","reading-interaction"],["browsing","navigation"]].some(([mode,reason])=>mode===message.mode&&reason===message.reason))return {ok:false};
+      const context=await page({type:"MODE_CONTEXT"});
+      if(message.mode==="writing"&&!context?.longEditor&&!(context?.docs?.editable&&context?.docs?.focused) || message.mode==="reading"&&!context?.reading)return {ok:false};
+      if(state.activityMode!==message.mode)await chooseMode(message.mode,true,"Clear new task interaction.");
+      if(message.mode==="writing"&&message.autoArm&&!state.dictating)await action({type:"start-typing"});return {ok:true};
+    }
+    case "READING_AUDIO": {if(sender.tab?.id!==state.targetTabId||sender.frameId!==0||!state.running||state.paused||state.activityMode!=="reading")return {ok:false};readingAudio=message.active?String(message.text).slice(0,8000):"";return {ok:true};}
+    case "DOCS_INPUT": {
+      if(trusted||sender.frameId!==0||!state.running||state.paused||!state.dictating||state.activityMode!=="writing"||typeof message.text!=="string"||message.text.length>6000||!["insert","scratch","restore"].includes(message.command))return {ok:false};
+      const tabId=state.targetTabId!,revision=pageRevision;const valid=()=>state.running&&!state.paused&&state.dictating&&state.activityMode==="writing"&&state.targetTabId===tabId&&revision===pageRevision;
+      const context=await page({type:"EDIT_CONTEXT"});if(!valid()||!context?.docs||context.binding!==message.generation||context.expected!==message.expected)return {ok:false,error:"Docs editor context changed."};
+      return docsInput(tabId,message.command,message.text,message.expected,message.url,valid);
+    }
     case "DESKTOP_CONNECT": return connectDesktop();
     case "DESKTOP_DISCONNECT": await stop();await disconnectDesktop();return {ok:true};
     case "DESKTOP_STATUS":return {paired:await paired()};
@@ -1750,6 +1845,11 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     case "HEARD": {
       if (!state.running) return { ok: true };
       const normalized = message.text.trim().toLowerCase().replace(/[.!?,]+$/, "");
+      if(readingAudio){
+        const allowed=/^(?:pause reading|resume reading|stop reading aloud|read slower|read faster|pause handsfree|stop handsfree)$/;
+        if(!allowed.test(normalized)||readingAudio.toLowerCase().includes(normalized))return {ok:true};
+      }
+      if(state.dictating&&parseIntent(message.text).type==="stop-typing"){activeProvider?.abort();pageRevision++;writingProposal=null;await action({type:"stop-typing"});return {ok:true};}
       const mediaScoped = !state.paused && !state.dictating && ((normalized === "pause" && settings.pausePhrase !== "pause") || (normalized === "resume" && settings.resumePhrase !== "resume"));
       const addressed = normalized === settings.pausePhrase || normalized === settings.resumePhrase || /^stop handsfree(?: and release (?:the )?microphone)?$/.test(normalized);
       const session = mediaScoped || state.dictating && !addressed ? null : sessionIntent(message.text, settings);

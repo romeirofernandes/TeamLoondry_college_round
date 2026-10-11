@@ -10,7 +10,8 @@
     "scripting",
     "offscreen",
     "tts",
-    "nativeMessaging"
+    "nativeMessaging",
+    "debugger"
   ],
   "optional_permissions": [
     "tabs"
@@ -50,5 +51,17 @@
       },
       "description": "Pause or resume Handsfree"
     }
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://docs.google.com/document/*"
+      ],
+      "js": [
+        "docs-bootstrap.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    }
+  ]
 }

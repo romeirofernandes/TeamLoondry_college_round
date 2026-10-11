@@ -1,3 +1,4 @@
+import { ModeGuide } from "./mode-guide";
 import type { Metadata } from "next";
 import { ArrowUpRight } from "@phosphor-icons/react/dist/ssr";
 import BrandLogo from "@/components/brand-logo";
@@ -16,6 +17,7 @@ export const metadata: Metadata = {
 const topics = [
   ["getting-started", "Get started"],
   ["commands", "Voice commands"],
+  ["activity-modes", "Task modes and highlighting"],
   ["websites", "Supported websites"],
   ["how-it-works", "How commands work"],
   ["site-adapters", "Site adapters"],
@@ -203,7 +205,7 @@ export default function DocsPage() {
               During dictation, ordinary speech becomes text. Say “stop typing”
               to finish. Your saved pause and resume phrases and “stop
               handsfree” still control the session. Writing recognition and
-              cleanup stay on-device.
+              cleanup follow your configured speech service and the Rambler cloud-processing rules below.
             </p>
             <p>
               Every general question or arbitrary request needs “hey handsfree”
@@ -211,6 +213,7 @@ export default function DocsPage() {
               enable later requests.
             </p>
           </section>
+          <ModeGuide />
           <section id="websites" className="docs-section">
             <div className="docs-section-title">
               <h2>Supported websites</h2>
@@ -320,7 +323,7 @@ export default function DocsPage() {
               <summary>What stays local and what can be shared</summary>
               <p>
                 Camera frames and pointer tracking stay on your device. Writing
-                uses on-device recognition and cleanup. Jev receives command
+                uses your selected recognition service and bounded Groq cleanup. Jev receives command
                 context such as language, tab titles and visible labels. Groq
                 page requests can include the page title, URL and public page
                 text; passwords, editable fields and Handsfree controls are

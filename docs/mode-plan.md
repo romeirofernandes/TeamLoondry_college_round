@@ -1,6 +1,155 @@
 # Reading, browsing, and writing mode plan
 
-Prepared 2026-10-10 for Handsfree. Status: detailed implementation proposal incorporating all primary mode and feature answers. Remaining items are optional refinements and implementation validation. This document adds no runtime behavior and makes no claim of tested mode detection or editor compatibility.
+Prepared 2026-10-10; implementation and verification updated 2026-10-11. This file now lives in `docs/`. The website's `/docs#activity-modes` is the user guide.
+
+## Current implementation
+
+The latest implementation request supersedes the earlier planning-only status and all-local Writing requirement. Chrome now supports Browsing, Reading and Writing task modes, conservative interaction-based switching, voice selection and a live popup mode indicator. Search fields and short replies retain Browsing semantics.
+
+Writing cleans the current segment with Groq unless verbatim/literal dictation is selected. Requests account for message framing and reserve output within a conservative 7,000-token ceiling; oversized or ambiguous segments are refused. Whole documents are excluded from cleanup requests. Explicit revisions use only the unchanged most recent segment and require `apply revision`. Google Docs uses trusted native input, editor accessibility annotations, verified insertion and guarded undo/redo. Reload the updated extension and document; the document must be editable. The browser displays its native debugging banner during Docs input. Chrome permissions include `debugger` for this adapter.
+
+Reading supports Wikipedia's accessible article text, pointer-centered paragraph magnification, separate browser page zoom with guarded restoration, read-aloud controls, headings, paragraph movement, selected-passage speech and a simplified text view. Presentation, voice and playback-speed preferences are remembered. Reading never starts audio automatically.
+
+Highlighting supports face/head pointer start/finish selection, word and sentence numbers, unique quoted phrase ranges, and partial sentence ranges such as `highlight the last three words of sentence two`. Complex requests send only the current paragraph and its local numbered catalogue to Groq. Ambiguity requires clarification or numbered choices; a changed article invalidates the range. Native text selection spans inline formatting. Sentence numbering uses English sentence segmentation, so decimal numbers stay in their sentence.
+
+Live checks passed on the supplied editable Google Doc for insertion, phrase replacement, scratch, restore, paragraph breaks/undo, Groq cleanup and last-only removal/restoration across two segments. Grouped native undo recovers only preceding Handsfree-owned segments against their verified baselines. Temporary test text was removed and the original document restored. Live Wikipedia checks passed for numbered word selection, magnification and zoom/restore. Packaged tests cover head-pointer selection, native ranges, focus guards and stale-edit rejection. This does not qualify physical camera gestures, microphone accuracy, every rich editor or the separate Firefox package.
+
+The design material below records the earlier plan. Its all-local policy and planning-only claims are historical; use this section and the website guide for current browser behavior. Native desktop policy remains separate.
+
+## Feature brief before implementation
+
+This brief explains what the person gets in each mode. Sections 1-26 contain the implementation contracts. The 2026-10-11 request adds detail about Rambler-like writing and easier reading, including zoom. Keep the confirmed pointer-centered magnifier; add explicit page-zoom controls to the plan. Text layout, focus aids, and an optional extracted reading view below are recommendations, not newly confirmed preferences.
+
+### How the three modes work together
+
+| Mode | Main job | What Handsfree emphasizes | Example |
+| --- | --- | --- | --- |
+| Browsing | Find and operate things | Navigation, result choices, tabs, media, guided forms, explicit short dictation | Search YouTube, choose a video, fill an application |
+| Reading | Follow substantial text comfortably | Paragraph magnification, page zoom, headings, read-aloud, position and optional focus aids | Read a Wikipedia section or a long log |
+| Writing | Create or revise sustained content | Local speech recognition, live preview, conservative cleanup, precise corrections and recovery | Dictate and revise a report |
+
+Voice, face and hand are input methods. Browsing, Reading and Writing are tasks. A person can use voice alone in every task mode. A mode change never requires enabling a camera.
+
+The same Notion tab can support all three. Searching its workspace is Browsing, consuming a long note is Reading, and deliberately editing its body is Writing. A search query or short reply stays Browsing. A small edit in an established document task stays Writing. Automatic inference needs strong interaction evidence and holds the current mode when uncertain. "Reading mode", "Browsing mode", "Writing mode" and "use automatic modes" provide direct control.
+
+### Browsing features in detail
+
+| Feature group | What the person can do | Expected behavior and limit |
+| --- | --- | --- |
+| Navigation and tabs | Say "go back", "next tab", "switch to the Wikipedia tab", or "open a new tab with climate papers" | Resolve the controlled window and current tab list. Preserve the latest immediate current-tab close behavior. Ambiguous tab names need a choice. |
+| Page controls | Say "open reviews", "show the menu", or "click this" | Resolve visible named controls or the current qualified pointer position. Hidden/stale controls cannot receive an action. |
+| Search and results | Dictate a query, ask for current results, choose a numbered item | Search entry is explicit. Result numbering belongs to the current announced list and expires when the list changes. |
+| Scrolling | Move up/down, go to the top/bottom, or scroll a named region | Use the selected page/panel. Preserve deliberate pointer and edge-scroll settings. |
+| Forms | Ask for fields, fill one, move to the next, change a value, hear missing/invalid fields | Use labels and field types. Spell identifiers; clarify dates and amounts. Verify actual field values after insertion. |
+| Multi-field forms | Speak several supplied values and review the field mapping | Apply the reviewed batch sequentially; report partial completion. Submit through the separate current confirmation policy. |
+| Short replies | Explicitly dictate a comment or short message; scratch or replace a bounded part | Stay Browsing and bind edits to that composer. Sending is a separate command and follows the existing action policy. |
+| Media | Pause/play, seek, change volume, choose a track or current listed video where supported | Use the qualified player/site capabilities. "Play the newest upload" requires verified newest-upload selection; visible result order alone is insufficient. |
+| Help and recovery | Ask "what can I do here?", cancel a pending choice, undo an eligible field edit | Explain available actions in the current context; retain manual page interaction. |
+
+The current project already has navigation, site adapters, explicit dictation and form machinery. Implementation should audit and reuse those contracts. The new work is task-aware coordination and the additional qualified features, rather than a promise that every catalogue item already works on every site.
+
+### Writing features in detail
+
+The intended experience is: choose a supported long-form editor, receive a readiness cue, speak naturally, see the current transcript preview, then receive cleaned text in that editor at a speech boundary. The preview remains transient. After "stop dictation", merely keeping editor focus must not restart it.
+
+| Feature group | What the person gets | Example or constraint |
+| --- | --- | --- |
+| Local recognition | Speech becomes English text without sending Writing audio to a provider | Requires a qualified local recognizer and installed language pack. If unavailable, show the blocker and leave dictation off. |
+| Live preview and segment insertion | See the unfinished segment while speaking; commit the cleaned segment once | A thinking pause does not switch modes. Late recognition results cannot land in a newly focused field. |
+| Filler cleanup | Remove clear hesitations and accidental starts | "Um, we should submit tomorrow" becomes "We should submit tomorrow." Preserve meaningful "like", "well", negation and emphasis. |
+| Punctuation and capitalization | Turn spoken sentences into readable text | Use recognition output and conservative local rules. Difficult sentence boundaries may still need review. |
+| Clear self-correction | Resolve a bounded spoken repair | "Meet Tuesday, no, Wednesday" becomes "Meet Wednesday." Ask if two dates or several amounts make the scope unclear. |
+| Scratch and restore | Remove the last verified Handsfree segment and restore that removal | "Scratch that", then "put that back". Check the same editor and unchanged text before either edit. |
+| Exact corrections | Replace a named occurrence; remove a qualified last sentence | "Replace the last Tuesday with Wednesday". Several matches require a choice. |
+| Structure and formatting | New paragraph, supported lists, and formatting of a qualified selection | Plain editors and rich editors have different capabilities. Do not simulate a native list by claiming typed bullet characters are editor list formatting. |
+| Literal text | Keep fillers, identifiers, quotations or command phrases as text | "Use verbatim dictation" and a literal-text escape prevent accidental interpretation of quoted commands. |
+| Review and vocabulary | Read back a recent segment with a verified local voice; save an explicitly supplied term locally | No automatic transcript collection. No draft readback through an online voice. |
+| Optional advanced revisions | Propose a shorter version, a tone change, or a structure for selected thoughts | Needs an independently benchmarked local language model and a review step. Keep W-16/W-17/W-19 as later work. |
+
+Cleanup preserves the person's wording and meaning. "I might attend" cannot become "I will attend". A requested tone rewrite is a separate operation. Ordinary prose containing "send this" cannot send the document or message.
+
+### How close can we get to Google's Rambler?
+
+The reference here is Gboard's Rambler. Google's current help describes filler removal, grammar/punctuation, conversational edits, style rewrites and multilingual speech. It distinguishes basic offline cleanup from advanced rewrites and complex edits that need connectivity. [Google's Rambler help, checked 2026-10-11](https://support.google.com/pixelphone/answer/17468539?hl=en)
+
+The assessment below is an engineering judgment about this project. It is not a measured accuracy score or a claim of access to Google's implementation. "Good first-release candidate" means the operation can be scoped and verified in supported contexts. It does not mean every spoken request will succeed.
+
+| Rambler-like behavior | Assessment under all-local Writing | Practical first-release scope |
+| --- | --- | --- |
+| Clear English speech to text | Feasible, device/recognizer dependent | Check local capability and test the person's speech, accent and microphone. Names and numbers need particular review. |
+| Remove obvious hesitation | Good first-release candidate | Restricted rules with literal escape; preserve uncertain cases. Rules alone cannot reliably identify every contextual filler. |
+| Punctuation/capitalization | Feasible, with recognition-dependent quality | Handle clear boundaries. Do not promise automatic grammar repair for arbitrary spoken prose. |
+| "Tuesday, no, Wednesday" | Good first-release candidate for bounded patterns | Resolve the current segment or a unique qualified recent span. |
+| Scratch, restore, precise replacement | Good first-release candidate in plain editors | Verify spans and inverses. Rich-editor support requires separate qualification. |
+| Arbitrary conversational corrections | Partial initial coverage | Support a documented local grammar. Several competing targets or vague instructions need clarification. |
+| Long messy ramble to coherent prose | Research and benchmarking required | A local language model must recover structure without dropping facts. Rules cannot reproduce that general behavior. |
+| "Make it professional" or "shorten this" | Later local-model feature | Propose changes to a selection and review before replacement. Check meaning preservation separately from fluency. |
+| Mixed Hindi/English | Outside the current English-only release | Do not treat the user's conversational Hinglish as a change to the confirmed product-language scope. |
+| Works in every editor | No universal promise | Start with textarea/simple contenteditable; qualify Notion and Google Docs individually. Editor insertion can fail even when recognition is excellent. |
+
+We can aim for a useful Rambler-like core: speak, preview, clean clear hesitations, correct precise spans and recover an accidental edit. Full equivalence, including open-ended restructuring and free-form revision on arbitrary websites, is not a credible first-release commitment with the current local-only design.
+
+Recognition, interpretation and insertion are separate sources of failure. Correctly hearing "Wednesday" is not enough if the correction deletes the wrong sentence. The editing engine must verify actual document state and stop when a target is ambiguous or changed. Any reliability report must state which layer and editor it measured.
+
+### Reading features in detail
+
+Offer a compact reading control surface with magnify, zoom, read aloud and a small comfort disclosure. All controls have direct voice equivalents. Detection alone starts no audio and applies no new visual setting unless the person enabled that preference.
+
+| Feature | Proposed user experience | Initial scope and limit |
+| --- | --- | --- |
+| Pointer-centered paragraph lens | Hold on eligible text for roughly 1.2 seconds; a lens opens near 2x. Say "magnify more/less", "freeze the magnifier", or "close the magnifier" | Preserve the confirmed 1.5-3x proposed adjustment range. Initial lens renders sanitized text, not exact page pixels. Exclude control hit areas and stop on tracking/context loss. |
+| Page zoom | Say "zoom this page to 150 percent", "zoom in", "zoom out", or "restore previous page zoom" | Use browser tab zoom separately from lens scale. Proposed steps: 100%, 125%, 150%, 175%, 200%. Store the pre-change value and verify the resulting factor. |
+| Larger reading text | Say "make the reading text larger" | P1 option in the lens or a qualified extracted reading view. Proposed 20/24/28/32px sizes, adjusted for viewport. Avoid overriding all fonts on an arbitrary webpage. |
+| Comfortable spacing and width | Choose relaxed spacing and a narrower reading column | P1 presentation options. Proposed prose line-height 1.6-1.8 and column width around 60-75 characters. Preserve code/log whitespace and table structure. |
+| Reading colors | Choose light, dark or a warm paper presentation | P1 option within Handsfree-owned reading presentation. Check contrast and preserve the page's original styles. |
+| Focus aid | Highlight the current paragraph and optionally dim surrounding content | P1 opt-in aid with explicit off control. Do not dim navigation needed for recovery or rely on color alone to show position. |
+| Read aloud | Say "read this section aloud", "read the selected passage", or "read from Methods" | Speak qualified text only after a request. Stop/pause/resume and voice/rate controls are core. Actual voice availability and speaker interruption need testing. |
+| Reading navigation | Say "next paragraph", "previous heading", "list sections", or "find sample size here" | Use actual content structure. Headings/paragraphs can be dependable on semantic HTML; unstructured text needs narrower claims. |
+| Follow and continue | Optional paragraph highlighting/follow-scroll; "continue where I stopped" | Preserve a same-session anchor tied to content revision. No persistent reading-history feature implied. Word-level highlighting depends on reliable speech boundary events. |
+| Optional reading view | Show a local copy of a qualified article with larger text and reduced clutter | P2 proposal requiring extraction qualification. Preserve headings, links, lists and available captions. Do not bypass paywalls or invent missing content. |
+| Exit and restore | Say "close the reading view" or "restore previous page zoom" | Remove Handsfree-owned presentation and restore a still-valid saved zoom value. Do not overwrite a later manual change. |
+
+Use distinct commands for distinct changes. "Magnify more" changes the lens. "Zoom this page to 150 percent" changes browser zoom. "Make the reading text larger" changes text within the owned presentation. If "make this bigger" lacks a clear target, ask which one instead of changing several settings.
+
+Chrome supplies tab-zoom APIs and zoom scope settings. The implementation should use per-tab scope, bind the request to the intended tab/document, and account for zoom settings resetting on navigation. Recompute pointer geometry and reading anchors after layout changes. [Chrome Tabs API](https://developer.chrome.com/docs/extensions/reference/api/tabs#method-setZoom)
+
+### Reading reliability by content type
+
+| Content | Expected initial feasibility | What needs qualification |
+| --- | --- | --- |
+| Semantic HTML articles/Wikipedia | Strong candidate for text lens, headings and paragraph playback | Correct article selection, hidden text exclusion, links, reflow and dynamic changes |
+| Plain logs/source text | Strong candidate for visual text enlargement | Preserve indentation, line breaks and repeated errors; spoken code pronunciation is a separate limit |
+| Notion/Docs content | Adapter-dependent | Whether current visible text, selection and reading order are accessible; the domain itself proves no capability |
+| PDF rendered with a usable text layer | Conditional | Text access, page order, columns, headings and the viewer's own restrictions |
+| Scanned PDF/image | Outside initial text reading | Requires OCR. Page/viewer zoom may enlarge the image but does not make its text available for narration. |
+| Equations/charts/tables | Limited initial support | A text lens cannot reproduce their visual layout or supply mathematical/chart interpretation |
+| Protected browser pages/cross-origin frames | Permission- and browser-dependent | Check each capability; unavailable text access cannot be replaced by guessed content |
+
+The lens is practical for ordinary webpage text. Page zoom is a relatively direct browser operation, although the site's layout may still become awkward. Article extraction and word-level speech highlighting have more variability, so they should not block the core lens, paragraph navigation and playback work.
+
+### Browser and device implications
+
+The source review on 2026-10-11 found the Chrome local-recognition checks in `extension/src/speech.ts`, but no activity-mode controller or magnifier implementation in `extension/src`. The website's existing comfort toggle and read-aloud player apply to the Handsfree website. They do not establish reading support on third-party tabs.
+
+Local Web Speech requires a supported browser and installed language pack. Feature detection is necessary before starting Writing. [MDN on-device speech recognition](https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API/Using_the_Web_Speech_API#on-device_speech_recognition)
+
+The isolated Firefox source at `firefix/src/speech.ts` currently reports on-device dictation unavailable when its browser recognition path is missing. Chrome Writing qualification cannot be carried over to Firefox. A separately packaged local recognizer or qualified desktop bridge would be additional work. Preserve the separate Firefox folder and never fall back to its cloud command path for Writing.
+
+### How we establish reliability before calling it supported
+
+Do not attach an invented percentage to features that have not been implemented and measured. Section 21 specifies the test programme. Record recognition error, cleanup meaning changes, correction scope, insertion success, latency and false mode switches separately.
+
+1. Validate one complete workflow in a plain editor with network access blocked during Writing: recognition, preview, cleaned insertion, scratch, restore, stop and task change.
+2. Use English speech with hesitations, accents, names, amounts, negation, quoted commands and thinking pauses. Compare intended text with actual inserted text, rather than checking only status messages.
+3. Test corrections after manual/collaborative edits, focus changes and repeated recognizer results. A refused unsafe correction is safer than a silent unrelated deletion; report refusals separately from successful completion.
+4. Qualify Notion and Google Docs independently with real disposable documents. List insertion, selection, replacement, formatting and undo as separate capabilities.
+5. Test reading with physical face/hand jitter and voice alone, viewport edges, 200% page zoom, dark/light presentation, long logs, repeated headings and page changes.
+6. Test read-aloud with speakers and headphones. Read article text containing actual command phrases and verify it cannot trigger actions. Measure whether spoken pause/stop works during playback.
+7. Publish supported-browser/editor/content combinations with verification dates and observed failure cases. Controlled fixture success does not establish universal website or physical-user performance.
+
+### Recommended implementation order
+
+Build the local capability check, manual modes and conservative detector first. Then qualify cleaned dictation with scratch/restore in a plain editor, followed by the pointer-centered text lens, explicit page zoom, paragraph navigation and controlled read-aloud. Reuse current browsing/form infrastructure and add task-aware routing. Qualify Notion/Docs and physical input before claiming those workflows work. Add comfort presentation options and advanced local-model revisions only after their own evidence exists.
 
 ## 1. Intended result
 
@@ -47,6 +196,7 @@ Task inference is approximate. Handsfree can observe actions and page structure,
 | REQ-25 | Include all offered core read-aloud controls | Pause/resume, speed, paragraphs, headings/selection, optional follow-highlighting |
 | REQ-26 | Magnifier is a lens centered around the pointer | Keep hit testing on the underlying page, not the lens |
 | REQ-27 | Magnifier uses roughly 1.2-second hover plus voice control | Close on moving away; exclude controls to avoid dwell-click conflicts |
+| REQ-28 | Explain easier reading, including zoom, before implementation | Detail the magnifier and propose explicit page zoom; separate optional comfort additions and unmeasured feasibility |
 
 The user explicitly confirmed that short replies/comments stay in Browsing, while sustained drafting is Writing. The user was unsure about form interaction and asked for a clear design; the recommended guided-plus-reviewed-batch workflow below is a planning choice, not an explicit selection of one form interaction style.
 
@@ -177,7 +327,8 @@ Recommended pointer policy: suppress passive dwell activation inside an active c
 | Scrolling | Bounded, current grounded region | Bounded readable region | Bounded editor/page action, never inferred from silence |
 | Read aloud | Available only when qualified and explicitly requested | Same activation rule, reading context helps target selection | Explicit selected-text/draft playback only when qualified |
 | Dwell | Saved settings; field-entry guard | Saved settings; no automatic threshold change | Scoped editor guard; explicit controls remain usable |
-| Send/submit/close | Existing confirmation contract | Same contract | Same contract |
+| Send/submit | Existing action-specific confirmation contract | Same contract | Same contract |
+| Close current tab | Immediate under the latest explicit tab policy | Same policy | Same policy; invalidate pending editor work |
 | Camera requirement | None for voice-only operation | None for voice-only operation | None for voice-only operation |
 | Cloud requirement for detection | None | None | None |
 
@@ -617,7 +768,7 @@ For a short reply that evolves into a long draft, rely on an explicit "I'm draft
 
 ## 16. Reading feature catalogue
 
-Reading means interacting with substantial text, including articles, Wikipedia, research papers, and long logs. The user clarified the visual feature as a hover-triggered magnifier that zooms in on an area, not zoom-out or a clean-reader request. Offer that visual presentation and read-aloud as separate choices, remember the preference, and start audio only on request.
+Reading means interacting with substantial text, including articles, Wikipedia, research papers, and long logs. The confirmed visual feature is a hover-triggered, pointer-centered magnifier. The 2026-10-11 expansion also proposes explicit page zoom for the latest easier-reading request. Keep lens, page zoom, optional comfort presentation and read-aloud independently controlled. Remember presentation preferences and start audio only on request.
 
 | ID | Feature | Example | Expected behavior | Priority |
 | --- | --- | --- | --- | --- |
@@ -638,6 +789,11 @@ Reading means interacting with substantial text, including articles, Wikipedia, 
 | R-15 | Summary | "Summarize this section" | Optional future generated output, not part of core reading request | P2, not selected |
 | R-16 | Research/log handling | "Read the error section", "skip the references" | Preserve structure and exact technical content | P1 |
 | R-17 | Exit presentation | "Return to the original page" | Restore only changes owned by Handsfree | P0 |
+| R-18 | Explicit page zoom | "Zoom this page to 150 percent", "zoom in" | Use verified tab zoom, distinguish from lens scale, refresh pointer geometry and anchors | P0 proposed |
+| R-19 | Restore previous zoom | "Restore previous page zoom" | Restore a still-valid pre-change value without overwriting later manual changes | P0 proposed |
+| R-20 | Reading text and layout | "Make the reading text larger", "use relaxed spacing" | Adjust only owned lens/qualified reading presentation; preserve logs/code/tables | P1 proposed |
+| R-21 | Reading colors and focus | "Use warm paper", "highlight this paragraph" | Opt-in owned presentation with contrast checks and explicit off controls | P1 proposed |
+| R-22 | Extracted reading view | "Open a simplified reading view" | Qualified local article extraction, source links/structure, no paywall bypass or invented text | P2 proposed |
 
 ### Hover magnifier design
 
@@ -661,7 +817,15 @@ Initial magnification can use a configurable scale around 1.5-3x, preserving lin
 
 Loss of tracking closes or suspends the lens and cancels its hold. Pause/stop closes it. Read-aloud highlighting and optional follow-scroll must coordinate with magnifier anchoring. Never zoom an editor or change writing focus merely because a pointer stayed still.
 
-Clean-reader extraction and whole-page zoom can be considered later if requested. They are not substitutes for the requested hover magnifier.
+The latest expansion adds explicit whole-page zoom alongside the magnifier. Clean-reader extraction remains an optional P2 proposal. Neither feature replaces the confirmed pointer-centered lens. The feature brief specifies distinct commands, proposed zoom/text values, content limits, and restore behavior.
+
+### Page zoom and optional comfort presentation
+
+Implement R-18/R-19 as browser operations bound to a controlled tab and navigation generation. Capture current zoom and settings before the first owned change, use qualified per-tab scope, verify the resulting factor, then refresh reading anchors and pointer geometry. Navigation resets zoom settings; invalidate stale restoration records. An unsupported page or rejected zoom request needs a clear unavailable result. [Chrome Tabs API](https://developer.chrome.com/docs/extensions/reference/api/tabs#method-setZoom)
+
+Use "zoom in/out" for page zoom and "magnify more/less" for the lens. Resolve vague requests through established context or clarification. Do not automatically apply page zoom just because Reading begins. Restore only while the current zoom/settings still match Handsfree's last owned state; a later manual change belongs to the person.
+
+R-20/R-21 should start in owned presentation. Do not globally override arbitrary webpage fonts, spacing or colors. R-22 requires a separately qualified extraction path, preserves source structure and links, and reports unavailable content. Proposed values are tuning defaults, not confirmed preferences. An enlarged scanned PDF remains an image until a qualified OCR capability exists.
 
 ### Read-aloud behavior
 
@@ -729,6 +893,7 @@ Content scripts observe the DOM in an isolated world and do not automatically ha
 | `extension/src/forms/runtime.ts` | Form snapshot, fill/review/correction and submission binding |
 | `extension/src/reading/runtime.ts` | Read-region resolution, navigation and playback contract |
 | `extension/src/reading/presentation.ts` | Hover/voice magnifier qualification, rendering, stability and teardown |
+| `extension/src/reading/zoom.ts` | Tab-bound zoom commands, pre-change state, verified restoration and geometry invalidation |
 | `extension/tests/modes/` | Rule, reducer, race, routing, and privacy tests |
 | `extension/tests/fixtures/modes/` | Mixed tasks, ambiguous fields, forms, editors, reading/media fixtures |
 
@@ -980,6 +1145,11 @@ Use fake clocks and event traces with expected state after each observation. Ass
 | RT-15 | Inaccessible PDF, canvas, chart/equation region | Limited-support explanation; no fabricated optical magnification or narration |
 | RT-16 | Pointer-centered lens covers the underlying paragraph | Hit testing/evidence ignore the lens; no self-targeting loop |
 | RT-17 | Voice-selected paragraph with no pointing cursor | Lens uses grounded paragraph anchor; no camera requirement |
+| RT-18 | Lens active, then "zoom this page to 150 percent" | Only page zoom factor changes; lens scale stays independent; anchors/pointer geometry refresh |
+| RT-19 | Change page zoom, restore; repeat after manual zoom change | Verified prior value restored only while owned state matches; manual change preserved |
+| RT-20 | Page zoom with two same-origin tabs, navigation or rejected browser operation | Qualified per-tab scope; no stale restoration or false success |
+| RT-21 | Optional larger text/spacing/colors on logs/code/tables | Owned presentation changes only; exact source/structure preserved; no page-wide stylesheet damage |
+| RT-22 | Optional extracted reader on incomplete/dynamic article | Qualified source/links/structure retained; incomplete or unsupported extraction reported |
 
 ### Browsing and form tests
 
@@ -1057,7 +1227,7 @@ Use bounded packages with a concrete deliverable, validation, and stop condition
 | MP-06: qualified auto-dictation | MP-05 | All-local recognition barrier, long-editor gate, readiness cue, stop suppression, focus suspension | No pre-arm/short-field insertion, no online Writing fallback; correct fresh editor binding |
 | MP-07: local writing pipeline | MP-06 | English preview, local cleanup, repairs, literal escape, transaction ledger, scratch/restore | Meaning corpus, reversible edits, network-off supported cleanup |
 | MP-08: browsing/forms | MP-05/07 | Explicit short entry, guided fields, reviewed batch, correction/undo and submit binding | Exact form state, partial failure reporting, no duplicate submission |
-| MP-09: hover magnifier | MP-04/05 | Qualified text hold, voice activation, inert lens, tracking-loss/exit behavior | No click-dwell conflict; stable readable lens |
+| MP-09: magnifier and page zoom | MP-04/05 | Qualified text hold, voice activation, inert lens, tracking-loss/exit behavior; explicit verified tab zoom and restore | No click-dwell conflict; stable readable lens; independent scales, fresh geometry and manual zoom preserved |
 | MP-10: read-aloud runtime | MP-05/09 | Targeted playback, headings/paragraphs, voices/rate, optional highlight, input/output coordination | No echo actions; explicit audio start; revision invalidation |
 | MP-11: UI and effective policies | MP-05/06/09/10 | Minimal mode controls/status, dashboard preferences, scoped dwell/scroll | Voice/key/screen-reader access; no saved-setting overwrite |
 | MP-12: editor/live qualification | MP-07/08/09/10/11 | Supported generic editor plus separately qualified Docs/Notion workflows | Real task traces, documented limitations, hardware evaluation |
@@ -1078,6 +1248,7 @@ If the dashboard changes, read `next/AGENTS.md` and its required local Next docu
 2. **Mode-control stage:** manual voice selection plus strict automatic changes, trustworthy status, and no stale work.
 3. **Writing stage:** qualified auto-dictation, on-device cleanup, scoped corrections, and explicit browse-field entry.
 4. **Reading stage:** hover/voice magnifier and explicitly activated read-aloud with echo protection.
+   Include independently controlled page zoom and verified restoration in this stage. Optional comfort styling and extracted reader require their own capability qualification.
 5. **Forms and live-editor stage:** qualify controlled and real workflows, then publish exact capability claims.
 
 Offer per-feature settings to disable automatic detection, automatic writing dictation, hover magnification, or optional follow-highlighting. Disabling auto-dictation still permits "start dictation"; disabling magnifier hover still permits explicit voice magnification if supported. A session stop disables all mode-driven activity.
@@ -1100,6 +1271,8 @@ Offer per-feature settings to disable automatic detection, automatic writing dic
 - [ ] Stop dictation prevents the detector from immediately rearming it.
 - [ ] Hover magnification enlarges readable text without activating controls or altering page zoom.
 - [ ] Voice magnification works without a camera/pointer.
+- [ ] Explicit page zoom operates on the intended tab, refreshes geometry, and remains separate from lens magnification.
+- [ ] Restore previous page zoom respects navigation and any later manual zoom change.
 - [ ] Reading preference is remembered; read-aloud never autoplays from detection.
 - [ ] Playback has the selected pause/resume/speed/paragraph/heading/selection/highlight controls.
 - [ ] Form entry supports correction, review, invalidation, and verified confirmed submission.
@@ -1135,6 +1308,7 @@ These exclusions do not excuse skipping the confirmed text-magnifier, corrected 
 | Processing | All Writing processing, including recognition, stays on-device; reduced initial features acceptable |
 | Language | English for now, superseding earlier English/Hindi choice |
 | Visual reading | Pointer-centered lens after roughly 1.2-second text hover, plus voice activation |
+| Latest reading expansion | Explain zoom and easier-reading features before implementation; page zoom is proposed alongside the confirmed lens; comfort/extraction remain optional |
 | Audio reading | Core controls selected; start audio only when requested |
 | Reading preference | Remember the chosen presentation |
 | Forms | User delegated a clear design rather than choosing one interaction style |
@@ -1164,7 +1338,7 @@ These questions are a refinement backlog rather than a requirement to answer eve
 | Q-10 | When should cutting text need confirmation? | Scoped reversible last-segment scratch is immediate; broad/multispan deletion requires review |
 | Q-11 | Should bare pause/resume remain session controls while dictating? | Prefer explicit Handsfree session phrases; migration needs user agreement |
 | Q-12 | Should document-local search visibly switch out of Writing? | Keep Writing parent task, expose search subtask; workspace search is Browsing |
-| Q-13 | Should page zoom or clean-reader view also be added? | Defer; neither substitutes for the requested magnifier |
+| Q-13 | Which extra reading-comfort controls belong in the first release? | Latest request asks for zoom detail: propose explicit page zoom/restore with the confirmed lens. Owned text/spacing/colors/focus are P1 proposals; extracted reader remains P2 |
 | Q-14 | Should read-aloud resume after returning to a tab? | Retain qualified position if possible, require explicit resume |
 | Q-15 | Which English reading voice and initial speed? | Available local voice preferred if selected policy requires it; configurable rate |
 | Q-16 | Should read-aloud follow-scroll by default? | Off unless explicitly enabled; highlight preference independently remembered |

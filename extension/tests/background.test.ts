@@ -74,7 +74,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
           title: "Inbox",
         },
       ]),
-      sendMessage: vi.fn(async (_id: number, message: Message) => {
+      sendMessage: vi.fn(async (_id: number, message: Message): Promise<any> => {
         if (message.type === "GET_TARGETS")
           return [{ id: "careers", text: "Careers", role: "link" }];
         if (message.type === "PAGE_STATE") pageDictating = message.dictating;
@@ -1276,5 +1276,27 @@ describe("routine navigation readiness", () => {
     expect(dialogueTexts).toEqual([]);
     expect(pageActions).toMatchObject([{ type: "site-action", site: "spotify", action: "S07" }]);
     expect(openedUrls).toEqual([spotifyUrl, "https://www.google.com/search?q=physics%20notes"]);
+  });
+});
+
+describe('task modes and delayed cleanup',()=>{
+  it('requires current top-frame composition evidence before releasing a selected mode',async()=>{
+    const {browser,send}=await setup();const original=browser.tabs.sendMessage.getMockImplementation()!;let composition=false;
+    browser.tabs.sendMessage.mockImplementation(async(id,message)=>message.type==='MODE_CONTEXT'?{longEditor:composition,reading:true,docs:{editable:false,focused:false}}:original(id,message));
+    await send({type:'ACTION',intent:{type:'activity-mode',mode:'reading'}});
+    const evidence:Message={type:'MODE_EVIDENCE',mode:'writing',reason:'composition',autoArm:true};
+    expect(await send(evidence,{...pageSender(1),frameId:0})).toMatchObject({ok:false});expect((await send({type:'GET_STATE'})).activityMode).toBe('reading');
+    composition=true;expect(await send(evidence,{...pageSender(1),frameId:2})).toMatchObject({ok:false});
+    await send(evidence,{...pageSender(1),frameId:0});expect(await send({type:'GET_STATE'})).toMatchObject({activityMode:'writing',dictating:true,modeAutomatic:true});
+  });
+  it('does not insert a completed cloud cleanup after stop dictation',async()=>{
+    const {browser,send,fetch}=await setup({key:'private-test-key'});const original=browser.tabs.sendMessage.getMockImplementation()!;
+    browser.tabs.sendMessage.mockImplementation(async(id,message)=>message.type==='MODE_CONTEXT'?{longEditor:true}:message.type==='EDIT_CONTEXT'?{binding:7,expected:'private existing document',text:''}:original(id,message));
+    await send({type:'ACTION',intent:{type:'activity-mode',mode:'writing'}});
+    let finish!:(value:unknown)=>void;const started=new Promise<void>(resolve=>fetch.mockImplementation(()=>{resolve();return new Promise(done=>{finish=done;});}));
+    const work=send({type:'HEARD',text:'Um meet Wednesday.'});await started;
+    expect(JSON.stringify(JSON.parse(fetch.mock.calls[0][1].body).messages)).not.toContain('private existing document');
+    await send({type:'HEARD',text:'stop dictation'});finish({ok:true,json:async()=>({choices:[{finish_reason:'stop',message:{content:JSON.stringify({text:'Meet Wednesday.',needsClarification:false,question:''})}}]})});await work;
+    expect(browser.tabs.sendMessage.mock.calls.filter(([,message])=>message.type==='DICTATE')).toHaveLength(0);expect((await send({type:'GET_STATE'})).dictating).toBe(false);
   });
 });

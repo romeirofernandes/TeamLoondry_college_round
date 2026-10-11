@@ -354,3 +354,8 @@
     padding: 10px 6px;
   }
 }
+
+.docs-disclosures .docs-mode-description {
+  margin: 0;
+  padding: 0 20px 20px;
+}

@@ -134,6 +134,13 @@ function Popup() {
           {state.running ? (state.paused ? "Paused" : "Running") : "Ready"}
         </span>
       </header>
+      <section className="mode-panel" aria-label="Activity mode">
+        <p role="status" aria-live="polite">Current mode: <strong>{(state.activityMode || "browsing").replace(/^./, c => c.toUpperCase())}</strong> · {state.modeAutomatic ? "Automatic" : "Selected by you"}</p>
+        <div className="mode-buttons" role="group" aria-label="Choose a task mode">
+          {(["browsing", "reading", "writing"] as const).map(mode => <button key={mode} disabled={busy || !state.running || state.paused} aria-pressed={state.activityMode === mode} onClick={() => void run(() => send({type:"ACTION",intent:{type:"activity-mode",mode}}))}>{mode.replace(/^./, c => c.toUpperCase())}</button>)}
+          <button disabled={busy || !state.running || state.paused} aria-pressed={state.modeAutomatic} onClick={() => void run(() => send({type:"ACTION",intent:{type:"activity-mode",mode:"auto"}}))}>Auto</button>
+        </div>
+      </section>
       {state.running && !state.voiceOnly && (
         <div className="camera-preview">
           <video

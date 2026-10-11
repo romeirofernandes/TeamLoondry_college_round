@@ -1,4 +1,5 @@
 import type { SiteRequest, SiteSnapshot } from "./sites/types";
+export type ActivityMode = "browsing" | "reading" | "writing";
 export type PointerMode = "face" | "hand";
 export type InputMethod = "voice" | PointerMode;
 export interface Settings {
@@ -162,6 +163,10 @@ export interface PointerSample {
   latencyMs: number;
 }
 export interface SessionState {
+  activityMode: ActivityMode;
+  modeAutomatic: boolean;
+  modeReason: string;
+  writingVerbatim: boolean;
   voiceOnly: boolean;
   running: boolean;
   paused: boolean;
@@ -181,6 +186,7 @@ export interface SessionState {
   calibrationSnapshots: Record<string, string>;
 }
 export const initialState: SessionState = {
+  activityMode: "browsing", modeAutomatic: true, modeReason: "Choose a task or use automatic detection.", writingVerbatim: false,
   voiceOnly: false,
   running: false,
   paused: false,
@@ -241,6 +247,9 @@ export type FormCommand =
   | { type: "previous-section" }
   | { type: "submit" };
 export type Intent =
+  | { type: "activity-mode"; mode: ActivityMode | "auto" }
+  | { type: "reading-command"; command: string; text?: string; value?: number }
+  | { type: "writing-command"; command: "scratch" | "restore" | "sentence" | "paragraph" | "replace" | "rewrite" | "verbatim" | "cleaned" | "readback"; from?: string; to?: string; instruction?: string }
   | { type: "routine-control"; command: "start-recording" | "pause-recording" | "resume-recording" | "undo-step" | "stop-recording" | "list" | "run" | "pause-playback" | "resume-playback" | "stop-playback"; name?: string }
   | { type: "form-command"; command: FormCommand }
   | {type:"upload-file"}
@@ -315,6 +324,13 @@ export interface PermissionState {
 }
 export type PermissionStateValue = "granted" | "denied" | "prompt" | "unknown";
 export type Message =
+  | { type: "READING_AUDIO"; active: boolean; text: string }
+  | { type: "MODE_EVIDENCE"; mode: ActivityMode; reason: "composition" | "reading-interaction" | "navigation"; autoArm?: boolean }
+  | { type: "MODE_CONTEXT" }
+  | { type: "EDIT_CONTEXT" }
+  | { type: "EDIT_APPLY"; command: string; text?: string; from?: string; to?: string; expected?: string }
+  | { type: "READ_SELECT"; start: number; end: number; revision: string }
+  | { type: "DOCS_INPUT"; text: string; command: "insert" | "scratch" | "restore"; expected: string; url: string; generation: number }
   | { type: "UI_VOICE"; enabled: boolean }
   | { type: "UI_HEARD"; text: string }
   | { type: "UI_SPEAK"; text: string }
@@ -326,6 +342,7 @@ export type Message =
   | { type: "MEDIA_PERMISSIONS"; camera: PermissionStateValue; microphone: PermissionStateValue }
   | {type:"DESKTOP_CONNECT"|"DESKTOP_DISCONNECT"|"DESKTOP_STATUS"|"PREPARE_BROWSER_CAPTURE"}
   | { type: "GET_STATE" }
+  | { type: "READING_PREFERENCES"; value?: import("./reading/model").ReadingPreferences }
   | { type: "GET_SETTINGS" }
   | { type: "OPEN_DASHBOARD"; tabId?: number; hash?: string }
   | { type: "GET_TABS" }
@@ -368,6 +385,8 @@ export type Message =
   | { type: "ACTION"; intent: Intent }
   | {
       type: "PAGE_STATE";
+      activityMode?: ActivityMode;
+      modeAutomatic?: boolean;
       running: boolean;
       paused: boolean;
       dictating: boolean;
@@ -375,7 +394,7 @@ export type Message =
     }
   | { type: "PAGE_ACTION"; intent: Intent }
   | { type: "AGENT_ACTION"; action: AgentAction }
-  | { type: "DICTATE"; text: string }
+  | { type: "DICTATE"; text: string; binding?: number; expected?: string }
   | { type: "GET_TARGETS" }
   | { type: "VALIDATE_LINK"; id: string; url: string; pageUrl: string }
   | { type: "GET_PAGE_CONTEXT" }

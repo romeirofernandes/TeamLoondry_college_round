@@ -1,3 +1,4 @@
+import { parseModeCommand } from "../modes/commands";
 import type { FormCommand, Intent, Settings } from "../shared";
 
 /** Normalize recognizer punctuation and spacing, without interpreting partial commands. */
@@ -166,6 +167,8 @@ export function parseFormCommand(text: string): FormCommand | null {
 
 /** Only call in command mode. Dictation bypasses this parser altogether. */
 export function parseIntent(text: string): Intent {
+  const modeCommand = parseModeCommand(text);
+  if (modeCommand) return modeCommand;
   const routine = normalizeSpeech(text).replace(/ please$/, "");
   if (/^(?:start recording|record)(?: a)? routine$/.test(routine)) return { type: "routine-control", command: "start-recording" };
   if (/^(?:pause routine recording|pause recording)$/.test(routine)) return { type: "routine-control", command: "pause-recording" };

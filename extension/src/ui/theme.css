@@ -262,3 +262,28 @@ footer {
 .permission-primary { background: var(--accent); color: var(--accent-text); border-color: var(--ring); }
 .permission-setup #status { min-height: 1.6em; margin-block: 20px; }
 .permission-setup .permission-actions { margin-bottom: 20px; }
+
+.mode-panel {
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--border, #49533a);
+  border-radius: 10px;
+}
+.mode-panel p {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.mode-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mode-buttons button {
+  min-height: 40px;
+  padding: 6px 9px;
+  font-size: 12px;
+}
+.mode-buttons button[aria-pressed="true"] {
+  outline: 2px solid #81a82d;
+  outline-offset: -2px;
+}

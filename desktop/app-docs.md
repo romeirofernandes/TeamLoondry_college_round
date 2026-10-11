@@ -79,7 +79,7 @@ The project has a Chrome Manifest V3 extension in `extension/` and a Next.js web
 | `next/lib/extension-bridge.ts` | Website-to-extension requests and subscriptions | Extend with connection state; do not expose direct OS calls |
 | `next/components/dashboard/` | Current browser dashboard | Reuse relevant preferences and session UI through shared contracts |
 | `docs/architecture.md` | Current extension architecture | Update after implementation, not before behavior exists |
-| `mode-plan.md` | Proposed reading/browsing/writing behavior | Carry its confirmed semantics into app planning |
+| `docs/mode-plan.md` | Proposed reading/browsing/writing behavior | Carry its confirmed semantics into app planning |
 | `local-docs/onboarding-dashboard-review.md` | Audit and pending onboarding changes | Preserve and schedule alongside shared preferences work |
 
 Prior notes report extensive extension and dashboard tests. These are historical results, not reruns in this session. They do not establish native compatibility, real speech accuracy, or physical-device tracking accuracy.
@@ -154,7 +154,7 @@ Root `spec.md` originally says extension only, no OS control, no native companio
 | Minimal browser popup | Preserve; floating panel is now the requested desktop popup |
 | Voice/head/hand | Retain all three; select a primary pointer deliberately |
 | Submit/close confirmation | Preserve and expand to equivalent native risks |
-| Deferred modes | `mode-plan.md` remains proposed; schedule core local Writing policy before native dictation |
+| Deferred modes | `docs/mode-plan.md` remains proposed; schedule core local Writing policy before native dictation |
 
 Do not silently rewrite historical documents to make them appear consistent with behavior they never specified. Add a scope-change record and update current architecture documentation when code lands.
 
@@ -550,7 +550,7 @@ The user explicitly allows cloud assistance outside Writing and reconfirms local
 | Writing corrections | On-device | Local edit ledger/parser | Explicit supported correction UI |
 | Multi-step non-Writing request | Configured recognition | Optional cloud typed proposal | No unattended fallback execution |
 
-Writing includes sustained composition in native editors. Keep short search/reply semantics from `mode-plan.md`, but do not treat uncertain editor purpose as permission to upload its content. Conservative handling blocks sensitive or ambiguous text from cloud routing.
+Writing includes sustained composition in native editors. Keep short search/reply semantics from `docs/mode-plan.md`, but do not treat uncertain editor purpose as permission to upload its content. Conservative handling blocks sensitive or ambiguous text from cloud routing.
 
 Cloud providers may receive permitted command text and minimal target labels. Do not send camera frames, screenshots, passwords, whole documents, private file listings, or continuous microphone recordings by default.
 
@@ -641,7 +641,7 @@ Media commands should identify the intended player or system session. "Pause" wi
 
 Reading keeps the user's chosen visual/audio preference and starts speech only on explicit request. Native app reading requires accessibility text extraction or a qualified app adapter. Arbitrary screenshot OCR and screen magnification are later capabilities unless a concrete need moves them earlier.
 
-Retain the browser pointer-centered magnifier plan and read-aloud controls from `mode-plan.md`. Do not claim existing website-only reader widgets implement arbitrary browser or native reading.
+Retain the browser pointer-centered magnifier plan and read-aloud controls from `docs/mode-plan.md`. Do not claim existing website-only reader widgets implement arbitrary browser or native reading.
 
 When app narration is active, stop/pause recognition capture or apply a tested echo-control policy so Handsfree does not obey its own voice. Screen-reader users can disable extra narration while keeping live-region/status support.
 

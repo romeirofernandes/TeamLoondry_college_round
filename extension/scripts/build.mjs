@@ -60,6 +60,7 @@ await build({
 for (const name of ["offscreen", "dashboard-bridge", "dashboard-redirect", "permissions"]) {
   await build({ ...common, entryPoints: [path.join(root, `src/${name}.ts`)], outfile: path.join(dist, `${name}.js`), format: "iife" });
 }
+await writeFile(path.join(dist, "docs-bootstrap.js"), 'window._docs_annotate_canvas_by_ext = "handsfree";\n');
 await cp(path.join(root, "manifest.json"), path.join(dist, "manifest.json"));
 await cp(path.join(root, "src/ui/theme.css"), path.join(dist, "theme.css"));
 await cp(path.resolve(root, "../next/public/brand"), path.join(dist, "brand"), {

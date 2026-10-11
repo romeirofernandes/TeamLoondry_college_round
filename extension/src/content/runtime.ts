@@ -1,3 +1,6 @@
+import { ReadingRuntime, collectReading } from "../reading/runtime";
+import { EditLedger, editorText } from "../editing/editor";
+import { GoogleDocsEditor, docsSnapshot } from "../editing/google-docs";
 import { SiteExecutor } from "../sites/executor";
 import { ActivationGate } from "../core/safety";
 import {
@@ -37,6 +40,13 @@ type Pending = {
 type SendMessage = (message: Message) => Promise<unknown>;
 
 export class ContentRuntime {
+  private activityMode: "reading" | "writing" | "browsing" = "browsing";
+  private reading: ReadingRuntime;
+  private ledger = new EditLedger();
+  private docs: GoogleDocsEditor;
+  private binding = 0;
+  private autoSuppressed = false;
+  private evidenceMode = "";
   private targets = new PageTargets();
   private overlay = new Overlay();
   private gate = new ActivationGate({
@@ -77,6 +87,8 @@ export class ContentRuntime {
     private clock = () => performance.now(),
     private autoTick = true,
   ) {
+    this.reading = new ReadingRuntime(this.send);
+    this.docs = new GoogleDocsEditor((text, command, expected, generation) => this.send({type:"DOCS_INPUT",text,command,expected,url:location.href,generation}));
     this.observer = new MutationObserver(() => {
       this.forms.onMutation();
       if (
@@ -125,6 +137,8 @@ export class ContentRuntime {
     addEventListener("scroll", this.onScroll, { passive: true });
     document.addEventListener("submit", this.onSubmit, true);
     document.addEventListener("focusin", this.onFocus, true);
+    document.addEventListener("pointermove", this.onReadingPointer, {passive:true});
+    document.addEventListener("click", this.onTaskClick, true);
     document.addEventListener("input", this.onFormEdit, true);
     document.addEventListener("change", this.onFormEdit, true);
     if (this.autoTick) this.frame = requestAnimationFrame(this.loop);
@@ -160,12 +174,15 @@ export class ContentRuntime {
     this.cancelPending("The page changed. Submission cancelled.");
     this.select(null);
     this.stopTyping();
+    this.docs.clear(); this.ledger.clear(); this.autoSuppressed=false; this.evidenceMode=""; this.reading.enable(false);
     this.choices = [];
     this.choiceDisposition = undefined;
     this.selectedDisposition = undefined;
     this.overlay.options([]);
   };
   private onScroll = () => {
+    this.reading.closeLens();
+    if(this.running && !this.paused && !this.dictating && this.activityMode!=="reading" && this.activityMode!=="writing" && collectReading().text.length>800) this.evidence("reading", "reading-interaction");
     this.overlay.target(this.target);
     this.overlay.options(this.choices);
   };
@@ -187,7 +204,27 @@ export class ContentRuntime {
       this.feedback("Handsfree paused. Resume from the controller.");
     }
   };
+  private onReadingPointer = (event: PointerEvent) => {if(this.running&&!this.paused&&this.activityMode==="reading")this.reading.point(event.clientX,event.clientY,true);};
+  private evidence(mode:"reading"|"writing"|"browsing",reason:"composition"|"reading-interaction"|"navigation",autoArm=false){
+    if(this.evidenceMode===mode&&(mode!=="writing"||this.dictating||!autoArm))return; this.evidenceMode=mode;
+    void this.send({type:"MODE_EVIDENCE",mode,reason,autoArm}).catch(()=>{});
+  }
+  private longEditor(element:HTMLElement){
+    if(!editable(element)||element instanceof HTMLInputElement||/search|filter|comment|reply|message|chat/i.test([element.getAttribute("aria-label"),element.id,element.getAttribute("role"),element.getAttribute("placeholder")].join(" ")))return false;
+    return element.getAttribute("aria-multiline")==="true" || element instanceof HTMLTextAreaElement && element.rows>=5 || element.matches("[contenteditable],.ProseMirror");
+  }
+  private onTaskClick = (event: MouseEvent) => {
+    if(!event.isTrusted||!this.running||this.paused||!(event.target instanceof HTMLElement)||event.target.closest("[data-handsfree-ignore]"))return;
+    if(event.target.closest(".kix-appview-editor")&&docsSnapshot().editable){this.evidence("writing","composition",!this.autoSuppressed);return;}
+    if(event.target.closest("a[href],input[type=search],[role=searchbox]")){this.evidence("browsing","navigation");return;}
+    if(event.target.closest("article,main,#mw-content-text")&&collectReading().text.length>800)this.evidence("reading","reading-interaction");
+  };
   private onFocus = (event: FocusEvent) => {
+    if(event.isTrusted&&this.running&&!this.paused&&event.target instanceof HTMLElement){
+      if(this.longEditor(event.target))this.evidence("writing","composition",!this.autoSuppressed);
+      else if(event.target.matches("input[type=search],[role=searchbox]")||event.target.closest("[role=search],form[role=search]"))this.evidence("browsing","navigation");
+    }
+    if(this.dictating&&this.isDocs()&&event.target instanceof HTMLElement&&!event.target.matches(".docs-texteventtarget-iframe")&&!event.target.closest("[data-handsfree-ignore]"))this.stopTyping("Focus changed. Dictation stopped.");
     if (
       this.dictating &&
       this.typingTarget &&
@@ -198,6 +235,7 @@ export class ContentRuntime {
       this.stopTyping("Focus changed. Dictation stopped.");
   };
   private onFormEdit = (event: Event) => {
+    if(event.isTrusted&&event.target instanceof HTMLElement&&this.running&&!this.paused&&this.longEditor(event.target))this.evidence("writing","composition",!this.autoSuppressed);
     if (event.target instanceof HTMLElement && event.target.matches('input,textarea,select,[role="combobox"],[role="radio"],[role="checkbox"]')) {
       this.forms.onUserEdit();
       if (this.pending) this.cancelPending("The form changed. Submission cancelled.");
@@ -338,6 +376,19 @@ export class ContentRuntime {
   }
   async handle(message: Message): Promise<unknown> {
     switch (message.type) {
+      case "MODE_CONTEXT": return {longEditor:document.activeElement instanceof HTMLElement && this.longEditor(document.activeElement),docs:docsSnapshot(),reading:collectReading().text.length>800};
+      case "EDIT_CONTEXT": return this.isDocs() ? this.docs.context() : {binding:this.binding,expected:this.typingTarget?editorText(this.typingTarget):"",text:this.ledger.context()?.text??""};
+      case "READ_SELECT": if(!this.running||this.paused||this.activityMode!=="reading")return {ok:false,error:"Reading stopped. Nothing selected."};return this.reading.select(message.start,message.end,message.revision);
+      case "EDIT_APPLY": {
+        if(!this.running||this.paused||!this.dictating)return {ok:false,error:"Start dictation in the same editor first."};
+        if(message.command==="scratch"){if(this.isDocs())await this.docs.scratch();else this.ledger.scratch();}
+        else if(message.command==="restore"){if(this.isDocs())await this.docs.restore();else this.ledger.restore();}
+        else if(message.command==="replace"){if(this.isDocs())await this.docs.replace(message.from||"",message.to||"");else this.ledger.replace(message.from||"",message.to||"");}
+        else if(message.command==="sentence"){if(this.isDocs())await this.docs.sentence();else this.ledger.sentence();}
+        else if(message.command==="revise"){if(this.isDocs())await this.docs.revise(message.text||"",message.expected);else this.ledger.revise(message.text||"",message.expected);}
+        else return {ok:false,error:"Unsupported editor correction."};
+        this.feedback(message.command==="scratch"?"Removed the last segment. Say put that back to restore it.":"Correction applied and verified.");return {ok:true};
+      }
       case "GET_SITE_CONTEXT": return this.sites.snapshot();
       case "SITE_DIALOGUE": {
         if (!this.running || this.paused || this.dictating) return null;
@@ -347,6 +398,10 @@ export class ContentRuntime {
       }
       case "PAGE_STATE": {
         const wasRunning = this.running;
+        const oldMode=this.activityMode;
+        this.activityMode=message.activityMode??this.activityMode;
+        if(oldMode!==this.activityMode){this.evidenceMode=this.activityMode;this.binding++;this.stopTyping();this.docs.clear();this.ledger.clear();this.autoSuppressed=false;}
+        this.reading.enable(message.running&&!message.paused&&this.activityMode==="reading");
         if (this.settings.pointerMode !== message.settings.pointerMode || this.settings.voiceOnly !== message.settings.voiceOnly || JSON.stringify(this.settings.enabledInputs) !== JSON.stringify(message.settings.enabledInputs)) {
           this.gate.reset();
           this.sample = null;
@@ -374,6 +429,7 @@ export class ContentRuntime {
           this.forms.cancel();
           this.cancelPending();
           this.stopTyping();
+          this.docs.clear(); this.ledger.clear();
           this.edge = null;
           this.scrollMotion.cancel();
           if (!this.running) this.gate.reset();
@@ -424,6 +480,7 @@ export class ContentRuntime {
           if (!this.choices.length)
             this.select(this.targets.snap(this.x, this.y, this.target), true);
         }
+        if(this.running&&!this.paused&&this.activityMode==="reading")this.reading.point(this.x,this.y,sample.confidence>=this.settings.confidenceThreshold);
         this.tick();
         return { ok: true };
       }
@@ -483,6 +540,7 @@ export class ContentRuntime {
         return { ok: !!link && this.running && !this.paused && !this.dictating && message.id === link.id && message.url === link.url && message.pageUrl === location.href && message.pageUrl === link.pageUrl && !!this.target && this.targets.get(link.id) === this.target && this.selectedSnapshot === this.selectionSignature(this.target) && linkUrl(this.target) === message.url && voiceExposed(this.target) };
       }
       case "PAGE_ACTION": {
+        if(message.intent.type==="reading-command"){if(!this.running||this.paused)return {ok:false};return this.reading.command(message.intent.command,message.intent.text);}
         if (message.intent.type === "confirm" && this.running && !this.paused && !this.dictating) {
           const result=await this.sites.dialogue("confirm");
           if(result){this.feedback(result.feedback);return result;}
@@ -576,6 +634,8 @@ export class ContentRuntime {
         return { ok: true, changed: true };
       }
       case "DICTATE": {
+        if(this.isDocs()){if(!this.running||this.paused||!this.dictating)return {ok:false};return {ok:await this.docs.insert(message.text,message.expected,message.binding)};}
+        if(message.binding!==undefined&&(message.binding!==this.binding||!this.typingTarget||message.expected!==editorText(this.typingTarget)))return {ok:false,error:"The editor changed while cleanup was running. Nothing inserted."};
         if (
           !this.running ||
           this.paused ||
@@ -590,7 +650,7 @@ export class ContentRuntime {
           this.stopTyping("Focus changed. Dictation stopped.");
           return { ok: false };
         }
-        const success = insertText(this.typingTarget, message.text);
+        const success = this.ledger.insert(this.typingTarget, message.text);
         if (!success) this.stopTyping("This field cannot accept dictation.");
         else this.metric("dictation-insert");
         return { ok: success };
@@ -641,6 +701,7 @@ export class ContentRuntime {
       return true;
     }
     if (intent.type === "stop-typing") {
+      this.autoSuppressed=true;
       this.stopTyping("Dictation stopped.");
       return true;
     }
@@ -760,14 +821,10 @@ export class ContentRuntime {
       return true;
     }
     if (intent.type === "start-typing") {
-      const element = this.target
-        ? editable(this.target)
-          ? this.target
-          : null
-        : document.activeElement instanceof HTMLElement &&
-            editable(document.activeElement)
-          ? document.activeElement
-          : null;
+      if(this.isDocs()){if(!this.voiceAllowed())return false;this.docs.focus();this.binding++;this.autoSuppressed=false;this.dictating=true;void this.send({type:"SET_STATE",patch:{dictating:true}}).catch(()=>{});this.feedback("Docs dictation is on. Speak, then pause. Say scratch that or stop dictation.");return true;}
+      const active=document.activeElement;
+      const selected=this.target?.isConnected?this.target:null;
+      const element=selected?(editable(selected)?selected:null):active instanceof HTMLElement&&editable(active)?active:null;
       if (!element) {
         this.feedback(
           "Point at an editable text field first. Password and payment fields are blocked.",
@@ -777,6 +834,7 @@ export class ContentRuntime {
       if (!this.voiceAllowed()) return false;
       this.cancelPending();
       this.typingTarget = element;
+      this.binding++; this.autoSuppressed=false;
       element.focus({ preventScroll: true });
       this.select(element);
       this.dictating = true;
@@ -928,8 +986,10 @@ export class ContentRuntime {
     if (!this.pending) this.feedback(`Selected ${targetLabel(element)}.`);
     return true;
   }
+  private isDocs(){return location.hostname==="docs.google.com"&&/^\/document\/d\//.test(location.pathname);}
   private stopTyping(message?: string) {
     if (!this.dictating && !this.typingTarget) return;
+    this.binding++; this.docs.clear(); this.ledger.clear();
     this.dictating = false;
     this.typingTarget = null;
     this.gate.reset();
@@ -942,6 +1002,7 @@ export class ContentRuntime {
     this.sites.invalidate();
     this.scrollMotion.cancel();
     this.targets.destroy();
+    this.reading.destroy(); this.ledger.clear(); this.docs.clear();
     this.destroyed = true;
     cancelAnimationFrame(this.frame);
     this.observer.disconnect();
@@ -952,6 +1013,8 @@ export class ContentRuntime {
     removeEventListener("scroll", this.onScroll);
     document.removeEventListener("submit", this.onSubmit, true);
     document.removeEventListener("focusin", this.onFocus, true);
+    document.removeEventListener("pointermove", this.onReadingPointer);
+    document.removeEventListener("click", this.onTaskClick, true);
     document.removeEventListener("input", this.onFormEdit, true);
     document.removeEventListener("change", this.onFormEdit, true);
   }
