@@ -37,6 +37,7 @@ async function audit(page, label) {
   if (!AxeBuilder) return;
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+  await page.waitForFunction(() => [...document.querySelectorAll("button:not(:disabled)")].filter(button => button.checkVisibility() && button.getAttribute("aria-disabled") !== "true").every(button => Number(getComputedStyle(button).opacity) === 1));
   const result = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
     .analyze();
@@ -99,13 +100,12 @@ try {
     page.getByRole("button", { name: "Continue", exact: true }),
   ).toBeEnabled();
   await audit(page, "onboarding-choices");
-  await expect
-    .poll(() => worker.evaluate(() => globalThis.setupSpeech), {
-      timeout: 10000,
-    })
-    .toContain("Would you like spoken guidance?");
+  expect(await worker.evaluate(() => globalThis.setupSpeech)).toEqual([]);
+  await expect.poll(() => worker.evaluate(() => globalThis.setupSpeech.length), {timeout: 16000}).toBe(2);
+  await page.waitForTimeout(5200);
+  expect(await worker.evaluate(() => globalThis.setupSpeech)).toHaveLength(2);
   expect((await send({ type: "GET_STATE" })).running).toBe(false);
-  report.push({ idleVoiceOffer: true, noSessionAutostart: true });
+  report.push({ delayedOffer: true, repeatsOnce: true, noSessionAutostart: true });
   await expect(page).toHaveTitle("Dashboard · Handsfree");
   const handChoice = page.getByRole("checkbox", {
     name: "Hand movement",
@@ -117,6 +117,7 @@ try {
     .poll(async () => (await send({ type: "GET_SETTINGS" })).enabledInputs)
     .toEqual(["voice", "face", "hand"]);
   await expect(handChoice).toBeFocused();
+  await expect.poll(async () => (await send({type: "GET_SETTINGS"})).setupGuidance).toBe("silent");
   await page.keyboard.press("Tab");
   await expect(
     page.getByRole("radio", { name: "Head movement", exact: true }),
@@ -140,7 +141,12 @@ try {
   await expect
     .poll(async () => (await send({ type: "GET_SETTINGS" })).enabledInputs)
     .toEqual(["voice"]);
+  const speechBeforeReload = await worker.evaluate(() => globalThis.setupSpeech.length);
   await page.reload();
+  await page.waitForTimeout(6200);
+  expect(await worker.evaluate(() => globalThis.setupSpeech.length)).toBe(speechBeforeReload);
+  await expect(page.getByRole("button", {name: "Read setup aloud", exact: true})).toHaveCount(0);
+  report.push({ manualInteractionSilencesSetup: true, silencePersistsAfterReload: true });
   await expect(
     page.getByRole("checkbox", { name: "Voice", exact: true }),
   ).toBeChecked();
@@ -229,6 +235,8 @@ try {
   await expect(
     page.getByRole("heading", { name: "Your session", exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole("tab", {name: "Docs", exact: true})).toHaveCount(0);
+  await expect(page.getByRole("tab", {name: "Help", exact: true})).toHaveCount(0);
   await expect
     .poll(
       async () => (await send({ type: "GET_SETTINGS" })).onboardingCompleted,
@@ -247,6 +255,10 @@ try {
   await page
     .getByRole("button", { name: "Profile and preferences", exact: true })
     .click();
+  await expect(page.getByRole("tab")).toHaveCount(3);
+  for (const label of ["Controls", "Permissions", "Advanced"]) await expect(page.getByRole("tab", {name: label, exact: true})).toBeVisible();
+  for (const text of ["Ask questions and use page controls", "Everyday commands with Jev", "What your request shares", "A few words do a lot"]) await expect(page.getByText(text, {exact: true})).toHaveCount(0);
+  await expect(page.getByRole("button", {name: "Adjust pointer", exact: true})).toHaveCount(0);
   await expect(
     page.getByRole("checkbox", { name: "Voice", exact: true }),
   ).toBeChecked();
@@ -272,6 +284,7 @@ try {
   await expect(
     page.getByRole("button", { name: "Pause session", exact: true }),
   ).toBeVisible();
+  await page.locator(".dashboard-preview-disclosure > summary").click();
   await expect(
     page.getByRole("button", { name: "Show camera preview", exact: true }),
   ).toBeVisible();
@@ -338,7 +351,6 @@ try {
     "activity",
     "overview",
     "tabs",
-    "help",
   ]) {
     await page.goto(`${origin}/dashboard#${view}`);
     await expect(
@@ -397,6 +409,8 @@ try {
     path: path.join(root, "test-results", "preferences-new.png"),
     fullPage: true,
   });
+  await page.getByRole("tab", {name: "Advanced", exact: true}).click();
+  await page.locator("summary").filter({hasText: "Run setup again"}).click();
   await page.getByRole("button", { name: "Replay setup", exact: true }).click();
   await expect(
     page.getByRole("heading", {
@@ -421,6 +435,48 @@ try {
     path: path.join(root, "test-results", "onboarding-reduced-motion.png"),
     fullPage: true,
   });
+  // A spoken reply opts into narration; pointer or keyboard feedback stops it.
+  await send({type: "SAVE_SETTINGS", settings: {...(await send({type: "GET_SETTINGS"})), enabledInputs: ["voice"], setupGuidance: "ask", onboardingStep: 0}});
+  await page.reload();
+  await expect(page.getByRole("button", {name: "Stop listening", exact: true})).toBeVisible();
+  const beforeVoice = await worker.evaluate(() => globalThis.setupSpeech.length);
+  await send({type: "UI_HEARD", text: "yes"});
+  await expect.poll(async () => (await send({type: "GET_SETTINGS"})).setupGuidance).toBe("voice");
+  await expect.poll(() => worker.evaluate(() => globalThis.setupSpeech.length)).toBeGreaterThan(beforeVoice);
+  await send({type: "UI_HEARD", text: "next"});
+  await expect(page.getByRole("heading", {name: "A little access to get started.", exact: true})).toBeVisible();
+  await expect.poll(() => worker.evaluate(() => globalThis.setupSpeech.at(-1))).toContain("Allow the access");
+  await page.getByRole("button", {name: "Go back", exact: true}).click();
+  await expect.poll(async () => (await send({type: "GET_SETTINGS"})).setupGuidance).toBe("silent");
+  const afterClick = await worker.evaluate(() => globalThis.setupSpeech.length);
+  await send({type: "UI_HEARD", text: "yes"});
+  await page.reload();
+  await page.waitForTimeout(6200);
+  expect(await worker.evaluate(() => globalThis.setupSpeech.length)).toBe(afterClick);
+  report.push({ voiceReplyEnablesNarration: true, voiceNavigationNarrates: true, buttonStopsAndPersistsSilence: true });
+  const docs = await context.newPage();
+  await docs.goto(`${origin}/docs`);
+  await expect(docs).toHaveTitle("Docs · Handsfree");
+  await expect(docs.locator(".docs-site-list > details")).toHaveCount(15);
+  await expect(docs.getByRole("heading", {name: "The Jev layer", exact: true})).toBeVisible();
+  await expect(docs.getByRole("heading", {name: "The LLM layer", exact: true})).toBeVisible();
+  for (const detail of await docs.locator("details").all()) await detail.locator("summary").click();
+  await audit(docs, "docs-expanded-light");
+  await docs.getByRole("button", {name: "Toggle color theme", exact: true}).click();
+  await expect(docs.locator("html")).toHaveClass(/dark/);
+  await docs.waitForFunction(() => !document.documentElement.dataset.pitchDirection);
+  await audit(docs, "docs-expanded-dark");
+  for (const width of [320, 390, 768, 1280]) {
+    await docs.setViewportSize({width, height: 800});
+    await expect.poll(() => docs.evaluate(() => document.documentElement.scrollWidth - innerWidth), {message: `Docs overflow ${width}`}).toBeLessThanOrEqual(0);
+  }
+  await docs.evaluate(() => document.documentElement.style.fontSize = "200%");
+  await expect.poll(() => docs.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+  await docs.evaluate(() => document.documentElement.style.fontSize = "");
+  await docs.screenshot({path: path.join(root, "test-results", "docs-mobile.png"), fullPage: true});
+  await docs.setViewportSize({width: 1280, height: 900});
+  await docs.screenshot({path: path.join(root, "test-results", "docs-desktop.png"), fullPage: true});
+  report.push({docsFifteenAdapters: true, docsLayers: true, docsResponsive: true});
   expect(errors).toEqual([]);
   report.push({
     reflow: true,

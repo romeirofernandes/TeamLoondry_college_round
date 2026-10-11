@@ -1,19 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  ArrowRight,
-  CheckCircle,
-  Microphone,
-  SpeakerHigh,
-} from "@phosphor-icons/react";
+import { ArrowRight, CheckCircle, Microphone } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
-import {
-  Field,
-  FieldLabel,
-  FieldDescription,
-  FieldGroup,
-} from "@/components/ui/field";
+import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { request, subscribeVoice } from "@/lib/extension-bridge";
 import {
   inputMethods,
@@ -66,12 +56,14 @@ export function Onboarding({
   );
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
-  const [offeredGuidance, setOfferedGuidance] = useState(false);
   const busyRef = useRef(false);
+  const quiet = useRef(settings.setupGuidance === "silent");
+  const offerCount = useRef(0);
+  const [guidanceMode, setGuidanceMode] = useState(settings.setupGuidance);
   const heading = useRef<HTMLHeadingElement>(null);
   const step = settings.onboardingStep;
-  const acted = useRef(false);
   const handler = useRef<(text: string) => void>(() => {});
+  const interactionHandler = useRef<(target: EventTarget) => void>(() => {});
   const draft = normalizeControlSettings({
     ...settings,
     enabledInputs: selected,
@@ -80,7 +72,7 @@ export function Onboarding({
   const needsMicrophone = selected.includes("voice");
   const instructions =
     step === 0
-      ? "How would you like to control Handsfree? Choose any combination. Say choose voice, choose head, choose hands, or voice only. Say use head or use hands to choose your primary pointer. Say next when you're ready."
+      ? "Choose voice, head movement, hand movement, or a combination. You can change these later. Choose Continue when you are ready."
       : step === 1
         ? `Allow the access for your choices. ${needsCamera ? "Head and hands need the camera. " : ""}${needsMicrophone ? "Voice needs the microphone. " : ""}Choose Allow selected devices. Chrome may ask for approval. You can continue without granting access and return later. Say next to continue or go back.`
         : "Your setup is ready to try. Voice commands include scroll down, open a named item, and stop handsfree. Head or hand control uses a short calibration. Choose Try pointer calibration, or say finish setup to continue. You can change preferences from Profile at any time.";
@@ -91,30 +83,100 @@ export function Onboarding({
     heading.current?.focus();
   }, [step]);
   useEffect(() => {
-    if (!connected || step !== 0 || acted.current) return;
-    const timer = setTimeout(() => {
-      if (
-        !acted.current &&
-        document.visibilityState === "visible" &&
-        document.hasFocus()
-      ) {
-        acted.current = true;
-        setOfferedGuidance(true);
-        void guidance.read("Would you like spoken guidance?");
-      }
-    }, 5000);
-    const interacted = () => {
-      acted.current = true;
-      clearTimeout(timer);
+    if (settings.setupGuidance === "silent") quiet.current = true;
+    setGuidanceMode(quiet.current ? "silent" : settings.setupGuidance);
+  }, [settings.setupGuidance]);
+  useEffect(() => {
+    if (
+      !connected ||
+      guidanceMode !== "ask" ||
+      step !== 0 ||
+      quiet.current ||
+      offerCount.current >= 2
+    )
+      return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const offer = () => {
+      timer = setTimeout(() => {
+        if (
+          disposed ||
+          quiet.current ||
+          document.visibilityState !== "visible" ||
+          !document.hasFocus()
+        )
+          return;
+        offerCount.current += 1;
+        void guidance
+          .read(
+            permissions?.microphone === "granted"
+              ? "Would you like spoken help? Say yes, or use the controls on screen."
+              : "Need spoken help? Allow microphone access to reply, or use the controls on screen.",
+          )
+          .then(() => {
+            if (!disposed && !quiet.current && offerCount.current < 2) offer();
+          });
+      }, 5000);
     };
-    addEventListener("pointerdown", interacted, true);
-    addEventListener("keydown", interacted, true);
+    offer();
     return () => {
+      disposed = true;
       clearTimeout(timer);
-      removeEventListener("pointerdown", interacted, true);
-      removeEventListener("keydown", interacted, true);
     };
-  }, [connected, step, guidance.read]);
+  }, [connected, guidanceMode, step, permissions?.microphone, guidance.read]);
+  useEffect(() => {
+    if (
+      connected &&
+      guidanceMode !== "silent" &&
+      permissions?.microphone === "granted" &&
+      selected.includes("voice")
+    )
+      guidance.setListening(true);
+  }, [
+    connected,
+    guidanceMode,
+    permissions?.microphone,
+    selected.includes("voice"),
+    guidance.setListening,
+  ]);
+  useEffect(() => {
+    if (!connected || guidanceMode !== "voice" || quiet.current) return;
+    void guidance.read(instructions);
+    return guidance.stopReading;
+  }, [connected, guidanceMode, step, guidance.read, guidance.stopReading]);
+  function silenceFromUI(target: EventTarget) {
+    if (
+      !(target instanceof Element) ||
+      !target.closest(
+        "button, input, select, [role='radio'], [role='switch'], [role='slider']",
+      )
+    )
+      return;
+    guidance.stopReading();
+    if (quiet.current) return;
+    quiet.current = true;
+    // Let native checkbox/radio changes finish before saving the silence choice.
+    setTimeout(() => {
+      setGuidanceMode("silent");
+      void persist({ setupGuidance: "silent", spokenFeedback: false }).catch(
+        () => {
+          setError("Could not save silent setup. Reconnect and try again.");
+        },
+      );
+    }, 0);
+  }
+  interactionHandler.current = silenceFromUI;
+  useEffect(() => {
+    const onInteraction = (event: Event) => {
+      if (event.target) interactionHandler.current(event.target);
+    };
+    document.addEventListener("click", onInteraction, true);
+    document.addEventListener("change", onInteraction, true);
+    return () => {
+      document.removeEventListener("click", onInteraction, true);
+      document.removeEventListener("change", onInteraction, true);
+    };
+  }, []);
   useEffect(() => subscribeVoice((text) => handler.current(text)), []);
   async function perform(work: () => Promise<void>) {
     if (busyRef.current) return;
@@ -139,7 +201,6 @@ export function Onboarding({
     pointerMode?: Settings["pointerMode"],
   ) {
     if (busyRef.current) return;
-    acted.current = true;
     setSelected(inputs);
     setError("");
     if (inputs.length)
@@ -168,12 +229,6 @@ export function Onboarding({
         onComplete();
       } else {
         await persist({ enabledInputs: selected, onboardingStep: step + 1 });
-        if (settings.spokenFeedback)
-          void guidance.read(
-            step === 0
-              ? "Allow access. Choose Allow selected devices to enable only the devices for your setup. You can continue and set this up later."
-              : "Try your setup. Try pointer calibration, or say finish setup.",
-          );
       }
     });
   }
@@ -206,12 +261,20 @@ export function Onboarding({
   }
   handler.current = (text) => {
     if (!guidance.listening) return;
-    acted.current = true;
     const phrase = text
       .toLowerCase()
       .trim()
       .replace(/[.!?,]+$/g, "")
       .replace(/\s+/g, " ");
+    if (
+      !quiet.current &&
+      !/^(stop reading|mute|no|no thanks|stop listening|stop handsfree)$/.test(
+        phrase,
+      )
+    ) {
+      setGuidanceMode("voice");
+      void persist({ setupGuidance: "voice" }).catch(() => {});
+    }
     if (/^(next|continue|finish setup|save preferences)$/.test(phrase)) {
       advance();
       return;
@@ -225,14 +288,15 @@ export function Onboarding({
         phrase,
       )
     ) {
-      void perform(async () => {
-        await persist({ spokenFeedback: true });
+      if (!quiet.current && guidanceMode === "voice")
         void guidance.read(instructions);
-      });
       return;
     }
-    if (/^(stop reading|mute|no thanks)$/.test(phrase)) {
+    if (/^(stop reading|mute|no|no thanks)$/.test(phrase)) {
+      quiet.current = true;
+      setGuidanceMode("silent");
       guidance.stopReading();
+      void persist({ setupGuidance: "silent" }).catch(() => {});
       return;
     }
     if (/^(stop listening|stop handsfree)$/.test(phrase)) {
@@ -269,13 +333,7 @@ export function Onboarding({
     }
   };
   return (
-    <section
-      className="onboarding"
-      aria-busy={working}
-      onPointerDown={() => {
-        acted.current = true;
-      }}
-    >
+    <section className="onboarding" aria-busy={working}>
       <div className="onboarding-top">
         <p className="dashboard-overline">Make yourself comfortable</p>
         <span>Step {step + 1} of 3</span>
@@ -312,27 +370,6 @@ export function Onboarding({
         </p>
       </div>
       <div className="onboarding-guidance">
-        {offeredGuidance && step === 0 && (
-          <p className="onboarding-spoken-offer">
-            Would you like spoken guidance? Choose Read setup aloud.
-          </p>
-        )}
-        <Button
-          variant="outline"
-          onClick={() => {
-            acted.current = true;
-            void perform(async () => {
-              if (connected) await persist({ spokenFeedback: true });
-              void guidance.read(instructions);
-            });
-          }}
-        >
-          <SpeakerHigh data-icon="inline-start" aria-hidden="true" />
-          Read setup aloud
-        </Button>
-        <Button variant="ghost" onClick={guidance.stopReading}>
-          Stop reading
-        </Button>
         <Button variant="outline" onClick={listen} disabled={working}>
           <Microphone data-icon="inline-start" aria-hidden="true" />
           {guidance.listening ? "Stop listening" : "Listen for setup commands"}
@@ -373,28 +410,6 @@ export function Onboarding({
               )
             }
           />
-          <FieldGroup>
-            <Field>
-              <label className="guidance-choice">
-                <input
-                  type="checkbox"
-                  checked={settings.spokenFeedback}
-                  disabled={!connected}
-                  onChange={(event) =>
-                    void perform(() =>
-                      persist({ spokenFeedback: event.target.checked }),
-                    )
-                  }
-                />
-                <span>
-                  Read guidance and results aloud
-                  <span className="input-choice-hint">
-                    Leave this off if you prefer your screen reader's voice.
-                  </span>
-                </span>
-              </label>
-            </Field>
-          </FieldGroup>
         </div>
       )}
       {step === 1 && (

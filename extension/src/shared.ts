@@ -6,6 +6,7 @@ export interface Settings {
   enabledInputs: InputMethod[] | null;
   onboardingStep: number;
   onboardingCompleted: boolean;
+  setupGuidance: "ask" | "voice" | "silent";
   voiceOnly: boolean;
   spokenFeedback: boolean;
   testWriteTargets: string[];
@@ -34,6 +35,7 @@ export const defaults: Settings = {
   enabledInputs: null,
   onboardingStep: 0,
   onboardingCompleted: false,
+  setupGuidance: "ask",
   voiceOnly: false,
   spokenFeedback: false,
   testWriteTargets: [],
@@ -88,6 +90,7 @@ export function normalizeControlSettings(value: Partial<Settings>): Settings {
     enabledInputs,
     onboardingStep: Math.round(bounded(next.onboardingStep, 0, 2, 0)),
     onboardingCompleted: next.onboardingCompleted === true,
+    setupGuidance: next.setupGuidance === "voice" || next.setupGuidance === "silent" ? next.setupGuidance : "ask",
     testWriteTargets: Array.isArray(next.testWriteTargets) ? next.testWriteTargets.filter((value): value is string => typeof value === "string" && /^https:\/\/(?:github\.com\/[^/]+\/[^/?#]+|(?:www\.)?reddit\.com\/r\/[^/?#]+|x\.com\/[^/]+\/status\/\d+)\/?$/.test(value)).slice(0,5) : [],
     testMessageRecipients: Array.isArray(next.testMessageRecipients) ? [...new Set(next.testMessageRecipients.filter((entry): entry is string => typeof entry === "string" && /^(?:gmail:[^\s@]+@[^\s@]+\.[^\s@]+|whatsapp:[^\n]{1,100}|meet:[a-z]{3}-[a-z]{4}-[a-z]{3})$/.test(entry)).map(entry => entry.toLowerCase().trim()))].slice(0,20) : [],
     voiceOnly: !enabledInputs.includes("face") && !enabledInputs.includes("hand"),

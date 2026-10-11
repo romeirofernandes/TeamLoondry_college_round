@@ -306,7 +306,7 @@ async function openPermissions(options?: Extract<Message, {type: "GRANT_PERMISSI
   url.searchParams.set("kind", speech ? "speech" : options?.kind ?? "devices");
   url.searchParams.set("camera", String(options?.camera ?? !settings.voiceOnly));
   url.searchParams.set("microphone", String(options?.microphone ?? inputMethods(settings).includes("voice")));
-  url.searchParams.set("return", options?.returnHash === "#setup" ? "#setup" : "#preferences");
+  url.searchParams.set("return", options?.returnHash === "#setup" ? "#setup" : options?.returnHash === "#access" ? "#access" : "#preferences");
   const existing = (await chrome.tabs.query({})).find(tab => tab.url?.startsWith(chrome.runtime.getURL("permissions.html")));
   if (existing?.id !== undefined) {
     await chrome.tabs.update(existing.id, { url: url.href, active: true });
@@ -1024,7 +1024,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
         return {ok:true};
       }
       if (!await activeDashboard(sender.tab.id)) return {ok:false,error:"Return to the dashboard to use setup voice."};
-      if (mediaPermissions.microphone !== "granted") return {ok:false,error:"Allow microphone access in Browser access, then choose Listen for setup commands."};
+      if (mediaPermissions.microphone !== "granted") return {ok:false,error:"Allow microphone access in Permissions, then choose Listen for setup commands."};
       uiVoiceTab = sender.tab.id; uiVoiceUntil = Date.now() + 15000;
       await controller("ui-start"); return {ok:true};
     }

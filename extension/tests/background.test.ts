@@ -166,6 +166,12 @@ describe("background command and permission boundary", () => {
     expect(browser.windows.create).toHaveBeenCalledTimes(1);
     expect(browser.tabs.update).toHaveBeenCalledWith(99,expect.objectContaining({url:expect.stringContaining("kind=tabs")}));
   });
+  it("keeps permission handoffs on the Permissions tab", async () => {
+    const {browser, send} = await setup();
+    await send({type:"GRANT_PERMISSIONS",kind:"devices",camera:false,microphone:true,returnHash:"#access"});
+    const options = browser.windows.create.mock.calls[0][0] as {url:string};
+    expect(new URL(options.url).searchParams.get("return")).toBe("#access");
+  });
   it("returns to setup after installing on-device speech", async () => {
     const { browser, send } = await setup();
     await send({ type: "INSTALL_SPEECH_PACK", returnHash: "#setup" });

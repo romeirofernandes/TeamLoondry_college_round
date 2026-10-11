@@ -78,7 +78,7 @@ button("providers", async () => await chrome.permissions.request({ origins: ["ht
 button("speech", async () => { const settings = await send<Settings>({ type: "GET_SETTINGS" }); await installLocalSpeech(settings.language); return "Language ready. Return to Handsfree to start listening."; });
 button("read", async () => { await send({type:"UI_SPEAK",text:root.querySelector("h1")!.textContent + ". " + [...root.querySelectorAll<HTMLElement>("[data-kind]")].filter(row=>!row.hidden).map(row=>row.innerText).join(". ") + ". Choose Return to Handsfree when ready."}); return "Reading finished."; });
 button("quiet", async () => { await send({type:"UI_SPEAK",text:""}); return "Reading stopped."; });
-button("return", async () => { await send({type:"UI_SPEAK",text:""}); await send({ type: "OPEN_DASHBOARD", hash: query.get("return") === "#setup" ? "#setup" : "#preferences" }); window.close(); return "Returning to Handsfree."; });
+button("return", async () => { await send({type:"UI_SPEAK",text:""}); await send({ type: "OPEN_DASHBOARD", hash: query.get("return") === "#setup" ? "#setup" : query.get("return") === "#access" ? "#access" : "#preferences" }); window.close(); return "Returning to Handsfree."; });
 void Promise.all(["camera", "microphone"].map(async name => {
   try {
     const permission = await navigator.permissions.query({ name: name as PermissionName });

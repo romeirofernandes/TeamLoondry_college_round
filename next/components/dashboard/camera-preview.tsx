@@ -28,8 +28,8 @@ export function CameraPreview({
         voiceOnly
           ? "Camera stays off. Use voice to choose named items and results."
           : running
-            ? "Tracking is running in the extension. A camera preview is optional."
-            : "Start a session when you're ready. Camera preview is optional.",
+            ? "Show a preview to check your position."
+            : "Start a session to preview your camera.",
       );
       return;
     }

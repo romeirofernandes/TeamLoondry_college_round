@@ -1253,3 +1253,128 @@
   .gesture-destinations { grid-template-columns: minmax(0, 1fr); }
   .gesture-permission { align-items: stretch; flex-direction: column; }
 }
+
+/* Keep the profile short; detailed controls expand in place. */
+.dashboard-settings-stack {
+  display: grid;
+  gap: 24px;
+  max-width: 1040px;
+  margin-inline: auto;
+}
+.dashboard-settings-stack .dashboard-preferences-panel {
+  max-width: none;
+  padding: 28px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  gap: 24px;
+}
+.dashboard-settings-section {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
+  min-width: 0;
+}
+.dashboard-settings-section > summary {
+  padding: 20px 24px;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.dashboard-settings-section > summary:focus-visible,
+.dashboard-assistance > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+.dashboard-settings-content {
+  padding: 0 24px 24px;
+}
+.dashboard-settings-section > .dashboard-hint,
+.dashboard-settings-section > button {
+  margin: 0 24px 20px;
+}
+.dashboard-assistance {
+  margin-block: 0 20px;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
+.dashboard-assistance > summary {
+  cursor: pointer;
+  padding-block: 12px;
+  width: fit-content;
+}
+.dashboard-assistance .dashboard-screen-tools {
+  margin-block: 8px 0;
+}
+.dashboard-screen-tools p:empty,
+.onboarding-guidance p:empty {
+  display: none;
+}
+.dashboard-device-status {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+}
+.dashboard-device-status > div {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.dashboard-device-status dt {
+  font-weight: 600;
+}
+.dashboard-device-status dd {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+@media (max-width: 800px) {
+  .dashboard-settings-content > .dashboard-two-column {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .dashboard-settings-stack .dashboard-preferences-panel {
+    padding: 20px;
+  }
+  .dashboard-settings-section > summary {
+    padding: 16px 20px;
+  }
+  .dashboard-settings-content {
+    padding: 0 12px 12px;
+  }
+  .dashboard-settings-stack .dashboard-tab-list [data-slot="tabs-trigger"] {
+    min-width: 0;
+  }
+}
+.dashboard-command-permission { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.dashboard-command-permission p { font-weight: 500; }
+.dashboard-command-permission small { color: var(--muted-foreground); font-size: 0.875rem; }
+
+/* Keep Session focused on controls, with optional details nearby. */
+.dashboard-tab-list[hidden] {
+  display: none;
+}
+.dashboard-preview-disclosure .dashboard-camera {
+  margin-block-start: 16px;
+}
+.dashboard-preview-footer {
+  flex-wrap: wrap;
+}
+.dashboard-message:empty {
+  display: none;
+}
+.dashboard-assistance {
+  margin: 0;
+}
+.dashboard-tabs > [data-slot="tabs-content"][data-state="active"] {
+  display: grid;
+  gap: 24px;
+}
+
+.dashboard-session-tabs {
+  min-width: 0;
+  width: 100%;
+}

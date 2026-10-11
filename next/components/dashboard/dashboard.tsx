@@ -5,11 +5,9 @@ import {
   ArrowSquareOut,
   ArrowsClockwise,
   ChartLine,
-  CheckCircle,
   DownloadSimple,
   GearSix,
   Hand,
-  Key,
   Microphone,
   Monitor,
   Pause,
@@ -21,7 +19,6 @@ import {
   UserFocus,
   UserCircle,
   SpeakerHigh,
-  Question,
 } from "@phosphor-icons/react";
 import {
   defaults,
@@ -34,7 +31,6 @@ import {
   type MetricEvent,
   type PermissionState,
 } from "../../../extension/src/shared";
-import type { SiteSnapshot } from "../../../extension/src/sites/types";
 import { cursorPaths } from "../../../extension/src/core/cursors";
 import { request, subscribe, subscribeReady } from "@/lib/extension-bridge";
 import BrandLogo from "@/components/brand-logo";
@@ -84,27 +80,24 @@ import { Onboarding } from "./onboarding";
 import { useScreenGuidance } from "./use-screen-guidance";
 import { GestureConfig } from "./gesture-config";
 
-type ProviderStatus = {
-  groqKeyCount: number;
-  jevConfigured: boolean;
-  activeProvider: string | null;
-  sharedKeys: boolean;
-};
 type BrowserTab = { id: number; title: string; url: string; active: boolean };
 type RunLog = { events: MetricEvent[]; summary: Record<string, unknown> };
 const views = [
   { id: "overview", label: "Session", icon: Monitor },
-  { id: "preferences", label: "Inputs", icon: SlidersHorizontal },
-  { id: "access", label: "Browser access", icon: Plugs },
-  { id: "help", label: "Help", icon: Question },
+  { id: "preferences", label: "Controls", icon: SlidersHorizontal },
+  { id: "access", label: "Permissions", icon: Plugs },
   { id: "setup", label: "Setup", icon: UserFocus },
-  { id: "pointer", label: "Pointer", icon: UserFocus },
-  { id: "gestures", label: "Gestures", icon: Hand },
-  { id: "voice", label: "Voice", icon: Microphone },
-  { id: "tabs", label: "Tabs", icon: TabsIcon },
-  { id: "providers", label: "Advanced", icon: Key },
-  { id: "activity", label: "Activity", icon: ChartLine },
+  { id: "providers", label: "Advanced", icon: GearSix },
 ];
+const viewAliases: Record<string, string> = {
+  tabs: "overview",
+  pointer: "preferences",
+  gestures: "preferences",
+  voice: "preferences",
+  activity: "providers",
+  help: "overview",
+  docs: "overview",
+};
 const languages = [
   { value: "auto", label: "Automatic" },
   { value: "en-US", label: "English, US" },
@@ -128,17 +121,12 @@ export function HandsfreeDashboard() {
   const [phraseError, setPhraseError] = useState("");
   const [view, setView] = useState("overview");
   const [command, setCommand] = useState("");
-  const [providers, setProviders] = useState<ProviderStatus | null>(null);
   const [permissions, setPermissions] = useState<PermissionState | null>(null);
   const [pausePhrase, setPausePhrase] = useState(defaults.pausePhrase);
   const [messageRecipients, setMessageRecipients] = useState("");
   const [resumePhrase, setResumePhrase] = useState(defaults.resumePhrase);
-  const [groqKeys, setGroqKeys] = useState([""]);
-  const [jevKey, setJevKey] = useState("");
   const [tabs, setTabs] = useState<BrowserTab[]>([]);
   const [tabsLoaded, setTabsLoaded] = useState(false);
-  const [siteSupport, setSiteSupport] = useState<SiteSnapshot | null>(null);
-  const [supportLoaded, setSupportLoaded] = useState(false);
   const [logs, setLogs] = useState<RunLog | null>(null);
   const generation = useRef(0);
   const connectedRef = useRef(false);
@@ -153,29 +141,37 @@ export function HandsfreeDashboard() {
       ? ""
       : state.calibrationStage.split(" · ")[1] || "";
   useEffect(() => {
-    if (calibrationPose && settings.spokenFeedback)
+    if (
+      calibrationPose &&
+      settings.spokenFeedback &&
+      (settings.onboardingCompleted || settings.setupGuidance === "voice")
+    )
       void guidance.read(
         state.calibrationStage.split(" · ")[2]?.split(". Capturing")[0] ||
           calibrationPose,
       );
-  }, [calibrationPose, settings.spokenFeedback, guidance.read]);
+  }, [
+    calibrationPose,
+    settings.spokenFeedback,
+    settings.onboardingCompleted,
+    settings.setupGuidance,
+    guidance.read,
+  ]);
 
   const refresh = useCallback(async () => {
     const attempt = ++generation.current;
     refreshing.current = true;
     setConnecting(true);
     try {
-      const [session, preferences, status, grants] = await Promise.all([
+      const [session, preferences, grants] = await Promise.all([
         request<SessionState>({ type: "GET_STATE" }),
         request<Settings>({ type: "GET_SETTINGS" }),
-        request<ProviderStatus>({ type: "GET_PROVIDER_STATUS" }),
         request<PermissionState>({ type: "GET_PERMISSIONS" }),
       ]);
       if (attempt !== generation.current) return;
       setState(session);
       setSettings(preferences);
       settingsRef.current = preferences;
-      setProviders(status);
       setPermissions(grants);
       setPausePhrase(preferences.pausePhrase);
       setResumePhrase(preferences.resumePhrase);
@@ -205,7 +201,7 @@ export function HandsfreeDashboard() {
   useEffect(() => {
     const hashView = () => {
       const id = location.hash.slice(1);
-      if (views.some((item) => item.id === id)) setView(id);
+      if (views.some((item) => item.id === id) || viewAliases[id]) setView(id);
     };
     hashView();
     addEventListener("hashchange", hashView);
@@ -324,28 +320,25 @@ export function HandsfreeDashboard() {
     );
   }
   const showSetup = !settings.onboardingCompleted || view === "setup";
-  const profileView = [
-    "preferences",
-    "pointer",
-    "gestures",
-    "voice",
-    "access",
-    "providers",
-    "activity",
-  ].includes(view);
+  const activeView = viewAliases[view] || view;
+  const profileView = ["preferences", "access", "providers"].includes(
+    activeView,
+  );
   const navigationViews = views.filter((item) =>
     profileView
-      ? [
-          "preferences",
-          "pointer",
-          "gestures",
-          "voice",
-          "access",
-          "providers",
-          ...(view === "activity" ? ["activity"] : []),
-        ].includes(item.id)
-      : ["overview", "tabs", "help"].includes(item.id),
+      ? ["preferences", "access", "providers"].includes(item.id)
+      : item.id === "overview",
   );
+  useEffect(() => {
+    if (showSetup || !viewAliases[view]) return;
+    const section = document.querySelector<HTMLDetailsElement>(
+      `[data-settings-section="${view}"]`,
+    );
+    if (section) {
+      section.open = true;
+      section.querySelector("summary")?.focus();
+    }
+  }, [view, showSetup]);
   const locked = !connected || connecting || busy;
   function handleDashboardVoice(text: string) {
     if (showSetup || !guidance.listening) return;
@@ -356,11 +349,12 @@ export function HandsfreeDashboard() {
     const destinations: Record<string, string> = {
       "open profile": "preferences",
       "open preferences": "preferences",
+      "open controls": "preferences",
+      "open permissions": "access",
       "open pointer": "pointer",
       "open voice": "voice",
       "open gestures": "gestures",
       "open browser access": "access",
-      "open help": "help",
       "show tabs": "tabs",
       "back to session": "overview",
       "open advanced": "providers",
@@ -413,7 +407,7 @@ export function HandsfreeDashboard() {
           },
         }),
       );
-    if (view === "preferences") {
+    if (activeView === "preferences") {
       if (phrase === "voice only") save({ enabledInputs: ["voice"] });
       const choice = /^(choose|add|remove) (voice|head|hands?)$/.exec(phrase);
       if (choice) {
@@ -437,8 +431,8 @@ export function HandsfreeDashboard() {
   }
   function screenInstructions() {
     return profileView
-      ? "Profile and preferences. Say open preferences, open pointer, open voice, open browser access, or back to session. In Inputs, say choose voice, choose head, choose hands, or voice only. Say use head or use hands to switch your primary pointer."
-      : "Your session. Say start session, pause session, resume session, stop Handsfree, show tabs, open profile, or open help. Browsing commands work when you return to a webpage.";
+      ? "Profile and preferences. Say open controls, open pointer, open voice, open permissions, or back to session. In Controls, say choose voice, choose head, choose hands, or voice only. Say use head or use hands to switch your primary pointer."
+      : "Your session. Say start session, pause session, resume session, stop Handsfree, show tabs, open profile. Browsing commands work when you return to a webpage.";
   }
   function listenOnScreen() {
     if (guidance.listening) {
@@ -458,7 +452,7 @@ export function HandsfreeDashboard() {
       return;
     }
     if (!voiceEnabled(settings)) {
-      setError("Select Voice in Inputs before listening on this screen.");
+      setError("Select Voice in Controls before listening on this screen.");
       return;
     }
     guidance.setListening(true);
@@ -478,7 +472,7 @@ export function HandsfreeDashboard() {
     await request({
       type: "GRANT_PERMISSIONS",
       kind,
-      returnHash: "#preferences",
+      returnHash: "#access",
     });
     setNotice(
       "Finish permission setup in the extension window, then return here.",
@@ -491,11 +485,6 @@ export function HandsfreeDashboard() {
   }
   async function loadLogs() {
     setLogs(await request<RunLog>({ type: "GET_LOGS" }));
-  }
-  async function mark(type: string) {
-    await request({ type: "METRIC", event: { type, at: Date.now() } });
-    await loadLogs();
-    setNotice("Event recorded.");
   }
   async function exportLogs() {
     const result = await request<RunLog>({ type: "GET_LOGS" });
@@ -608,11 +597,13 @@ export function HandsfreeDashboard() {
         {!showSetup && (
           <Button
             variant="outline"
-            onClick={() => changeView("preferences")}
-            aria-label="Profile and preferences"
+            onClick={() => changeView(profileView ? "overview" : "preferences")}
+            aria-label={
+              profileView ? "Back to session" : "Profile and preferences"
+            }
           >
             <UserCircle data-icon="inline-start" aria-hidden="true" />
-            Profile
+            {profileView ? "Back to session" : "Profile"}
           </Button>
         )}
         <ThemeToggle />
@@ -661,17 +652,17 @@ export function HandsfreeDashboard() {
         <div className="dashboard-intro">
           <div>
             <p className="dashboard-overline">
-              {profileView ? "Make it yours" : "Handsfree"}
+              {profileView ? "Make it yours" : "Dashboard"}
             </p>
             <h1>{profileView ? "Profile and preferences" : "Your session"}</h1>
             <p className="dashboard-lead">
               {inputMethods(settings)
                 .map((input) => inputLabels[input])
-                .join(" + ")}
+                .join(" · ")}
               .{" "}
               {settings.voiceOnly
                 ? "Camera stays off."
-                : `${inputLabels[settings.pointerMode]} controls your pointer.`}
+                : `${inputLabels[settings.pointerMode]} pointer.`}
             </p>
           </div>
           <div className="dashboard-session">
@@ -680,14 +671,11 @@ export function HandsfreeDashboard() {
               {status}
             </Badge>
             {!profileView && sessionActions}
-            {profileView && (
-              <Button variant="outline" onClick={() => changeView("overview")}>
-                Back to session
-              </Button>
+            {!profileView && (
+              <p className="dashboard-shortcut">
+                Alt + Shift + P to pause or resume
+              </p>
             )}
-            <p className="dashboard-shortcut">
-              Alt + Shift + P to pause or resume
-            </p>
           </div>
         </div>
         {!connected && (
@@ -724,40 +712,13 @@ export function HandsfreeDashboard() {
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
-        <div className="dashboard-screen-tools">
-          <Button
-            variant="ghost"
-            disabled={!connected}
-            onClick={() => void guidance.read(screenInstructions())}
-          >
-            <SpeakerHigh data-icon="inline-start" aria-hidden="true" />
-            Read this screen
-          </Button>
-          <Button variant="ghost" onClick={guidance.stopReading}>
-            Stop reading
-          </Button>
-          {voiceEnabled(settings) && (
-            <Button
-              variant="outline"
-              disabled={locked}
-              onClick={listenOnScreen}
-            >
-              {guidance.listening
-                ? "Stop listening on this screen"
-                : "Listen on this screen"}
-            </Button>
-          )}
-          <p role="status">
-            {guidance.guidanceNotice ||
-              (guidance.listening ? "Listening for dashboard commands." : "")}
-          </p>
-        </div>
         <Tabs
-          value={view}
+          value={activeView}
           onValueChange={changeView}
           className="dashboard-tabs"
         >
           <TabsList
+            hidden={!profileView}
             variant="line"
             aria-label={
               profileView ? "Preference sections" : "Dashboard sections"
@@ -772,66 +733,520 @@ export function HandsfreeDashboard() {
             ))}
           </TabsList>
           <TabsContent value="preferences">
-            <section className="dashboard-preferences-panel">
-              <SectionTitle
-                title="Choose what works for you"
-                description="Combine controls and change them whenever you need. Your choices stay on this device."
-              />
-              <InputChoices
-                selected={inputMethods(settings)}
-                disabled={locked}
-                onChange={(inputs) => {
-                  if (!inputs.length) {
-                    setError("Choose at least one control.");
-                    return;
-                  }
-                  save({ enabledInputs: inputs });
-                }}
-              />
-              <PrimaryPointer
-                settings={settings}
-                disabled={locked}
-                onChange={(pointerMode) => save({ pointerMode })}
-              />
-              <SettingSwitch
-                id="profile-spoken-feedback"
-                label="Read guidance and results aloud"
-                hint="Leave this off if you prefer your screen reader's voice."
-                checked={settings.spokenFeedback}
-                disabled={locked}
-                onChange={(spokenFeedback) => save({ spokenFeedback })}
-              />
-              <div className="dashboard-preference-links">
-                <Button variant="outline" onClick={() => changeView("pointer")}>
-                  Adjust pointer
-                </Button>
-                <Button variant="outline" onClick={() => changeView("voice")}>
-                  Adjust speech
-                </Button>
-                <Button variant="outline" onClick={() => changeView("access")}>
-                  Review browser access
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    save({ onboardingStep: 0 });
-                    changeView("setup");
+            <div className="dashboard-settings-stack">
+              <section className="dashboard-preferences-panel">
+                <SectionTitle
+                  title="Your controls"
+                  description="Choose how you browse. Changes save automatically on this device."
+                />
+                <InputChoices
+                  selected={inputMethods(settings)}
+                  disabled={locked}
+                  onChange={(inputs) => {
+                    if (!inputs.length) {
+                      setError("Choose at least one control.");
+                      return;
+                    }
+                    save({ enabledInputs: inputs });
                   }}
-                >
-                  Replay setup
-                </Button>
-              </div>
-            </section>
+                />
+                <PrimaryPointer
+                  settings={settings}
+                  disabled={locked}
+                  onChange={(pointerMode) => save({ pointerMode })}
+                />
+                <SettingSwitch
+                  id="spoken-feedback"
+                  label="Read results aloud"
+                  hint="Optional spoken feedback during browsing."
+                  checked={settings.spokenFeedback}
+                  disabled={locked}
+                  onChange={(checked) => save({ spokenFeedback: checked })}
+                />
+              </section>
+              <details
+                className="dashboard-settings-section"
+                data-settings-section="pointer"
+              >
+                <summary>Pointer & calibration</summary>
+                <div className="dashboard-settings-content">
+                  <div className="dashboard-two-column">
+                    <section className="dashboard-panel">
+                      <SectionTitle
+                        title="Make pointing feel natural"
+                        description="Tune your selected pointer. Add another control from Controls whenever you need."
+                      />
+                      <FieldGroup>
+                        <Field>
+                          <FieldLabel id="pointer-mode-label">
+                            Pointer source
+                          </FieldLabel>
+                          <ToggleGroup
+                            type="single"
+                            variant="outline"
+                            value={settings.pointerMode}
+                            disabled={locked}
+                            onValueChange={(value) => {
+                              if (value)
+                                save({
+                                  pointerMode: value as Settings["pointerMode"],
+                                });
+                            }}
+                            aria-labelledby="pointer-mode-label"
+                          >
+                            <ToggleGroupItem
+                              value="face"
+                              disabled={
+                                !inputMethods(settings).includes("face")
+                              }
+                            >
+                              <UserFocus aria-hidden="true" />
+                              Head movement
+                            </ToggleGroupItem>
+                            <ToggleGroupItem
+                              value="hand"
+                              disabled={
+                                !inputMethods(settings).includes("hand")
+                              }
+                            >
+                              <Hand aria-hidden="true" />
+                              Hand gestures
+                            </ToggleGroupItem>
+                          </ToggleGroup>
+                        </Field>
+                        <p className="dashboard-hint" role="note">
+                          {settings.pointerMode === "face"
+                            ? "Hold a small turn to keep moving. Return to neutral to stop in place."
+                            : "Keep your complete open palm in view. Small palm movements cover the page; hold steady to select. Increase Hand sensitivity to travel farther. No pinch required."}
+                        </p>
+                        <Field>
+                          <FieldLabel id="cursor-style-label">
+                            Cursor style
+                          </FieldLabel>
+                          <div
+                            className="dashboard-cursor-choices"
+                            role="radiogroup"
+                            aria-labelledby="cursor-style-label"
+                          >
+                            {(
+                              ["circle", "arrow", "crosshair", "spark"] as const
+                            ).map((style) => (
+                              <label
+                                key={style}
+                                className="dashboard-cursor-choice"
+                                data-selected={settings.cursorStyle === style}
+                              >
+                                <input
+                                  type="radio"
+                                  name="cursor-style"
+                                  value={style}
+                                  checked={settings.cursorStyle === style}
+                                  disabled={locked}
+                                  onChange={() => save({ cursorStyle: style })}
+                                />
+                                <CursorIcon style={style} />
+                                <span>
+                                  {style[0].toUpperCase() + style.slice(1)}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                          <FieldDescription>
+                            Every style keeps the visible dwell ring.
+                          </FieldDescription>
+                        </Field>
+                        {settings.pointerMode === "face" && (
+                          <SettingSlider
+                            id="sensitivity"
+                            label="Sensitivity"
+                            value={settings.sensitivity}
+                            display={`${settings.sensitivity.toFixed(1)}×`}
+                            min={0.2}
+                            max={6}
+                            step={0.1}
+                            disabled={locked}
+                            onChange={(value) => save({ sensitivity: value })}
+                          />
+                        )}
+                        {settings.pointerMode === "hand" && (
+                          <SettingSlider
+                            id="hand-sensitivity"
+                            label="Hand sensitivity"
+                            value={settings.handSensitivity}
+                            display={`${settings.handSensitivity.toFixed(1)}×`}
+                            min={0.2}
+                            max={6}
+                            step={0.1}
+                            disabled={locked}
+                            onChange={(value) =>
+                              save({ handSensitivity: value })
+                            }
+                          />
+                        )}
+                        <SettingSlider
+                          id="dwell"
+                          label="Dwell time"
+                          value={settings.dwellMs}
+                          display={`${settings.dwellMs} ms`}
+                          min={400}
+                          max={5000}
+                          step={100}
+                          disabled={locked}
+                          onChange={(value) => save({ dwellMs: value })}
+                        />
+                        <SettingSlider
+                          id="scroll-speed"
+                          label="Scroll speed"
+                          value={settings.scrollSensitivity}
+                          display={`${settings.scrollSensitivity.toFixed(1)}×`}
+                          min={0.2}
+                          max={3}
+                          step={0.1}
+                          disabled={locked}
+                          onChange={(value) =>
+                            save({ scrollSensitivity: value })
+                          }
+                        />
+                        <SettingSlider
+                          id="dead-zone"
+                          label="Dead zone"
+                          value={settings.deadZone}
+                          display={`${Math.round(settings.deadZone * 100)}%`}
+                          min={0}
+                          max={0.15}
+                          step={0.005}
+                          disabled={locked}
+                          onChange={(value) => save({ deadZone: value })}
+                        />
+                        <SettingSwitch
+                          id="dwell-enabled"
+                          label="Select with dwell"
+                          hint="Hold on a target until its ring fills."
+                          checked={settings.dwellEnabled}
+                          disabled={locked}
+                          onChange={(checked) =>
+                            save({ dwellEnabled: checked })
+                          }
+                        />
+                        <SettingSwitch
+                          id="edge-scroll"
+                          label="Scroll at page edges"
+                          hint="Hold at the top or bottom to scroll. Leaving the edge or losing tracking stops it."
+                          checked={settings.edgeScroll}
+                          disabled={locked}
+                          onChange={(checked) => save({ edgeScroll: checked })}
+                        />
+                      </FieldGroup>
+                    </section>
+                    <section className="dashboard-panel">
+                      <SectionTitle
+                        title="A quick calibration"
+                        description="Five guided captures in 15 seconds. Each mode saves its own comfortable movement range."
+                      />
+                      <CameraPreview
+                        running={running && !settings.voiceOnly}
+                        voiceOnly={settings.voiceOnly}
+                      />
+                      <Calibration state={state} />
+                      <Button
+                        disabled={
+                          locked ||
+                          !running ||
+                          settings.voiceOnly ||
+                          state.paused ||
+                          state.calibrationProgress !== null
+                        }
+                        onClick={() =>
+                          void safe(() => request({ type: "RECALIBRATE" }))
+                        }
+                      >
+                        <UserFocus
+                          data-icon="inline-start"
+                          aria-hidden="true"
+                        />
+                        {state.calibrationProgress !== null
+                          ? "Calibrating…"
+                          : "Calibrate pointer"}
+                      </Button>
+                      <ol className="dashboard-calibration-steps">
+                        <li>
+                          {settings.pointerMode === "face"
+                            ? "Look ahead and hold your comfortable neutral position."
+                            : "Show your open palm with every finger and your wrist inside the camera frame. Hold still."}
+                        </li>
+                        <li>
+                          Follow the left, right, up and down prompts. Hold each
+                          pose while its photo is captured. Choose your
+                          comfortable limit in each direction.
+                        </li>
+                        <li>
+                          {settings.pointerMode === "face"
+                            ? "These measurements turn small head offsets into cursor speed. Return to center to stop in place."
+                            : "Your small palm movement area maps onto the full webpage. Hand sensitivity makes that area smaller or larger."}
+                        </li>
+                      </ol>
+                      <p className="dashboard-hint">
+                        Selections pause during calibration. Low confidence and
+                        tracking loss freeze movement and block clicks. Return
+                        to view, hold still briefly, then review the highlighted
+                        target. Recalibrate after a posture change if needed.
+                        Voice scrolling works before camera calibration. Photos
+                        stay in this session on your device and clear when you
+                        stop. Only landmark measurements are saved for future
+                        sessions.
+                      </p>
+                    </section>
+                  </div>
+                </div>
+              </details>
+              <details
+                className="dashboard-settings-section"
+                data-settings-section="gestures"
+              >
+                <summary>Gesture shortcuts</summary>
+                <div className="dashboard-settings-content">
+                  <GestureConfig
+                    running={running}
+                    voiceOnly={settings.voiceOnly}
+                    tabsPermission={permissions?.tabs ?? false}
+                    onNeedTabs={() =>
+                      void safe(
+                        () => permit("tabs"),
+                        "Enable tab access to include your open websites.",
+                      )
+                    }
+                  />
+                </div>
+              </details>
+              <details
+                className="dashboard-settings-section"
+                data-settings-section="voice"
+              >
+                <summary>Speech & language</summary>
+                <div className="dashboard-settings-content">
+                  <div className="dashboard-two-column">
+                    <section className="dashboard-panel">
+                      <SectionTitle
+                        title="Speak comfortably"
+                        description="Choose a language and where speech is processed."
+                      />
+                      <FieldGroup>
+                        <Field>
+                          <FieldLabel htmlFor="language">
+                            Recognition language
+                          </FieldLabel>
+                          <Select
+                            value={settings.language}
+                            disabled={locked}
+                            onValueChange={(language) => save({ language })}
+                          >
+                            <SelectTrigger id="language" className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectGroup>
+                                {languages.map(({ value, label }) => (
+                                  <SelectItem key={value} value={value}>
+                                    {label}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="speech-mode">
+                            Speech processing
+                          </FieldLabel>
+                          <Select
+                            value={settings.speechMode}
+                            disabled={locked}
+                            onValueChange={(speechMode) =>
+                              save({
+                                speechMode:
+                                  speechMode as Settings["speechMode"],
+                              })
+                            }
+                          >
+                            <SelectTrigger id="speech-mode" className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectGroup>
+                                <SelectItem value="browser">
+                                  Chrome speech with Groq fallback
+                                </SelectItem>
+                                <SelectItem value="local">
+                                  On-device speech
+                                </SelectItem>
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                          <FieldDescription>
+                            Changing language or processing restarts listening
+                            in an active session.
+                          </FieldDescription>
+                        </Field>
+                      </FieldGroup>
+                      <Alert role="note">
+                        <Microphone aria-hidden="true" />
+                        <AlertTitle>
+                          {settings.speechMode === "browser"
+                            ? "Online speech processing"
+                            : "On-device speech stays local"}
+                        </AlertTitle>
+                        <AlertDescription>
+                          {settings.speechMode === "browser"
+                            ? "Chrome speech may process audio online. If unavailable, microphone recordings go to Groq when a key is configured. Choose on-device speech to keep audio local."
+                            : "Requires Chrome support and a language pack. It never switches to online speech automatically."}
+                        </AlertDescription>
+                      </Alert>
+                      {settings.speechMode === "local" && (
+                        <Button
+                          variant="outline"
+                          disabled={locked}
+                          onClick={() =>
+                            void safe(
+                              () => request({ type: "INSTALL_SPEECH_PACK" }),
+                              "Finish language-pack setup in the extension window.",
+                            )
+                          }
+                        >
+                          Install language pack
+                        </Button>
+                      )}
+                      <div className="dashboard-transcript">
+                        <p className="dashboard-small-label">
+                          {state.dictating
+                            ? "Dictation on"
+                            : "Listening status"}
+                        </p>
+                        <p>
+                          {connected
+                            ? state.voice
+                            : "Connect the extension first."}
+                        </p>
+                        <p>
+                          {connected
+                            ? state.interimTranscript ||
+                              (state.lastHeard?.match(/[\p{L}\p{N}]/u) ? state.lastHeard : "") ||
+                              "No speech received yet."
+                            : ""}
+                        </p>
+                      </div>
+                      {state.dictating && (
+                        <Button
+                          variant="outline"
+                          disabled={locked}
+                          onClick={() =>
+                            void safe(() =>
+                              request({
+                                type: "ACTION",
+                                intent: { type: "stop-typing" },
+                              }),
+                            )
+                          }
+                        >
+                          Stop typing
+                        </Button>
+                      )}
+                      <details className="dashboard-disclosure">
+                        <summary>Custom pause and resume phrases</summary>
+                        <FieldGroup>
+                          <Field>
+                            <FieldLabel htmlFor="pause-phrase">
+                              Pause keyword or phrase
+                            </FieldLabel>
+                            <Input
+                              id="pause-phrase"
+                              aria-invalid={!!phraseError}
+                              aria-describedby="phrase-error"
+                              value={pausePhrase}
+                              maxLength={80}
+                              disabled={locked}
+                              onChange={(event) =>
+                                setPausePhrase(event.target.value)
+                              }
+                            />
+                          </Field>
+                          <Field>
+                            <FieldLabel htmlFor="resume-phrase">
+                              Resume keyword or phrase
+                            </FieldLabel>
+                            <Input
+                              id="resume-phrase"
+                              aria-invalid={!!phraseError}
+                              aria-describedby="phrase-error"
+                              value={resumePhrase}
+                              maxLength={80}
+                              disabled={locked}
+                              onChange={(event) =>
+                                setResumePhrase(event.target.value)
+                              }
+                            />
+                            <FieldDescription>
+                              These exact phrases work during dictation too.
+                              While paused, the microphone listens only for
+                              session controls. Stop releases it.
+                            </FieldDescription>
+                          </Field>
+                          <Button
+                            disabled={locked}
+                            onClick={() => {
+                              const pause = pausePhrase
+                                .trim()
+                                .toLowerCase()
+                                .replace(/[.!?,;:]+$/g, "")
+                                .replace(/\s+/g, " ");
+                              const resume = resumePhrase
+                                .trim()
+                                .toLowerCase()
+                                .replace(/[.!?,;:]+$/g, "")
+                                .replace(/\s+/g, " ");
+                              if (!pause || !resume || pause === resume) {
+                                setPhraseError(
+                                  "Choose two different, nonempty session phrases.",
+                                );
+                                document
+                                  .getElementById("pause-phrase")
+                                  ?.focus();
+                                return;
+                              }
+                              setPhraseError("");
+                              save({
+                                pausePhrase: pause,
+                                resumePhrase: resume,
+                              });
+                            }}
+                          >
+                            Save session phrases
+                          </Button>
+                          <p
+                            id="phrase-error"
+                            className="dashboard-field-error"
+                            role="status"
+                          >
+                            {phraseError}
+                          </p>
+                        </FieldGroup>
+                      </details>
+                      {commandForm}
+                    </section>
+                  </div>
+                </div>
+              </details>
+            </div>
           </TabsContent>
           <TabsContent value="overview">
             <div className="dashboard-two-column">
               <section className="dashboard-panel">
                 <div className="dashboard-section-heading">
                   <div>
-                    <h2 tabIndex={-1}>Your controls</h2>
+                    <h2 tabIndex={-1}>Pointer</h2>
                     <p>
-                      Tracking runs in the extension. Preview your camera only
-                      when you want to check your position.
+                      {settings.voiceOnly
+                        ? "Voice control is ready without a camera."
+                        : "Calibrate here or check your camera position."}
                     </p>
                   </div>
                   <Badge variant="outline">
@@ -842,14 +1257,24 @@ export function HandsfreeDashboard() {
                         : "Hand pointer"}
                   </Badge>
                 </div>
-                <CameraPreview
-                  running={running && !settings.voiceOnly}
-                  voiceOnly={settings.voiceOnly}
-                />
+                {!settings.voiceOnly && (
+                  <details className="dashboard-disclosure dashboard-preview-disclosure">
+                    <summary>Camera preview</summary>
+                    <CameraPreview
+                      running={running && !settings.voiceOnly}
+                      voiceOnly={settings.voiceOnly}
+                    />
+                  </details>
+                )}
                 <div className="dashboard-preview-footer">
                   <span>
-                    {connected ? state.camera : "Camera not connected"}
+                    {settings.voiceOnly ? "Camera off" : connected ? state.camera : "Camera not connected"}
                   </span>
+                  {connected && /denied|unavailable|blocked/i.test(state.camera) && (
+                    <Button variant="outline" onClick={() => changeView("access")}>
+                      Open permissions
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     disabled={
@@ -872,8 +1297,8 @@ export function HandsfreeDashboard() {
               <section className="dashboard-panel">
                 <div className="dashboard-section-heading">
                   <div>
-                    <h2>Session at a glance</h2>
-                    <p>Live readings from your extension.</p>
+                    <h2>Voice activity</h2>
+                    <p>{connected ? state.voice : "Connect your extension to use voice."}</p>
                   </div>
                 </div>
 
@@ -884,11 +1309,43 @@ export function HandsfreeDashboard() {
                   <p>
                     {connected
                       ? state.interimTranscript ||
-                        state.lastHeard ||
+                        (state.lastHeard?.match(/[\p{L}\p{N}]/u) ? state.lastHeard : "") ||
                         "Say a command after starting a session."
                       : "Connect the extension to see voice activity."}
                   </p>
                 </div>
+                <details className="dashboard-assistance">
+                  <summary>Spoken help</summary>
+                  <div className="dashboard-screen-tools">
+                    <Button
+                      variant="outline"
+                      onClick={() =>
+                        guidance.speaking
+                          ? guidance.stopReading()
+                          : void guidance.read(screenInstructions())
+                      }
+                    >
+                      <SpeakerHigh data-icon="inline-start" aria-hidden="true" />
+                      {guidance.speaking ? "Stop reading" : "Read this screen"}
+                    </Button>
+                    {voiceEnabled(settings) && (
+                      <Button
+                        variant="outline"
+                        disabled={locked}
+                        onClick={listenOnScreen}
+                      >
+                        <Microphone data-icon="inline-start" aria-hidden="true" />
+                        {guidance.listening
+                          ? "Stop listening"
+                          : "Listen for dashboard commands"}
+                      </Button>
+                    )}
+                    <p role="status">
+                      {guidance.guidanceNotice ||
+                        (guidance.listening ? "Listening for dashboard commands." : "")}
+                    </p>
+                  </div>
+                </details>
                 <details className="dashboard-disclosure">
                   <summary>Tracking details</summary>
                   <dl className="dashboard-metrics">
@@ -920,585 +1377,27 @@ export function HandsfreeDashboard() {
                       label="Voice"
                       value={connected ? state.voice : "Not connected"}
                     />
-                  </dl>{" "}
-                </details>
-                {commandForm}
-                <div className="dashboard-inline-link">
-                  <Button variant="ghost" onClick={() => changeView("pointer")}>
-                    <SlidersHorizontal
-                      data-icon="inline-start"
-                      aria-hidden="true"
-                    />
-                    Tune your pointer
-                  </Button>
-                </div>
-              </section>
-            </div>
-          </TabsContent>
-          <TabsContent value="pointer">
-            <div className="dashboard-two-column">
-              <section className="dashboard-panel">
-                <SectionTitle
-                  title="Make pointing feel natural"
-                  description="Tune your selected pointer. Add another control from Inputs whenever you need."
-                />
-                <FieldGroup>
-                  <Field>
-                    <FieldLabel id="pointer-mode-label">
-                      Pointer source
-                    </FieldLabel>
-                    <ToggleGroup
-                      type="single"
-                      variant="outline"
-                      value={settings.pointerMode}
-                      disabled={locked}
-                      onValueChange={(value) => {
-                        if (value)
-                          save({
-                            pointerMode: value as Settings["pointerMode"],
-                          });
-                      }}
-                      aria-labelledby="pointer-mode-label"
-                    >
-                      <ToggleGroupItem
-                        value="face"
-                        disabled={!inputMethods(settings).includes("face")}
-                      >
-                        <UserFocus aria-hidden="true" />
-                        Head movement
-                      </ToggleGroupItem>
-                      <ToggleGroupItem
-                        value="hand"
-                        disabled={!inputMethods(settings).includes("hand")}
-                      >
-                        <Hand aria-hidden="true" />
-                        Hand gestures
-                      </ToggleGroupItem>
-                    </ToggleGroup>
-                  </Field>
-                  <p className="dashboard-hint" role="note">
-                    {settings.pointerMode === "face"
-                      ? "Hold a small turn to keep moving. Return to neutral to stop in place."
-                      : "Keep your complete open palm in view. Small palm movements cover the page; hold steady to select. Increase Hand sensitivity to travel farther. No pinch required."}
-                  </p>
-                  <Field>
-                    <FieldLabel id="cursor-style-label">
-                      Cursor style
-                    </FieldLabel>
-                    <div
-                      className="dashboard-cursor-choices"
-                      role="radiogroup"
-                      aria-labelledby="cursor-style-label"
-                    >
-                      {(["circle", "arrow", "crosshair", "spark"] as const).map(
-                        (style) => (
-                          <label
-                            key={style}
-                            className="dashboard-cursor-choice"
-                            data-selected={settings.cursorStyle === style}
-                          >
-                            <input
-                              type="radio"
-                              name="cursor-style"
-                              value={style}
-                              checked={settings.cursorStyle === style}
-                              disabled={locked}
-                              onChange={() => save({ cursorStyle: style })}
-                            />
-                            <CursorIcon style={style} />
-                            <span>
-                              {style[0].toUpperCase() + style.slice(1)}
-                            </span>
-                          </label>
-                        ),
-                      )}
-                    </div>
-                    <FieldDescription>
-                      Every style keeps the visible dwell ring.
-                    </FieldDescription>
-                  </Field>
-                  {settings.pointerMode === "face" && (
-                    <SettingSlider
-                      id="sensitivity"
-                      label="Sensitivity"
-                      value={settings.sensitivity}
-                      display={`${settings.sensitivity.toFixed(1)}×`}
-                      min={0.2}
-                      max={6}
-                      step={0.1}
-                      disabled={locked}
-                      onChange={(value) => save({ sensitivity: value })}
-                    />
-                  )}
-                  {settings.pointerMode === "hand" && (
-                    <SettingSlider
-                      id="hand-sensitivity"
-                      label="Hand sensitivity"
-                      value={settings.handSensitivity}
-                      display={`${settings.handSensitivity.toFixed(1)}×`}
-                      min={0.2}
-                      max={6}
-                      step={0.1}
-                      disabled={locked}
-                      onChange={(value) => save({ handSensitivity: value })}
-                    />
-                  )}
-                  <SettingSlider
-                    id="dwell"
-                    label="Dwell time"
-                    value={settings.dwellMs}
-                    display={`${settings.dwellMs} ms`}
-                    min={400}
-                    max={5000}
-                    step={100}
-                    disabled={locked}
-                    onChange={(value) => save({ dwellMs: value })}
-                  />
-                  <SettingSlider
-                    id="scroll-speed"
-                    label="Scroll speed"
-                    value={settings.scrollSensitivity}
-                    display={`${settings.scrollSensitivity.toFixed(1)}×`}
-                    min={0.2}
-                    max={3}
-                    step={0.1}
-                    disabled={locked}
-                    onChange={(value) => save({ scrollSensitivity: value })}
-                  />
-                  <SettingSlider
-                    id="dead-zone"
-                    label="Dead zone"
-                    value={settings.deadZone}
-                    display={`${Math.round(settings.deadZone * 100)}%`}
-                    min={0}
-                    max={0.15}
-                    step={0.005}
-                    disabled={locked}
-                    onChange={(value) => save({ deadZone: value })}
-                  />
-                  <SettingSwitch
-                    id="dwell-enabled"
-                    label="Select with dwell"
-                    hint="Hold on a target until its ring fills."
-                    checked={settings.dwellEnabled}
-                    disabled={locked}
-                    onChange={(checked) => save({ dwellEnabled: checked })}
-                  />
-                  <SettingSwitch
-                    id="edge-scroll"
-                    label="Scroll at page edges"
-                    hint="Hold at the top or bottom to scroll. Leaving the edge or losing tracking stops it."
-                    checked={settings.edgeScroll}
-                    disabled={locked}
-                    onChange={(checked) => save({ edgeScroll: checked })}
-                  />
-                </FieldGroup>
-              </section>
-              <section className="dashboard-panel">
-                <SectionTitle
-                  title="A quick calibration"
-                  description="Five guided captures in 15 seconds. Each mode saves its own comfortable movement range."
-                />
-                <CameraPreview
-                  running={running && !settings.voiceOnly}
-                  voiceOnly={settings.voiceOnly}
-                />
-                <Calibration state={state} />
-                <Button
-                  disabled={
-                    locked ||
-                    !running ||
-                    settings.voiceOnly ||
-                    state.paused ||
-                    state.calibrationProgress !== null
-                  }
-                  onClick={() =>
-                    void safe(() => request({ type: "RECALIBRATE" }))
-                  }
-                >
-                  <UserFocus data-icon="inline-start" aria-hidden="true" />
-                  {state.calibrationProgress !== null
-                    ? "Calibrating…"
-                    : "Calibrate pointer"}
-                </Button>
-                <ol className="dashboard-calibration-steps">
-                  <li>
-                    {settings.pointerMode === "face"
-                      ? "Look ahead and hold your comfortable neutral position."
-                      : "Show your open palm with every finger and your wrist inside the camera frame. Hold still."}
-                  </li>
-                  <li>
-                    Follow the left, right, up and down prompts. Hold each pose
-                    while its photo is captured. Choose your comfortable limit
-                    in each direction.
-                  </li>
-                  <li>
-                    {settings.pointerMode === "face"
-                      ? "These measurements turn small head offsets into cursor speed. Return to center to stop in place."
-                      : "Your small palm movement area maps onto the full webpage. Hand sensitivity makes that area smaller or larger."}
-                  </li>
-                </ol>
-                <p className="dashboard-hint">
-                  Selections pause during calibration. Low confidence and
-                  tracking loss freeze movement and block clicks. Return to
-                  view, hold still briefly, then review the highlighted target.
-                  Recalibrate after a posture change if needed. Voice scrolling
-                  works before camera calibration. Photos stay in this session
-                  on your device and clear when you stop. Only landmark
-                  measurements are saved for future sessions.
-                </p>
-              </section>
-            </div>
-          </TabsContent>
-          <TabsContent value="gestures">
-            <GestureConfig
-              running={running}
-              voiceOnly={settings.voiceOnly}
-              tabsPermission={permissions?.tabs ?? false}
-              onNeedTabs={() => void safe(() => permit("tabs"), "Enable tab access to include your open websites.")}
-            />
-          </TabsContent>
-          <TabsContent value="voice" className="dashboard-voice-settings">
-            <div className="dashboard-two-column">
-              <section className="dashboard-panel">
-                <SectionTitle
-                  title="Speak comfortably"
-                  description="Choose a language and where speech is processed."
-                />
-                <FieldGroup>
-                  <SettingSwitch
-                    id="spoken-feedback"
-                    label="Speak feedback"
-                    hint="Read choices and results aloud. Listening pauses during each response to prevent the assistant from hearing itself, then resumes."
-                    checked={settings.spokenFeedback}
-                    disabled={locked}
-                    onChange={(checked) => save({ spokenFeedback: checked })}
-                  />
-
-                  <Field>
-                    <FieldLabel htmlFor="language">
-                      Recognition language
-                    </FieldLabel>
-                    <Select
-                      value={settings.language}
-                      disabled={locked}
-                      onValueChange={(language) => save({ language })}
-                    >
-                      <SelectTrigger id="language" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          {languages.map(({ value, label }) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="speech-mode">
-                      Speech processing
-                    </FieldLabel>
-                    <Select
-                      value={settings.speechMode}
-                      disabled={locked}
-                      onValueChange={(speechMode) =>
-                        save({
-                          speechMode: speechMode as Settings["speechMode"],
-                        })
-                      }
-                    >
-                      <SelectTrigger id="speech-mode" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="browser">
-                            Chrome speech with Groq fallback
-                          </SelectItem>
-                          <SelectItem value="local">
-                            On-device speech
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                    <FieldDescription>
-                      Changing language or processing restarts listening in an
-                      active session.
-                    </FieldDescription>
-                  </Field>
-                </FieldGroup>
-                <Alert role="note">
-                  <Microphone aria-hidden="true" />
-                  <AlertTitle>
-                    {settings.speechMode === "browser"
-                      ? "Online speech processing"
-                      : "On-device speech stays local"}
-                  </AlertTitle>
-                  <AlertDescription>
-                    {settings.speechMode === "browser"
-                      ? "Chrome speech may process audio online. If unavailable, microphone recordings go to Groq when a key is configured. Choose on-device speech to keep audio local."
-                      : "Requires Chrome support and a language pack. It never switches to online speech automatically."}
-                  </AlertDescription>
-                </Alert>
-                {settings.speechMode === "local" && (
-                  <Button
-                    variant="outline"
-                    disabled={locked}
-                    onClick={() =>
-                      void safe(
-                        () => request({ type: "INSTALL_SPEECH_PACK" }),
-                        "Finish language-pack setup in the extension window.",
-                      )
-                    }
-                  >
-                    Install language pack
-                  </Button>
-                )}
-                <div className="dashboard-transcript">
-                  <p className="dashboard-small-label">
-                    {state.dictating ? "Dictation on" : "Listening status"}
-                  </p>
-                  <p>
-                    {connected ? state.voice : "Connect the extension first."}
-                  </p>
-                  <p>
-                    {connected
-                      ? state.interimTranscript ||
-                        state.lastHeard ||
-                        "No speech received yet."
-                      : ""}
-                  </p>
-                </div>
-                {state.dictating && (
-                  <Button
-                    variant="outline"
-                    disabled={locked}
-                    onClick={() =>
-                      void safe(() =>
-                        request({
-                          type: "ACTION",
-                          intent: { type: "stop-typing" },
-                        }),
-                      )
-                    }
-                  >
-                    Stop typing
-                  </Button>
-                )}
-                <details className="dashboard-disclosure">
-                  <summary>Custom pause and resume phrases</summary>
-                  <FieldGroup>
-                    <Field>
-                      <FieldLabel htmlFor="pause-phrase">
-                        Pause keyword or phrase
-                      </FieldLabel>
-                      <Input
-                        id="pause-phrase"
-                        aria-invalid={!!phraseError}
-                        aria-describedby="phrase-error"
-                        value={pausePhrase}
-                        maxLength={80}
-                        disabled={locked}
-                        onChange={(event) => setPausePhrase(event.target.value)}
-                      />
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="resume-phrase">
-                        Resume keyword or phrase
-                      </FieldLabel>
-                      <Input
-                        id="resume-phrase"
-                        aria-invalid={!!phraseError}
-                        aria-describedby="phrase-error"
-                        value={resumePhrase}
-                        maxLength={80}
-                        disabled={locked}
-                        onChange={(event) =>
-                          setResumePhrase(event.target.value)
-                        }
-                      />
-                      <FieldDescription>
-                        These exact phrases work during dictation too. While
-                        paused, the microphone listens only for session
-                        controls. Stop releases it.
-                      </FieldDescription>
-                    </Field>
-                    <Button
-                      disabled={locked}
-                      onClick={() => {
-                        const pause = pausePhrase
-                          .trim()
-                          .toLowerCase()
-                          .replace(/[.!?,;:]+$/g, "")
-                          .replace(/\s+/g, " ");
-                        const resume = resumePhrase
-                          .trim()
-                          .toLowerCase()
-                          .replace(/[.!?,;:]+$/g, "")
-                          .replace(/\s+/g, " ");
-                        if (!pause || !resume || pause === resume) {
-                          setPhraseError(
-                            "Choose two different, nonempty session phrases.",
-                          );
-                          document.getElementById("pause-phrase")?.focus();
-                          return;
-                        }
-                        setPhraseError("");
-                        save({ pausePhrase: pause, resumePhrase: resume });
-                      }}
-                    >
-                      Save session phrases
-                    </Button>
-                    <p
-                      id="phrase-error"
-                      className="dashboard-field-error"
-                      role="status"
-                    >
-                      {phraseError}
-                    </p>
-                  </FieldGroup>
+                  </dl>
                 </details>
                 {commandForm}
               </section>
             </div>
-          </TabsContent>
-          <TabsContent value="help">
-            <section className="dashboard-panel">
-              <SectionTitle
-                title="A few words do a lot"
-                description="Fixed commands work without an AI key."
-              />
-              <details className="dashboard-disclosure">
-                <summary>Commands for the current website</summary>
-                <div>
-                  <p>
-                    Site commands cover Wikipedia, GitHub, Reddit, Amazon India,
-                    Spotify, Netflix, X, WhatsApp, Gmail, Meet, LinkedIn, IRCTC
-                    and Maps. Availability depends on the current page and
-                    account. Live voice qualification is pending.
-                  </p>
-                  <Button
-                    variant="outline"
-                    disabled={locked}
-                    onClick={() =>
-                      void safe(async () => {
-                        setSiteSupport(
-                          await request<SiteSnapshot | null>({
-                            type: "GET_SITE_CONTEXT",
-                          }),
-                        );
-                        setSupportLoaded(true);
-                      })
-                    }
-                  >
-                    Check current page commands
-                  </Button>
-                  <div aria-live="polite">
-                    {supportLoaded && !siteSupport && (
-                      <p>
-                        The selected tab has no dedicated site adapter. Generic
-                        browser commands remain available.
-                      </p>
-                    )}
-                    {siteSupport && (
-                      <>
-                        <p>
-                          Selected page: {siteSupport.site}.{" "}
-                          {siteSupport.current?.identity && (
-                            <>Chat ID: {siteSupport.current.identity}. </>
-                          )}
-                          Say "what can I do here?" or "list results".
-                        </p>
-                        <ul>
-                          {siteSupport.capabilities
-                            .filter((item) => item.state !== "not-implemented")
-                            .slice(0, 8)
-                            .map((item) => (
-                              <li key={item.id}>
-                                {item.description} ·{" "}
-                                {item.state.replaceAll("-", " ")}
-                              </li>
-                            ))}
-                        </ul>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </details>
-              <CommandList
-                items={[
-                  [
-                    "Click",
-                    "Click at the cursor, even without a snapped target",
-                  ],
-                  [
-                    "Open Careers",
-                    "Match a real page label locally and activate",
-                  ],
-                  ["Scroll down", "Read further on the page"],
-                  ["Scroll to the bottom", "Reach the page or container end"],
-                  [
-                    "Play video / pause video",
-                    "Control the main player, including permitted frames",
-                  ],
-                  [
-                    "Forward ten seconds / rewind five seconds",
-                    "Seek within video or music",
-                  ],
-                  ["Go back", "Return to the previous page"],
-                  ["Start typing", "Dictate into the selected field"],
-                  ["Stop typing", "Return to voice commands"],
-                  ["Submit form", "Request submission, then say confirm"],
-                  [
-                    "Hey handsfree, find careers",
-                    "Find a page target with Groq",
-                  ],
-                  [
-                    "Hey handsfree, click Careers",
-                    "Match locally and activate, with confirmation for submit",
-                  ],
-                  [
-                    "Hey handsfree, summarize this page",
-                    "Read a text answer here and on the webpage",
-                  ],
-                  [
-                    "Hey handsfree, what is a browser?",
-                    "Ask a general question",
-                  ],
-                  ["Choose two", "Select one of several find matches"],
-                  [
-                    settings.pausePhrase,
-                    "Pause pointing, page actions and dictation",
-                  ],
-                  [settings.resumePhrase, "Resume your paused session"],
-                ]}
-              />
-              <p className="dashboard-hint">
-                During dictation, ordinary commands become text. Say "stop
-                typing" to finish. Your configured pause and resume phrases, and
-                "stop handsfree", remain session controls.
-              </p>
-            </section>
-          </TabsContent>
-          <TabsContent value="tabs">
-            <div className="dashboard-two-column">
+            <div className="dashboard-session-tabs">
               <section className="dashboard-panel">
                 <SectionTitle
-                  title="Reach any open tab"
-                  description="Tab titles are read only after you grant access."
+                  title="Open tabs"
+                  description="Refresh, then choose a tab to switch to."
                 />
                 <div className="dashboard-actions">
-                  <Button
-                    variant="outline"
-                    disabled={locked}
-                    onClick={() => void safe(() => permit("tabs"))}
-                  >
-                    Enable tab access
-                  </Button>
+                  {!permissions?.tabs && (
+                    <Button
+                      variant="outline"
+                      disabled={locked}
+                      onClick={() => void safe(() => permit("tabs"))}
+                    >
+                      Enable tab access
+                    </Button>
+                  )}
                   <Button disabled={locked} onClick={() => void safe(loadTabs)}>
                     <ArrowsClockwise
                       data-icon="inline-start"
@@ -1544,517 +1443,326 @@ export function HandsfreeDashboard() {
                           : "Your tabs appear here"}
                       </EmptyTitle>
                       <EmptyDescription>
-                        Enable tab access, then refresh to see open tabs.
+                        Use Refresh tabs to load your open pages.
                       </EmptyDescription>
                     </EmptyHeader>
                   </Empty>
                 )}
-                {commandForm}
-              </section>
-              <section className="dashboard-panel">
-                <SectionTitle
-                  title="Move between pages"
-                  description="Say a command or type it in the command field."
-                />
-                <CommandList
-                  items={[
-                    ["New tab", "Open Chrome’s New Tab page. Say search for, followed by your query"],
-                    ["Next tab", "Move to the next tab"],
-                    ["Previous tab", "Move to the previous tab"],
-                    ["Go to Wikipedia", "Switch to a matching title"],
-                    ["Close tab", "Close the current tab immediately"],
-                    ["Open a new tab with phones under 30k", "Open search results for phones under 30k"],
-                    ["Search for jazz", "Search in a new tab"],
-                    [
-                      "Background search for jazz",
-                      "Search without switching tabs",
-                    ],
-                    ["Open downloads", "Open Chrome downloads"],
-                  ]}
-                />
-                <p className="dashboard-hint">
-                  Closing a tab acts immediately. Chrome settings pages
-                  and the Web Store cannot use the pointer overlay.
-                </p>
               </section>
             </div>
           </TabsContent>
+
           <TabsContent value="providers">
-            <details className="dashboard-disclosure">
-              <summary>Message sending for testing</summary>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="test-message-recipients">
-                    Owned test recipients for Gmail and Meet
-                  </FieldLabel>
-                  <FieldDescription id="test-recipients-help">
-                    Gmail and Meet sending requires an exact recipient here
-                    and a separate voice confirmation. WhatsApp messages use
-                    the currently open chat and always require voice
-                    confirmation. Only add recipients and private meetings
-                    you own or have permission to test.
-                  </FieldDescription>
-                  <Input
-                    id="test-message-recipients"
-                    aria-describedby={
-                      recipientError
-                        ? "test-recipients-error test-recipients-help"
-                        : "test-recipients-help"
-                    }
-                    aria-invalid={!!recipientError}
-                    value={messageRecipients}
-                    disabled={locked}
-                    onChange={(event) =>
-                      setMessageRecipients(event.target.value)
-                    }
-                  />
-                  <p
-                    id="test-recipients-error"
-                    className="dashboard-field-error"
-                    role="status"
-                  >
-                    {recipientError}
-                  </p>
-                </Field>
-                <Button
-                  variant="outline"
-                  disabled={locked}
-                  onClick={() => {
-                    const entries = messageRecipients
-                      .split(",")
-                      .map((value) => value.trim().toLowerCase())
-                      .filter(Boolean);
-                    const next = normalizeControlSettings({
-                      ...settings,
-                      testMessageRecipients: entries,
-                    }).testMessageRecipients;
-                    if (next.length !== new Set(entries).size) {
-                      setRecipientError(
-                        "Use a Gmail address or a private Meet code with the shown prefix. Limit the list to 20 recipients.",
-                      );
-                      document
-                        .getElementById("test-message-recipients")
-                        ?.focus();
-                      return;
-                    }
-                    setRecipientError("");
-                    setMessageRecipients(next.join(", "));
-                    save({ testMessageRecipients: next });
-                  }}
-                >
-                  Save test recipients
-                </Button>{" "}
-              </FieldGroup>
-            </details>
-            <div className="dashboard-advanced-links">
-              <Button variant="outline" onClick={() => changeView("activity")}>
-                View activity and diagnostics
-              </Button>
-            </div>
-            <div className="dashboard-two-column">
-              <section className="dashboard-panel">
-                <SectionTitle
-                  title="Ask questions and use page controls"
-                  description="Say hey handsfree before a request to use Groq. Fixed commands also work without a key."
-                />
-                <div className="dashboard-provider-status">
-                  <CheckCircle aria-hidden="true" />
-                  <div>
-                    <p>
-                      {providers
-                        ? `${providers.groqKeyCount} Groq keys available`
-                        : "Provider status unavailable"}
-                    </p>
-                    <small>
-                      {providers?.sharedKeys
-                        ? "Shared project keys are ready. Personal keys are optional."
-                        : "Add a key for Groq transcription and hey handsfree requests."}
-                    </small>
-                  </div>
-                </div>
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void safe(async () => {
-                      const keys = groqKeys
-                        .map((key) => key.trim())
-                        .filter(Boolean);
-                      if (!keys.length)
-                        throw new Error("Enter at least one Groq key to save.");
-                      await request({ type: "SAVE_PROVIDERS", groqKeys: keys });
-                      setGroqKeys([""]);
-                      setProviders(
-                        await request({ type: "GET_PROVIDER_STATUS" }),
-                      );
-                    }, "Groq keys saved on this device.");
-                  }}
-                >
-                  <FieldGroup>
-                    {groqKeys.map((key, index) => (
-                      <Field key={index}>
-                        <FieldLabel htmlFor={`groq-key-${index}`}>
-                          Groq key {index + 1}
-                        </FieldLabel>
-                        <Input
-                          id={`groq-key-${index}`}
-                          type="password"
-                          autoComplete="off"
-                          disabled={locked}
-                          value={key}
-                          placeholder="gsk_…"
-                          onChange={(event) =>
-                            setGroqKeys((keys) =>
-                              keys.map((value, position) =>
-                                position === index ? event.target.value : value,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
-                    ))}
-                    <div className="dashboard-actions">
-                      <Button
-                        variant="outline"
-                        type="button"
-                        disabled={locked || groqKeys.length >= 5}
-                        onClick={() => setGroqKeys((keys) => [...keys, ""])}
-                      >
-                        Add another key
-                      </Button>
-                      <Button type="submit" disabled={locked}>
-                        Save Groq keys
-                      </Button>
-                    </div>
-                  </FieldGroup>
-                </form>
-                <p className="dashboard-hint">
-                  Keys rotate when a provider limits a request. Saved key values
-                  never come back to this website.
-                </p>
-                <Button
-                  variant="ghost"
-                  disabled={locked}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Remove your local Groq keys? Shared project keys will still be available.",
-                      )
-                    )
-                      void safe(async () => {
-                        await request({ type: "SAVE_PROVIDERS", groqKeys: [] });
-                        setProviders(
-                          await request({ type: "GET_PROVIDER_STATUS" }),
-                        );
-                      }, "Local Groq keys removed.");
-                  }}
-                >
-                  Remove local Groq keys
-                </Button>
-              </section>
-              <section className="dashboard-panel">
-                <SectionTitle
-                  title="Everyday commands with Jev"
-                  description="Jev interprets ordinary phrasing and chooses a supported action. Hey handsfree uses Groq."
-                />
-                <Badge variant="outline">
-                  {providers?.jevConfigured ? "Configured" : "Not configured"}
-                </Badge>
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void safe(async () => {
-                      if (!jevKey.trim())
-                        throw new Error("Enter a Jev key to save.");
-                      await request({
-                        type: "SAVE_PROVIDERS",
-                        jevKey: jevKey.trim(),
-                      });
-                      setJevKey("");
-                      setProviders(
-                        await request({ type: "GET_PROVIDER_STATUS" }),
-                      );
-                    }, "Jev key saved on this device.");
-                  }}
-                >
-                  <FieldGroup>
-                    <Field>
-                      <FieldLabel htmlFor="jev-provider">
-                        Jev provider
-                      </FieldLabel>
-                      <Select
-                        value={settings.jevProvider}
-                        disabled={locked}
-                        onValueChange={(jevProvider) =>
-                          save({
-                            jevProvider: jevProvider as Settings["jevProvider"],
-                          })
-                        }
-                      >
-                        <SelectTrigger id="jev-provider" className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            <SelectItem value="typesafe">TypeSafe</SelectItem>
-                            <SelectItem value="openrouter">
-                              OpenRouter
-                            </SelectItem>
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="jev-key">Jev key</FieldLabel>
-                      <Input
-                        id="jev-key"
-                        type="password"
-                        disabled={locked}
-                        autoComplete="off"
-                        value={jevKey}
-                        placeholder="Enter your Jev key"
-                        onChange={(event) => setJevKey(event.target.value)}
-                      />
-                    </Field>
-                    <Button type="submit" disabled={locked}>
-                      Save Jev key
-                    </Button>
-                  </FieldGroup>
-                </form>
-                <Button
-                  variant="ghost"
-                  disabled={locked || !providers?.jevConfigured}
-                  onClick={() => {
-                    if (window.confirm("Remove your local Jev key?"))
-                      void safe(async () => {
-                        await request({ type: "SAVE_PROVIDERS", jevKey: "" });
-                        setProviders(
-                          await request({ type: "GET_PROVIDER_STATUS" }),
-                        );
-                      }, "Jev key removed.");
-                  }}
-                >
-                  Remove Jev key
-                </Button>
-                <Alert role="note">
-                  <Key aria-hidden="true" />
-                  <AlertTitle>What your request shares</AlertTitle>
-                  <AlertDescription>
-                    Jev receives your command, language, up to 50 tab titles and
-                    up to 80 page labels when interpreting a paraphrase. Hey
-                    handsfree sends your phrase, target labels, page title, URL
-                    and up to 12,000 characters of public page text to Groq.
-                    Inputs, editable regions, passwords and Handsfree UI are
-                    excluded. Camera frames stay local. Find requests highlight;
-                    explicit click or open requests activate through the usual
-                    safety gates. Answers appear as text here and on the
-                    webpage.
-                  </AlertDescription>
-                </Alert>
-                <Button
-                  variant="outline"
-                  disabled={locked}
-                  onClick={() => void safe(() => permit("provider"))}
-                >
-                  Enable provider access
-                </Button>
-              </section>
-            </div>
-          </TabsContent>
-          <TabsContent value="activity">
-            <section className="dashboard-panel">
-              <div className="dashboard-section-heading">
-                <div>
-                  <h2>Local run activity</h2>
-                  <p>
-                    Measure your session. Dictated text and keys stay out of the
-                    log.
-                  </p>
-                </div>
-                <Badge variant="outline">On this device</Badge>
-              </div>
-              <div className="dashboard-actions">
-                <Button disabled={locked} onClick={() => void safe(loadLogs)}>
-                  <ArrowsClockwise
-                    data-icon="inline-start"
-                    aria-hidden="true"
-                  />
-                  Refresh activity
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={locked}
-                  onClick={() => void safe(exportLogs)}
-                >
-                  <DownloadSimple data-icon="inline-start" aria-hidden="true" />
-                  Export JSON
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={locked}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Clear the local run log? Export it first if you need a copy.",
-                      )
-                    )
-                      void safe(async () => {
-                        await request({ type: "CLEAR_LOGS" });
-                        setLogs(null);
-                      }, "Local activity cleared.");
-                  }}
-                >
-                  Clear activity
-                </Button>
-              </div>
-              <div className="dashboard-markers">
-                {[
-                  ["task-start", "Mark task start"],
-                  ["task-complete", "Mark task complete"],
-                  ["selection-error", "Mark selection error"],
-                  ["accidental-activation", "Mark accidental activation"],
-                ].map(([type, label]) => (
-                  <Button
-                    key={type}
-                    variant="outline"
-                    disabled={locked}
-                    onClick={() => void safe(() => mark(type))}
-                  >
-                    {label}
-                  </Button>
-                ))}
-              </div>
-              {logs?.events.length ? (
-                <div className="dashboard-activity-table">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Time</TableHead>
-                        <TableHead>Event</TableHead>
-                        <TableHead>Value</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {logs.events
-                        .slice()
-                        .reverse()
-                        .slice(0, 100)
-                        .map((event, index) => (
-                          <TableRow key={`${event.at}-${index}`}>
-                            <TableCell>
-                              {new Intl.DateTimeFormat(undefined, {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                                second: "2-digit",
-                              }).format(event.at)}
-                            </TableCell>
-                            <TableCell>
-                              {event.type.replaceAll("-", " ")}
-                            </TableCell>
-                            <TableCell>
-                              {event.value === undefined
-                                ? "—"
-                                : event.value.toFixed(2)}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              ) : (
-                <Empty>
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <ChartLine aria-hidden="true" />
-                    </EmptyMedia>
-                    <EmptyTitle>Start with a session</EmptyTitle>
-                    <EmptyDescription>
-                      Refresh activity after browsing to inspect events. Mark
-                      task boundaries and mistakes during testing.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              )}
-              <p className="dashboard-hint">
-                Newest 100 events shown. Export includes the full retained log
-                and summary. The extension retains up to 500 events.
-              </p>
-            </section>
-          </TabsContent>
-          <TabsContent value="access">
-            <section className="dashboard-access">
-              <div>
-                <h2 tabIndex={-1}>Browser access</h2>
-                <p>
-                  Page access follows you between websites. Camera and
-                  microphone permissions are granted in the extension.
-                </p>
-              </div>
-              <div className="dashboard-actions">
+            <div className="dashboard-settings-stack">
+              <SectionTitle
+                title="Advanced"
+                description="Testing and local diagnostics."
+              />
+
+              <details className="dashboard-disclosure">
+                <summary>Message sending for testing</summary>
                 <FieldGroup>
-                  {(["pages", "tabs"] as const).map((kind) => (
-                    <SettingSwitch
-                      key={kind}
-                      id={`permission-${kind}`}
-                      label={
-                        kind === "pages" ? "Webpage control" : "Tab commands"
+                  <Field>
+                    <FieldLabel htmlFor="test-message-recipients">
+                      Owned test recipients for Gmail and Meet
+                    </FieldLabel>
+                    <FieldDescription id="test-recipients-help">
+                      Gmail and Meet sending requires an exact recipient here
+                      and a separate voice confirmation. WhatsApp messages use
+                      the currently open chat and always require voice
+                      confirmation. Only add recipients and private meetings you
+                      own or have permission to test.
+                    </FieldDescription>
+                    <Input
+                      id="test-message-recipients"
+                      aria-describedby={
+                        recipientError
+                          ? "test-recipients-error test-recipients-help"
+                          : "test-recipients-help"
                       }
-                      hint={
-                        permissions
-                          ? permissions[kind]
-                            ? "Enabled in Chrome"
-                            : "Not enabled in Chrome"
-                          : "Checking Chrome permissions"
-                      }
-                      checked={permissions?.[kind] ?? false}
-                      disabled={locked || !permissions}
-                      onChange={(checked) =>
-                        void safe(async () => {
-                          if (checked) await permit(kind);
-                          else
-                            await request({ type: "REVOKE_PERMISSION", kind });
-                          setPermissions(
-                            await request<PermissionState>({
-                              type: "GET_PERMISSIONS",
-                            }),
-                          );
-                        })
+                      aria-invalid={!!recipientError}
+                      value={messageRecipients}
+                      disabled={locked}
+                      onChange={(event) =>
+                        setMessageRecipients(event.target.value)
                       }
                     />
-                  ))}
-                  <p className="dashboard-hint">
-                    Camera:{" "}
-                    {permissions?.camera === "granted"
-                      ? "Allowed"
-                      : permissions?.camera === "denied"
-                        ? "Blocked in Chrome"
-                        : "Not checked"}
-                    . Microphone:{" "}
-                    {permissions?.microphone === "granted"
-                      ? "Allowed"
-                      : permissions?.microphone === "denied"
-                        ? "Blocked in Chrome"
-                        : "Not checked"}
-                    .
-                  </p>
+                    <p
+                      id="test-recipients-error"
+                      className="dashboard-field-error"
+                      role="status"
+                    >
+                      {recipientError}
+                    </p>
+                  </Field>
+                  <Button
+                    variant="outline"
+                    disabled={locked}
+                    onClick={() => {
+                      const entries = messageRecipients
+                        .split(",")
+                        .map((value) => value.trim().toLowerCase())
+                        .filter(Boolean);
+                      const next = normalizeControlSettings({
+                        ...settings,
+                        testMessageRecipients: entries,
+                      }).testMessageRecipients;
+                      if (next.length !== new Set(entries).size) {
+                        setRecipientError(
+                          "Use a Gmail address or a private Meet code with the shown prefix. Limit the list to 20 recipients.",
+                        );
+                        document
+                          .getElementById("test-message-recipients")
+                          ?.focus();
+                        return;
+                      }
+                      setRecipientError("");
+                      setMessageRecipients(next.join(", "));
+                      save({ testMessageRecipients: next });
+                    }}
+                  >
+                    Save test recipients
+                  </Button>{" "}
                 </FieldGroup>
+              </details>
+              <details
+                className="dashboard-settings-section"
+                data-settings-section="activity"
+              >
+                <summary>Activity & diagnostics</summary>
+                <div className="dashboard-settings-content">
+                  <section className="dashboard-panel">
+                    <div className="dashboard-section-heading">
+                      <div>
+                        <h2>Local run activity</h2>
+                        <p>
+                          Measure your session. Dictated text and keys stay out
+                          of the log.
+                        </p>
+                      </div>
+                      <Badge variant="outline">On this device</Badge>
+                    </div>
+                    <div className="dashboard-actions">
+                      <Button
+                        disabled={locked}
+                        onClick={() => void safe(loadLogs)}
+                      >
+                        <ArrowsClockwise
+                          data-icon="inline-start"
+                          aria-hidden="true"
+                        />
+                        Refresh activity
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={locked}
+                        onClick={() => void safe(exportLogs)}
+                      >
+                        <DownloadSimple
+                          data-icon="inline-start"
+                          aria-hidden="true"
+                        />
+                        Export JSON
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={locked}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              "Clear the local run log? Export it first if you need a copy.",
+                            )
+                          )
+                            void safe(async () => {
+                              await request({ type: "CLEAR_LOGS" });
+                              setLogs(null);
+                            }, "Local activity cleared.");
+                        }}
+                      >
+                        Clear activity
+                      </Button>
+                    </div>
+                    {logs?.events.length ? (
+                      <div className="dashboard-activity-table">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Time</TableHead>
+                              <TableHead>Event</TableHead>
+                              <TableHead>Value</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {logs.events
+                              .slice()
+                              .reverse()
+                              .slice(0, 100)
+                              .map((event, index) => (
+                                <TableRow key={`${event.at}-${index}`}>
+                                  <TableCell>
+                                    {new Intl.DateTimeFormat(undefined, {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                      second: "2-digit",
+                                    }).format(event.at)}
+                                  </TableCell>
+                                  <TableCell>
+                                    {event.type.replaceAll("-", " ")}
+                                  </TableCell>
+                                  <TableCell>
+                                    {event.value === undefined
+                                      ? "—"
+                                      : event.value.toFixed(2)}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : (
+                      <Empty>
+                        <EmptyHeader>
+                          <EmptyMedia variant="icon">
+                            <ChartLine aria-hidden="true" />
+                          </EmptyMedia>
+                          <EmptyTitle>Start with a session</EmptyTitle>
+                          <EmptyDescription>
+                            Refresh activity after browsing to inspect events.
+                          </EmptyDescription>
+                        </EmptyHeader>
+                      </Empty>
+                    )}
+                    <p className="dashboard-hint">
+                      Newest 100 events shown. Export includes the full retained
+                      log and summary. The extension retains up to 500 events.
+                    </p>
+                  </section>
+                </div>
+              </details>
+              <details className="dashboard-settings-section">
+                <summary>Run setup again</summary>
+                <p className="dashboard-hint">
+                  Revisit your controls and device access.
+                </p>
                 <Button
                   variant="outline"
                   disabled={locked}
-                  onClick={() =>
-                    void safe(() =>
-                      request({
-                        type: "GRANT_PERMISSIONS",
-                        kind: "devices",
-                        camera: !settings.voiceOnly,
-                        microphone: voiceEnabled(settings),
-                        returnHash: "#preferences",
-                      }),
-                    )
-                  }
+                  onClick={() => {
+                    save({ onboardingStep: 0 });
+                    changeView("setup");
+                  }}
                 >
-                  <GearSix data-icon="inline-start" aria-hidden="true" />
-                  Review selected devices
+                  Replay setup
                 </Button>
+              </details>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="access">
+            <section className="dashboard-settings-stack">
+              <SectionTitle
+                title="Permissions"
+                description="Manage access for your selected controls."
+              />
+              <div className="dashboard-two-column">
+                <section className="dashboard-panel">
+                  <SectionTitle
+                    title="Browser access"
+                    description="Choose what Handsfree can control in Chrome."
+                  />
+                  <FieldGroup>
+                    {(["pages", "tabs"] as const).map((kind) => (
+                      <SettingSwitch
+                        key={kind}
+                        id={`permission-${kind}`}
+                        label={
+                          kind === "pages" ? "Webpage control" : "Tab commands"
+                        }
+                        hint={
+                          permissions
+                            ? permissions[kind]
+                              ? "Allowed"
+                              : "Not allowed"
+                            : "Checking Chrome permissions"
+                        }
+                        checked={permissions?.[kind] ?? false}
+                        disabled={locked || !permissions}
+                        onChange={(checked) =>
+                          void safe(async () => {
+                            if (checked) await permit(kind);
+                            else
+                              await request({
+                                type: "REVOKE_PERMISSION",
+                                kind,
+                              });
+                            setPermissions(
+                              await request<PermissionState>({
+                                type: "GET_PERMISSIONS",
+                              }),
+                            );
+                          })
+                        }
+                      />
+                    ))}
+                  </FieldGroup>
+                  <div className="dashboard-command-permission">
+                    <div>
+                      <p>Natural-language commands</p>
+                      <small>
+                        {permissions?.provider ? "Allowed" : "Not allowed"}
+                      </small>
+                    </div>
+                    {!permissions?.provider && (
+                      <Button
+                        variant="outline"
+                        disabled={locked}
+                        onClick={() => void safe(() => permit("provider"))}
+                      >
+                        Enable
+                      </Button>
+                    )}
+                  </div>
+                </section>
+                <section className="dashboard-panel">
+                  <SectionTitle
+                    title="Camera & microphone"
+                    description="Device permissions are granted in the extension."
+                  />
+                  <dl className="dashboard-device-status">
+                    {(["camera", "microphone"] as const).map((device) => (
+                      <div key={device}>
+                        <dt>{device === "camera" ? "Camera" : "Microphone"}</dt>
+                        <dd>
+                          {permissions?.[device] === "granted"
+                            ? "Allowed"
+                            : permissions?.[device] === "denied"
+                              ? "Blocked in Chrome"
+                              : permissions?.[device] === "prompt"
+                                ? "Not requested"
+                                : "Not checked"}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <Button
+                    variant="outline"
+                    disabled={locked}
+                    onClick={() =>
+                      void safe(() =>
+                        request({
+                          type: "GRANT_PERMISSIONS",
+                          kind: "devices",
+                          camera: !settings.voiceOnly,
+                          microphone: voiceEnabled(settings),
+                          returnHash: "#access",
+                        }),
+                      )
+                    }
+                  >
+                    <GearSix data-icon="inline-start" aria-hidden="true" />
+                    Manage device access
+                  </Button>
+                </section>
               </div>
             </section>
           </TabsContent>
@@ -2256,18 +1964,6 @@ function Calibration({ state }: { state: SessionState }) {
         />
       )}
     </div>
-  );
-}
-function CommandList({ items }: { items: string[][] }) {
-  return (
-    <dl className="dashboard-command-list">
-      {items.map(([command, meaning]) => (
-        <div key={command}>
-          <dt>{command}</dt>
-          <dd>{meaning}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }
 function displayOrigin(url: string) {

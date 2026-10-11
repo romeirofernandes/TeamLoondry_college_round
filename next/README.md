@@ -17,7 +17,7 @@ Setup offers spoken guidance after five seconds without interaction. This offer 
 
 Chrome grants extension device permissions in a small access window. It requests only the selected devices and provides **Return to Handsfree**, keeping your place in setup. Voice-only setup never requests a camera. Camera previews need an explicit **Show camera preview** action.
 
-The dashboard separates Session, Tabs, and Help. The top-right **Profile** button opens input, pointer, speech, and browser-access preferences. Provider configuration and testing recipients are under Advanced. Use **Replay setup** to revisit onboarding. Reload the unpacked extension after rebuilding; the extension now declares Chrome's `tts` permission for setup narration.
+The dashboard separates Session and Tabs. The top-right **Profile** button opens three tabs: Controls, Permissions, and Advanced. Pointer, gesture and speech options expand inside Controls. Advanced contains testing recipients, activity and **Replay setup**. Docs is in the main website navigation. The `/docs` page covers setup, commands, all fifteen website adapters, Jev and Groq. Reload the unpacked extension after rebuilding; the extension now declares Chrome's `tts` permission for setup narration.
 
 For production:
 
@@ -36,7 +36,7 @@ TypeScript check: `npm run typecheck`.
 - **Hand gestures:** broad movement as a second pointer with hold confirmation; no pinch required.
 - **Face movements:** primary in-page pointer with smoothing, posture adaptation, and adjustable sensitivity.
 
-Content follows the repository-root `spec.md`: Chrome-only scope, intentional selection, instant pause, local tracking/settings/logs, provider-assisted commands and target finding, and explicit confirmation for form submission and immediate tab closing. The page introduces each mode with three editorial feature rows, a setup overview, and a quick-guide accordion. The development extension lives in `../extension/`; see the [root README](../README.md) for building, loading, and testing it. Voice typing belongs to the voice mode. Real-device performance still needs evaluation.
+Content follows the repository-root `spec.md`: Chrome-only scope, intentional selection, instant pause, local tracking/settings/logs, provider-assisted commands and target finding, explicit confirmation for form submission, and immediate tab closing. The page introduces each mode with three editorial feature rows, a setup overview, and a quick-guide accordion. The development extension lives in `../extension/`; see the [root README](../README.md) for building, loading, and testing it. Voice typing belongs to the voice mode. Real-device performance still needs evaluation.
 
 The website needs no authentication or environment variables. Provider credentials stay in extension storage or its generated local configuration, and are never returned to the dashboard. The dashboard sends commands through a same-origin message bridge injected only into an authorized dashboard tab. A single shadcn Button toggles light/dark mode through `next-themes` and remembers the choice locally. The page follows the system theme initially and respects the operating system’s reduced-motion preference automatically.
 

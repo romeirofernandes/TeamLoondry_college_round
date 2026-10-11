@@ -27,6 +27,19 @@ try {
  const opened=context.waitForEvent('page');await send({type:'OPEN_DASHBOARD',tabId});const dashboard=await opened;
 await dashboard.bringToFront();await dashboard.waitForLoadState('domcontentloaded');
  await dashboard.getByRole('button',{name:'Start session',exact:true}).waitFor({timeout:15000});
+ await dashboard.goto(`${dashboardOrigin}/dashboard#tabs`);
+ await expect(dashboard.getByRole('heading',{name:'Open tabs',exact:true})).toBeVisible();
+ await expect(dashboard.locator('[role="tabpanel"][data-state="active"]')).toContainText('Open tabs');
+ await expect(dashboard.getByRole('tab',{name:'Tabs',exact:true})).toHaveCount(0);
+ await expect(dashboard.getByRole('heading',{name:'Move between pages',exact:true})).toHaveCount(0);
+ await dashboard.getByRole('button',{name:'Refresh tabs',exact:true}).click();
+ await dashboard.screenshot({path:path.join(extensionRoot,'test-results/session-cleanup.png'),fullPage:true});
+ await expect(dashboard.locator('.dashboard-browser-tabs li').first()).toBeVisible();
+ const docs=await context.newPage();await docs.goto(`${dashboardOrigin}/docs`);
+ await docs.locator('summary').filter({hasText:'Move between pages'}).click();
+ await expect(docs.getByText('Background search for jazz',{exact:true})).toBeVisible();
+ await docs.close();await dashboard.bringToFront();
+ reports.push({sessionTabList:true,legacyTabsLink:true,commandsInDocs:true});
  await dashboard.getByRole('button',{name:'Start session',exact:true}).click();
  await dashboard.getByRole('button',{name:'Pause session',exact:true}).waitFor();
  await dashboard.getByLabel('Type a command').fill('scroll down');
@@ -61,13 +74,13 @@ await dashboard.bringToFront();await dashboard.waitForLoadState('domcontentloade
  await dashboard.getByRole('button',{name:'Profile and preferences',exact:true}).click();
  await dashboard.getByRole('tab',{name:'Advanced',exact:true}).click();
  await dashboard.locator('summary').filter({hasText:'Message sending for testing'}).click();
- await dashboard.getByLabel('Owned test recipients',{exact:true}).fill('gmail:owned@example.test, whatsapp:owned-chat, meet:abc-defg-hij');
+ await dashboard.getByLabel('Owned test recipients for Gmail and Meet',{exact:true}).fill('gmail:owned@example.test, whatsapp:owned-chat, meet:abc-defg-hij');
  await dashboard.getByRole('button',{name:'Save test recipients',exact:true}).click();
  await expect.poll(async()=>(await send({type:'GET_SETTINGS'})).testMessageRecipients).toEqual(['gmail:owned@example.test','whatsapp:owned-chat','meet:abc-defg-hij']);
  await dashboard.reload();await dashboard.getByRole('tab',{name:'Advanced',exact:true}).click();await dashboard.locator('summary').filter({hasText:'Message sending for testing'}).click();
- await expect(dashboard.getByLabel('Owned test recipients',{exact:true})).toHaveValue('gmail:owned@example.test, whatsapp:owned-chat, meet:abc-defg-hij');
+ await expect(dashboard.getByLabel('Owned test recipients for Gmail and Meet',{exact:true})).toHaveValue('gmail:owned@example.test, whatsapp:owned-chat, meet:abc-defg-hij');
  reports.push({ownedTestRecipientsPersist:true});
- await dashboard.getByRole('tab',{name:'Pointer',exact:true}).click();
+ await dashboard.getByRole('tab',{name:'Controls',exact:true}).click();await dashboard.locator('summary').filter({hasText:'Pointer & calibration'}).click();
  const sensitivity=dashboard.getByRole('slider',{name:'Sensitivity',exact:true});
  const dwell=dashboard.getByRole('slider',{name:'Dwell time',exact:true});
  const scroll=dashboard.getByRole('slider',{name:'Scroll speed',exact:true});
@@ -80,18 +93,18 @@ await dashboard.bringToFront();await dashboard.waitForLoadState('domcontentloade
  for(const style of ['Circle','Arrow','Crosshair','Spark']){
   await dashboard.getByRole('radio',{name:style,exact:true}).click();
   await expect.poll(async()=>(await send({type:'GET_SETTINGS'})).cursorStyle).toBe(style.toLowerCase());
-  await dashboard.reload();await dashboard.getByRole('tab',{name:'Pointer',exact:true}).click();
+  await dashboard.reload();await dashboard.getByRole('tab',{name:'Controls',exact:true}).click();await dashboard.locator('summary').filter({hasText:'Pointer & calibration'}).click();
   await expect(dashboard.getByRole('radio',{name:style,exact:true})).toBeChecked();
  }
  await expect(dashboard.getByText('Hold a small turn to keep moving. Return to neutral to stop in place.',{exact:true})).toBeVisible();
  await dashboard.getByRole('radio',{name:'Hand gestures',exact:true}).click();
  await expect(dashboard.getByText(/Keep your complete open palm in view/)).toBeVisible();
  const grants=await send({type:'GET_PERMISSIONS'});
- await dashboard.getByRole('tab',{name:'Browser access',exact:true}).click();
+ await dashboard.getByRole('tab',{name:'Permissions',exact:true}).click();
  for(const [label,kind] of [['Webpage control','pages'],['Tab commands','tabs']]) {
   await expect(dashboard.getByRole('switch',{name:label,exact:true})).toHaveAttribute('aria-checked',String(grants[kind]));
  }
- await dashboard.getByRole('tab',{name:'Pointer',exact:true}).click();
+ await dashboard.getByRole('tab',{name:'Controls',exact:true}).click();await dashboard.locator('summary').filter({hasText:'Pointer & calibration'}).click();
  const dwellSwitch=dashboard.getByRole('switch',{name:'Select with dwell',exact:true});
  const initialChecked=await dwellSwitch.getAttribute('aria-checked');
  const initialOffset=await dwellSwitch.locator('[data-slot="switch-thumb"]').evaluate(el=>getComputedStyle(el).translate);

@@ -21,6 +21,12 @@ describe("independent input preferences", () => {
     const both = normalizeControlSettings({ ...voice, enabledInputs: ["voice", "face", "hand"], pointerMode: "hand" });
     expect(both).toMatchObject({ pointerMode: "hand", dwellEnabled: true, edgeScroll: true });
   });
+  it("preserves the setup communication choice and migrates old preferences", () => {
+    expect(normalizeControlSettings({})).toMatchObject({setupGuidance: "ask", spokenFeedback: false});
+    expect(normalizeControlSettings({setupGuidance: "silent"})).toMatchObject({setupGuidance: "silent"});
+    expect(normalizeControlSettings({setupGuidance: "voice"})).toMatchObject({setupGuidance: "voice"});
+    expect(normalizeControlSettings({setupGuidance: "invalid" as never})).toMatchObject({setupGuidance: "ask"});
+  });
   it("bounds invalid selections and onboarding progress", () => {
     expect(normalizeControlSettings({ enabledInputs: [], onboardingStep: 99 })).toMatchObject({ enabledInputs: ["voice"], onboardingStep: 2 });
   });
