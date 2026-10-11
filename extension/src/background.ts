@@ -1369,7 +1369,7 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
       const request = parseSite(text, site);
       if (request) { await voiceAction(text, request, current); return; }
     }
-    const explicitBrowser=["new-tab","search","next-tab","previous-tab","close-tab","history","downloads","settings","incognito","back","forward","scroll","click","stop-typing","start-typing"].includes(parsed.type) || parsed.type==='named-tab' && /\btab\b/i.test(text);
+    const explicitBrowser=["new-tab","next-tab","previous-tab","close-tab","history","downloads","settings","incognito","back","forward","scroll","click","stop-typing","start-typing"].includes(parsed.type) || parsed.type==='named-tab' && /\btab\b/i.test(text);
     if(explicitBrowser) {await voiceAction(text,parsed,current);return;}
     const request = parseSite(text,site);
     if(request) { await voiceAction(text,request,current); return; }
