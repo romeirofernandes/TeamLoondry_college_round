@@ -1,0 +1,264 @@
+@font-face {
+  font-family: Manrope;
+  src: url("fonts/manrope-latin-400-normal.woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: Manrope;
+  src: url("fonts/manrope-latin-600-normal.woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: Space;
+  src: url("fonts/space-grotesk-latin-600-normal.woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+:root {
+  font-family: Manrope, sans-serif;
+  --bg: #f6f7f2;
+  --text: #20231b;
+  --muted: #62685a;
+  --line: #d8ddce;
+  --control: #747b6b;
+  --panel: #e9eddc;
+  --accent: #c1ef53;
+  --accent-text: #202a0b;
+  --ring: #54721e;
+  color: var(--text);
+  background: var(--bg);
+  color-scheme: light;
+}
+:root.dark {
+  --bg: #161813;
+  --text: #f4f5ee;
+  --muted: #adb59e;
+  --line: #383f2f;
+  --control: #7d886f;
+  --panel: #22281b;
+  --ring: #c1ef53;
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+button {
+  font:
+    600 0.875rem/1.5 Manrope,
+    sans-serif;
+  min-height: 48px;
+  padding: 11px 16px;
+  border: 1px solid var(--control);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--bg);
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.popup {
+  width: 360px;
+  max-width: 100%;
+  padding: 22px;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.brand {
+  font:
+    600 1.5rem/1.3 Space,
+    sans-serif;
+  letter-spacing: -0.05em;
+  text-decoration: none;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand img {
+  width: 32px;
+  height: 32px;
+}
+.brand span {
+  margin-inline-start: -7px;
+}
+.session-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 4px 9px;
+}
+.camera-preview {
+  aspect-ratio: 16/10;
+  background: var(--panel);
+  border-radius: 12px;
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.camera-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+  outline: 1px solid rgb(0 0 0 /0.1);
+  outline-offset: -1px;
+}
+.dark .camera-preview video {
+  outline-color: rgb(255 255 255 /0.1);
+}
+.preview-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+}
+.preview-empty span {
+  font-size: 2rem;
+  line-height: 1;
+}
+.preview-empty p {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  margin: 0;
+}
+.small {
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+}
+.camera-label {
+  position: absolute;
+  inset-inline-start: 10px;
+  bottom: 10px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 3px 7px;
+}
+.popup-heading h1 {
+  font-size: 1.7rem;
+  font-weight: 600;
+  letter-spacing: -0.045em;
+  line-height: 1.15;
+  margin: 0 0 10px;
+  max-width: 13ch;
+}
+.popup-heading p {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0 0 24px;
+}
+.actions {
+  display: flex;
+  gap: 12px;
+}
+.actions .primary {
+  flex: 1;
+}
+.feedback {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  min-height: 22px;
+  margin: 16px 0 20px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.website-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  background: var(--panel);
+  border-color: var(--control);
+}
+footer {
+  text-align: center;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-top: 16px;
+}
+@media (hover: hover) {
+  button:not(:disabled):hover {
+    filter: brightness(0.96);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  button {
+    transition: scale 150ms ease-out;
+  }
+  button:enabled:active {
+    scale: 0.96;
+  }
+}
+@media (max-width: 359px) {
+  .popup {
+    width: 320px;
+    padding: 16px;
+  }
+  .brand {
+    font-size: 1.35rem;
+  }
+}
+.permission-setup { max-width: 480px; margin: auto; padding: 28px; }
+.permission-setup h1 { margin: 14px 0 8px; font-size: 1.75rem; line-height: 1.2; }
+.permission-setup p { color: var(--muted); }
+.permission-row { display: grid; grid-template-columns: minmax(0, 1fr) 42px; gap: 6px 16px; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.permission-row label { font-weight: 600; }
+.permission-row p { margin: 3px 0 0; font-size: 0.8125rem; }
+.permission-row span { grid-column: 1 / -1; font-size: 0.75rem; color: var(--muted); }
+.permission-row input[type=checkbox] { appearance: none; width: 42px; height: 24px; min-height: 24px; padding: 2px; margin: 0; border: 1px solid var(--control); border-radius: 24px; background: var(--panel); cursor: pointer; }
+.permission-row input[type=checkbox]::before { content: ''; display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--text); }
+.permission-row input[type=checkbox]:checked { background: var(--accent); border-color: var(--ring); }
+.permission-row input[type=checkbox]:checked::before { transform: translateX(16px); background: var(--accent-text); }
+.permission-row input[type=checkbox]:disabled { cursor: default; opacity: 0.65; }
+.permission-actions { display: grid; gap: 10px; margin-top: 20px; }
+
+.permission-setup [hidden] { display: none !important; }
+.permission-eyebrow { margin-top: 20px; font-size: 0.8125rem; }
+.permission-device { padding-block: 22px; border-bottom: 1px solid var(--line); }
+.permission-device h2 { font-size: 1.125rem; line-height: 1.3; margin: 0 0 8px; }
+.permission-device p { margin-block: 8px 14px; }
+.permission-device button { width: 100%; min-height: 48px; }
+.permission-primary { background: var(--accent); color: var(--accent-text); border-color: var(--ring); }
+.permission-setup #status { min-height: 1.6em; margin-block: 20px; }
+.permission-setup .permission-actions { margin-bottom: 20px; }

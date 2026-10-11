@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "name": "Handsfree",
+  "version": "0.1.0",
+  "description": "Browse with face movements, broad hand gestures, and deliberate voice commands.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "nativeMessaging"
+  ],
+  "optional_permissions": [
+    "tabs"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "host_permissions": [
+    "https://api.groq.com/*",
+    "https://openrouter.ai/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Handsfree",
+    "default_icon": {
+      "32": "brand/handsfree-icon-32.png"
+    }
+  },
+  "icons": {
+    "32": "brand/handsfree-icon-32.png",
+    "180": "brand/handsfree-icon-180.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self' https://api.groq.com https://api.typesafe.ai https://openrouter.ai"
+  },
+  "commands": {
+    "pause-handsfree": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "Pause or resume Handsfree"
+    }
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "handsfree@teamloondry.org",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "browsingActivity",
+          "websiteContent",
+          "searchTerms",
+          "personalCommunications"
+        ]
+      }
+    }
+  }
+}
