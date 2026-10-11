@@ -50,6 +50,11 @@ test.beforeAll(async () => {
   });
   await context.route(/^https:\/\/open\.spotify\.com(?:\/|$)/, route => route.fulfill({ contentType: "text/html", body: shell(`<main><h1>Spotify fixture</h1></main><div id="player"></div><script>setTimeout(()=>{const b=document.createElement('button');b.dataset.testid='control-button-playpause';b.setAttribute('aria-label','Play');b.textContent='Play';b.onclick=()=>{b.setAttribute('aria-label','Pause');b.textContent='Pause';b.dataset.clicks=String(Number(b.dataset.clicks||0)+1)};document.querySelector('#player').append(b)},650)</script>`) }));
   await context.route("https://www.google.com/**", route => route.fulfill({ contentType: "text/html", body: shell("<main>Physics notes search results</main>") }));
+  const whatsapp = (await readFile(path.resolve("tests/fixtures/site-whatsapp.html"), "utf8"))
+    .replace('data-chat-id="owned-chat"', 'data-chat-id="sam-id"')
+    .replace('<span title="Mira">Mira</span>', '<span title="Sam">Sam</span>')
+    .replace("document.querySelector('#main header span').textContent=row.textContent;", "setTimeout(()=>{document.querySelector('#main header span').textContent=row.textContent;document.querySelector('#main header span').title=row.textContent;document.querySelector('#main').dataset.chatId=row.textContent==='Mira'?'mira-id':'sam-id'},350);");
+  await context.route("https://web.whatsapp.com/**", route => route.fulfill({ contentType: "text/html", body: whatsapp }));
   worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
   controls = await context.newPage();
   await controls.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
@@ -145,4 +150,49 @@ test("Spotify waits for its delayed UI control, plays once and continues with th
   expect(searches).toHaveLength(1);
   expect(new URL(searches[0].url!).searchParams.get("q")).toBe("physics notes");
   expect(searches[0].active).toBe(false);
+});
+
+test("records a WhatsApp message without sending during setup, then sends once automatically to the saved chat", async () => {
+  await heard("start recording routine");
+  const recordedPage = nextSitePage("web.whatsapp.com");
+  await heard("open WhatsApp");
+  const page = await recordedPage;
+  await page.goto("https://web.whatsapp.com/");
+  await expect(page.locator("#handsfree-assist-overlay")).toBeAttached();
+  await heard("open my chat with Mira");
+  await expect(page.locator("#main")).toHaveAttribute("data-chat-id", "mira-id");
+  await heard("write a message");
+  await heard("I arrived safely. See you soon!");
+  await heard("stop typing");
+  await heard("send this message");
+  await expect(page.locator(".message-out")).toHaveCount(0);
+  await heard("stop recording routine");
+  const draft = await message({ type: "GET_ROUTINE_SESSION" });
+  expect(draft.draft.map((step: any) => step.action.action || step.action.type)).toEqual(["open-site", "WA01", "whatsapp-message"]);
+  expect(draft.draft.at(-1).action).toEqual({ type: "whatsapp-message", recipient: { identity: "mira-id", label: "Mira" }, text: "I arrived safely. See you soon!" });
+  expect(await message({ type: "SAVE_ROUTINE", name: "Arrived", steps: draft.draft })).toHaveProperty("id");
+  const replayPage = nextSitePage("web.whatsapp.com");
+  await heard("run Arrived");
+  const replay = await replayPage;
+  await replay.goto("https://web.whatsapp.com/");
+  await expect.poll(async () => (await message({ type: "GET_ROUTINE_SESSION" })).feedback, { timeout: 15000 }).toBe("Finished routine Arrived.");
+  await expect(replay.locator("#main")).toHaveAttribute("data-chat-id", "mira-id");
+  await expect(replay.locator(".message-out")).toHaveCount(1);
+  await expect(replay.locator(".message-out")).toHaveText("I arrived safely. See you soon!");
+  await expect(replay.locator("footer textarea")).toHaveValue("");
+  // Even if the user removes the earlier open-chat step in the dashboard,
+  // a saved message must reopen and verify its bound recipient on its own.
+  expect(await message({ type: "SAVE_ROUTINE", name: "Direct arrival", steps: [draft.draft.at(-1)] })).toHaveProperty("id");
+  await replay.locator('#pane-side [role="row"]').filter({ hasText: "Sam" }).click();
+  await expect(replay.locator("#main")).toHaveAttribute("data-chat-id", "sam-id");
+  await heard("run Direct arrival");
+  await expect.poll(async () => (await message({ type: "GET_ROUTINE_SESSION" })).feedback, { timeout: 15000 }).toBe("Finished routine Direct arrival.");
+  await expect(replay.locator("#main")).toHaveAttribute("data-chat-id", "mira-id");
+  await expect(replay.locator(".message-out")).toHaveCount(2);
+  await replay.locator("footer textarea").fill("Keep my unsent draft");
+  await heard("run Direct arrival");
+  await expect.poll(async () => (await message({ type: "GET_ROUTINE_SESSION" })).playbackPaused).toBe(true);
+  await expect(replay.locator(".message-out")).toHaveCount(2);
+  await expect(replay.locator("footer textarea")).toHaveValue("Keep my unsent draft");
+  await heard("stop routine");
 });

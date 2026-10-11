@@ -200,6 +200,10 @@ export const initialState: SessionState = {
   calibrationSnapshots: {},
 };
 export type LinkDisposition = "new-tab" | "background";
+export interface WhatsAppRoutineMessage {
+  recipient: { identity: string; label: string };
+  text: string;
+}
 export type RoutineAction =
   | { type: "open-site"; site: keyof typeof import("./sites/catalogue").siteHomes }
   | { type: "search"; query: string; background: boolean }
@@ -208,6 +212,8 @@ export type RoutineAction =
   | { type: "scroll"; direction: "up" | "down" | "top" | "bottom" }
   | { type: "media"; command: "play" | "pause" | "toggle" }
   | { type: "site-command"; site: "youtube"; action: Extract<import("./sites/types").ActionId, "YT01" | "YT03" | "YT04" | "YT05" | "YT06" | "YT07" | "YT08" | "YT09" | "YT11" | "YT12">; args: import("./sites/types").SiteArgs }
+  | { type: "site-command"; site: "whatsapp"; action: "WA01"; args: import("./sites/types").SiteArgs }
+  | ({ type: "whatsapp-message" } & WhatsAppRoutineMessage)
   | { type: "navigate"; direction: "back" | "forward" };
 export interface RoutineStep { id: string; label: string; action: RoutineAction }
 export interface VoiceRoutine { id: string; name: string; steps: RoutineStep[]; createdAt: number; updatedAt: number }
@@ -374,6 +380,8 @@ export type Message =
       settings: Settings;
     }
   | { type: "PAGE_ACTION"; intent: Intent }
+  | { type: "GET_WHATSAPP_DRAFT" }
+  | { type: "RUN_WHATSAPP_MESSAGE"; message: WhatsAppRoutineMessage; requestId: string }
   | { type: "AGENT_ACTION"; action: AgentAction }
   | { type: "DICTATE"; text: string }
   | { type: "GET_TARGETS" }

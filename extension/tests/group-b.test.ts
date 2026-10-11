@@ -102,6 +102,69 @@ function hookSend(site: "whatsapp" | "gmail" | "meet") {
   else editor.textContent = "Literal send scroll down";
   return { editor, button, click };
 }
+describe("saved WhatsApp routine messages", () => {
+  const message = { recipient: { identity: "owned-chat", label: "Mira" }, text: "I arrived safely. Send scroll down is literal." };
+  it("sends the saved message once without test-recipient setup or another confirmation", async () => {
+    const engine = fixture("whatsapp");
+    const { editor, click } = hookSend("whatsapp");
+    (editor as HTMLTextAreaElement).value = "";
+    expect((await engine.sendRoutineMessage(message, "routine-send-1")).state).toBe("available");
+    expect(document.querySelector(".message-out")?.textContent).toBe(message.text);
+    expect((await engine.sendRoutineMessage(message, "routine-send-1")).state).toBe("available");
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+  it.each(["wrong identity", "wrong name", "missing identity", "existing draft", "chat changes during insertion"])("does not send when %s", async reason => {
+    const engine = fixture("whatsapp");
+    const { editor, click } = hookSend("whatsapp");
+    (editor as HTMLTextAreaElement).value = reason === "existing draft" ? "Keep my unsent message" : "";
+    if (reason === "wrong identity") document.querySelector("#main")!.setAttribute("data-chat-id", "someone-else");
+    if (reason === "wrong name") document.querySelector("#main header span")!.textContent = "Sam";
+    if (reason === "missing identity") document.querySelector("#main")!.removeAttribute("data-chat-id");
+    if (reason === "chat changes during insertion") editor.addEventListener("input", () => document.querySelector("#main")!.setAttribute("data-chat-id", "someone-else"));
+    expect((await engine.sendRoutineMessage(message, "routine-send-2")).state).not.toBe("available");
+    expect(click).not.toHaveBeenCalled();
+    if (reason === "existing draft") expect((editor as HTMLTextAreaElement).value).toBe("Keep my unsent message");
+  });
+  it("captures the exact draft and recipient without sending", () => {
+    const engine = fixture("whatsapp");
+    const { editor, click } = hookSend("whatsapp");
+    (editor as HTMLTextAreaElement).value = message.text;
+    expect(engine.whatsappDraft()).toEqual(message);
+    expect(click).not.toHaveBeenCalled();
+  });
+  it("does not retry a send with an uncertain outcome", async () => {
+    const engine = fixture("whatsapp");
+    const { editor, button } = hookSend("whatsapp");
+    (editor as HTMLTextAreaElement).value = "";
+    const clicked = vi.fn(() => {
+      // Chat switches synchronously as Send is activated: its outcome is unknown.
+      document.querySelector("#main")!.setAttribute("data-chat-id", "changed-chat");
+    });
+    button.onclick = clicked;
+    expect((await engine.sendRoutineMessage(message, "uncertain-send")).state).toBe("failed");
+    document.querySelector("#main")!.setAttribute("data-chat-id", "owned-chat");
+    expect((await engine.sendRoutineMessage(message, "another-attempt")).state).toBe("failed");
+    expect(clicked).toHaveBeenCalledTimes(1);
+  });
+  it("cancellation during draft insertion cannot send later", async () => {
+    const engine = fixture("whatsapp");
+    const { editor, click } = hookSend("whatsapp");
+    (editor as HTMLTextAreaElement).value = "";
+    editor.addEventListener("input", () => engine.cancel());
+    expect((await engine.sendRoutineMessage(message, "cancel-send")).state).not.toBe("available");
+    expect(click).not.toHaveBeenCalled();
+  });
+  it("waits for the Send control to appear after inserting the saved draft", async () => {
+    const engine = fixture("whatsapp");
+    const { editor, button, click } = hookSend("whatsapp");
+    (editor as HTMLTextAreaElement).value = "";
+    const footer = button.parentElement!;
+    button.remove();
+    setTimeout(() => footer.append(button), 60);
+    expect((await engine.sendRoutineMessage(message, "delayed-send-control")).state).toBe("available");
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+});
 describe("Group B boundaries and commands", () => {
   it.each(Object.keys(bodies) as BSite[])(
     "matches %s and rejects deceptive hosts",
@@ -700,4 +763,35 @@ it.each(
     expect(parseSite(phrase, engine.snapshot()!)?.action, phrase).toBe(
       action.id,
     );
+});
+
+describe("WhatsApp chat navigation layouts", () => {
+  it("opens a rendered exact contact without requiring a search field or matching message previews", async () => {
+    const engine = fixture("whatsapp");
+    document.querySelector("input")!.remove();
+    document.querySelector("#pane-side")!.innerHTML = '<div role="row"><span title="Mira">Mira</span><span>Mom called</span></div><div role="row"><span title="Mom">Mom</span></div>';
+    const rows = document.querySelectorAll<HTMLElement>('[role="row"]');
+    const wrong = vi.fn(); rows[0].onclick = wrong;
+    rows[1].onclick = () => { document.querySelector("#main header")!.innerHTML = '<span title="Mom">Mom</span>'; };
+    expect((await engine.run(req(engine, "open my chat with mom"))).state).toBe("available");
+    expect(wrong).not.toHaveBeenCalled();
+    expect(engine.snapshot()?.current?.label).toBe("Mom");
+  });
+  it("searches modern sidebar results and opens their nested chat control despite header tooltips", async () => {
+    const engine = fixture("whatsapp");
+    document.querySelector("#pane-side")!.remove();
+    const side = document.createElement("aside"); side.id = "side";
+    side.innerHTML = '<div aria-label="Search input textbox"><div contenteditable="true" role="textbox" aria-label="Search or start a new chat"></div></div><div role="list"></div>';
+    document.body.prepend(side);
+    side.querySelector('[contenteditable]')!.addEventListener("input", () => {
+      setTimeout(() => {
+        side.querySelector('[role="list"]')!.innerHTML = '<div role="listitem"><div role="button"><span title="Mom">Mom</span><span>Yesterday</span></div></div>';
+        side.querySelector<HTMLElement>('[role="button"]')!.onclick = () => {
+          document.querySelector("#main header")!.innerHTML = '<div data-testid="conversation-info-header-chat-title"><span title="Mom">Mom</span></div><button title="Search messages">Search</button>';
+        };
+      }, 1800);
+    });
+    expect((await engine.run(req(engine, "open chat with mom"))).state).toBe("available");
+    expect(engine.snapshot()?.current?.label).toBe("Mom");
+  });
 });

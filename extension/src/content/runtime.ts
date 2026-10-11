@@ -339,6 +339,14 @@ export class ContentRuntime {
   async handle(message: Message): Promise<unknown> {
     switch (message.type) {
       case "GET_SITE_CONTEXT": return this.sites.snapshot();
+      case "GET_WHATSAPP_DRAFT":
+        return this.running && !this.paused && !this.dictating ? this.sites.whatsappDraft() : null;
+      case "RUN_WHATSAPP_MESSAGE": {
+        if (!this.running || this.paused || this.dictating) return { state: "unavailable", feedback: "Resume Handsfree and finish dictation before sending a saved message." };
+        const result = await this.sites.sendRoutineMessage(message.message, message.requestId);
+        this.feedback(result.feedback);
+        return result;
+      }
       case "SITE_DIALOGUE": {
         if (!this.running || this.paused || this.dictating) return null;
         const result = await this.sites.dialogue(message.text);

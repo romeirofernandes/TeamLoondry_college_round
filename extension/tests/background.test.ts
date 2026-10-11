@@ -1116,6 +1116,45 @@ describe('bounded browser request lifecycle',()=>{
 });
 
 describe("routine navigation readiness", () => {
+  it("records a WhatsApp chat and exact draft without sending while configuring the routine", async () => {
+    const { browser, send } = await setup();
+    const snapshot = { site: "whatsapp", url: "https://web.whatsapp.com/", documentId: "chat-doc", revision: 1, entities: [], current: { kind: "chat", label: "Mira", identity: "mira-id" }, capabilities: [] };
+    (browser.tabs.sendMessage as any).mockImplementation(async (_id: number, message: any) => {
+      if (message.type === "GET_SITE_CONTEXT") return snapshot;
+      if (message.type === "SITE_DIALOGUE") return null;
+      if (message.type === "GET_WHATSAPP_DRAFT") return { recipient: { identity: "mira-id", label: "Mira" }, text: "Arrived safely!" };
+      if (message.type === "PAGE_ACTION") return { state: "available", feedback: "Opened Mira." };
+      return { ok: true };
+    });
+    await send({ type: "HEARD", text: "start recording routine" });
+    await send({ type: "HEARD", text: "open my chat with Mira" });
+    await send({ type: "HEARD", text: "send this message" });
+    expect((await send({ type: "GET_ROUTINE_SESSION" })).draft.map((step: any) => step.action)).toEqual([
+      { type: "site-command", site: "whatsapp", action: "WA01", args: { query: "mira" } },
+      { type: "whatsapp-message", recipient: { identity: "mira-id", label: "Mira" }, text: "Arrived safely!" },
+    ]);
+    expect(browser.tabs.sendMessage.mock.calls.some(([, msg]: any) => msg.type === "PAGE_ACTION" && msg.intent?.action === "WA06" || msg.type === "RUN_WHATSAPP_MESSAGE")).toBe(false);
+  });
+  it.each([true, false])("runs a saved WhatsApp message without confirmation, with matching chat initially %s", async initiallyMatching => {
+    const { browser, send } = await setup();
+    const url = "https://web.whatsapp.com/";
+    const step = { id: "send-mira", label: "Send to Mira: Arrived safely!", action: { type: "whatsapp-message", recipient: { identity: "mira-id", label: "Mira" }, text: "Arrived safely!" } };
+    (browser.storage.local.get as any).mockResolvedValue({ voiceRoutines: [{ id: "arrival", name: "Arrival", steps: [step], createdAt: 1, updatedAt: 1 }] });
+    (browser.tabs.get as any).mockResolvedValue({ id: 1, status: "complete", url });
+    let matching = initiallyMatching;
+    (browser.tabs.sendMessage as any).mockImplementation(async (_id: number, message: any) => {
+      if (message.type === "GET_SITE_CONTEXT") return { site: "whatsapp", url, documentId: "new-doc", revision: 1, current: matching ? { kind: "chat", label: "Mira", identity: "mira-id" } : { kind: "chat", label: "Sam", identity: "sam-id" }, entities: [], capabilities: [] };
+      if (message.type === "PAGE_ACTION" && message.intent.action === "WA01") { matching = true; return { state: "available", feedback: "Opened Mira." }; }
+      if (message.type === "GET_PAGE_CONTEXT") return { url, title: "WhatsApp", text: "Mira" };
+      if (message.type === "RUN_WHATSAPP_MESSAGE") return { state: "available", feedback: "Sent." };
+      return null;
+    });
+    await send({ type: "HEARD", text: "run Arrival" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(browser.tabs.sendMessage.mock.calls.filter(([, msg]: any) => msg.type === "RUN_WHATSAPP_MESSAGE")).toHaveLength(1);
+    expect((await send({ type: "GET_ROUTINE_SESSION" })).feedback).toBe("Finished routine Arrival.");
+    expect(browser.tabs.sendMessage.mock.calls.some(([, msg]: any) => msg.type === "SITE_DIALOGUE" && msg.text === "confirm")).toBe(false);
+  });
   it.each([
     ["search YouTube for physics lessons", "YT01", { query: "physics lessons" }],
     ["open the first video", "YT03", { index: 1 }],

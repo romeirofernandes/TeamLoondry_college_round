@@ -5,6 +5,7 @@ import {
   type RecipientAllowed,
 } from "./group-b";
 import { SiteContext } from "./context";
+import type { WhatsAppRoutineMessage } from "../shared";
 import { catalogue } from "./catalogue";
 import {
   elements,
@@ -81,6 +82,65 @@ export class SiteExecutor {
     this.context.invalidate();
     this.selected = null;
     this.selectedRevision = -1;
+  }
+  private whatsappEditor() {
+    const editors = elements('#main footer [contenteditable="true"][role="textbox"],#main footer textarea').filter(editable);
+    return editors.length === 1 ? editors[0] : null;
+  }
+  whatsappDraft(): WhatsAppRoutineMessage | null {
+    const snapshot = this.context.inspect(), editor = this.whatsappEditor();
+    if (snapshot?.site !== "whatsapp" || !snapshot.current?.identity || !snapshot.current.label || !editor) return null;
+    const text = (editor instanceof HTMLTextAreaElement ? editor.value : editor.textContent || "").trim();
+    return text && text.length <= 5000
+      ? { recipient: { identity: snapshot.current.identity, label: snapshot.current.label }, text }
+      : null;
+  }
+  /** Only the background's saved-routine runner invokes this path. Ordinary sends retain their own confirmation rules. */
+  async sendRoutineMessage(message: WhatsAppRoutineMessage, requestId: string): Promise<SiteResult> {
+    if (!message || typeof message.text !== "string" || !message.text.trim() || message.text.length > 5000 ||
+      typeof message.recipient?.identity !== "string" || !message.recipient.identity || message.recipient.identity.length > 300 ||
+      typeof message.recipient.label !== "string" || !message.recipient.label || message.recipient.label.length > 180 ||
+      typeof requestId !== "string" || !requestId || requestId.length > 200)
+      return result("unavailable", "This saved WhatsApp message is invalid.");
+    const previous = this.handled.get(requestId);
+    if (previous) return previous;
+    this.cancel();
+    const signal = this.active.signal, snapshot = this.context.inspect(), editor = this.whatsappEditor();
+    const root = elements("#main");
+    const valid = () => {
+      const current = this.context.inspect();
+      return !signal.aborted && !!snapshot && current?.site === "whatsapp" && current.documentId === snapshot.documentId &&
+        current.url === snapshot.url && current.current?.identity === message.recipient.identity &&
+        norm(current.current.label) === norm(message.recipient.label) && root.length === 1 && root[0].isConnected &&
+        elements("#main")[0] === root[0] && !!editor?.isConnected && this.whatsappEditor() === editor;
+    };
+    if (!valid() || !editor) return result("unavailable", "The current WhatsApp chat does not match the saved recipient. No message was sent.");
+    const read = () => (editor instanceof HTMLTextAreaElement ? editor.value : editor.textContent || "").trim();
+    if (read() && read() !== message.text.trim()) return result("unavailable", "This chat has a different unsent draft. It was preserved; no message was sent.");
+    const mutationKey = `routine-whatsapp:${message.recipient.identity}:${message.text}`;
+    if (this.uncertain.has(mutationKey)) return result("failed", "A previous send has an uncertain outcome. Inspect the chat before recording another send; it will not be repeated automatically.");
+    if (!read()) {
+      editor.focus();
+      if (!valid() || !insertText(editor, message.text)) return result("unavailable", "The saved message could not be inserted into the correct chat.");
+    }
+    if (!await until(() => read() === message.text.trim(), valid)) return result("unavailable", "The chat or draft changed. No message was sent.");
+    if (!await until(() => controls(["Send"], root[0]).length === 1, valid)) return result("unavailable", "A unique WhatsApp Send control did not become ready. No message was sent.");
+    const fresh = this.context.inspect()!;
+    const spec = this.context.adapter()!.actions.find(action => action.id === "WA06")!;
+    const request: SiteRequest = { type: "site-action", site: "whatsapp", action: "WA06", args: {}, documentId: fresh.documentId, revision: fresh.revision, requestId };
+    const prepared = prepareGroupB(spec, request, fresh, root[0], (site, recipients) =>
+      site === "whatsapp" && recipients.length === 1 && recipients[0] === message.recipient.identity);
+    if (prepared.result) return prepared.result;
+    if (!valid() || read() !== message.text.trim()) return result("unavailable", "The recipient or message changed. No message was sent.");
+    this.uncertain.add(mutationKey);
+    let output: SiteResult;
+    try { output = await executeGroupB(spec, request, fresh, root[0], prepared.target, valid, this.context); }
+    catch { output = result("failed", "The message outcome could not be verified. No automatic retry."); }
+    if (!valid()) output = result("failed", "The chat changed during sending. Inspect the chat; no automatic retry.");
+    if (output.state === "available") this.uncertain.delete(mutationKey);
+    this.handled.set(requestId, output);
+    if (this.handled.size > 100) this.handled.delete(this.handled.keys().next().value!);
+    return this.remember(output);
   }
   private fresh(request: SiteRequest) {
     const s = this.context.inspect();
@@ -833,10 +893,11 @@ export class SiteExecutor {
         navigate: { url: new URL(path, s.url).href, newTab: false },
       });
     }
-    if (spec.id === "WA01" && a.query && !request.entityId) {
+    if (spec.id === "WA01" && a.query && !request.entityId &&
+      !s.entities.some(e => e.kind === "chat" && norm(e.label) === norm(a.query!))) {
       const inputs = elements(
-        '#side [contenteditable="true"][role="textbox"],#pane-side input[aria-label="Search chats"],#side input[aria-label="Search chats"],#side [aria-label="Search input textbox"],input[aria-label="Search or start a new chat"],[role="textbox"][aria-label="Search or start a new chat"]',
-      );
+        '#side [contenteditable="true"][role="textbox"],#pane-side input[aria-label="Search chats"],#side input[aria-label="Search chats"],#side [aria-label="Search input textbox"],input[aria-label="Search or start a new chat"],[role="textbox"][aria-label="Search or start a new chat"],#side input[placeholder*="Search"],#side [contenteditable="true"][data-tab="3"]',
+      ).filter(editable);
       if (inputs.length !== 1 || !editable(inputs[0]))
         return result(
           "unavailable",
@@ -866,7 +927,7 @@ export class SiteExecutor {
             .length &&
           chats.some((e) => norm(e.label).includes(norm(a.query!)))
         );
-      }, valid);
+      }, valid, 8000);
       if (!settled)
         return result(
           "unavailable",
@@ -979,9 +1040,13 @@ export class SiteExecutor {
           (e) =>
             tokens.length > 0 &&
             tokens.every((token) =>
-              norm(e.label + " " + e.detail).includes(token),
+              norm(spec.id === "WA01" ? e.label : e.label + " " + e.detail).includes(token),
             ),
         );
+      }
+      if (spec.id === "WA01" && a.query && !chosen) {
+        const exact = candidates.filter(e => norm(e.label) === norm(a.query!));
+        if (exact.length) candidates = exact;
       }
       if (op.selectOnly && a.mode && !chosen) {
         const at = candidates.findIndex((e) => e.id === this.selected?.id);
@@ -1045,7 +1110,10 @@ export class SiteExecutor {
             "needs-choice",
             "Say list routes, then choose an announced number. Fastest is not inferred from an unqualified route list.",
           );
-        node.click();
+        const chatControl = chosen.kind === "chat" && request.site === "whatsapp"
+          ? elements('[role="button"]', node)[0]
+          : undefined;
+        (chatControl || node).click();
         return verified(
           () =>
             chosen.kind === "route"

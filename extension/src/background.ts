@@ -137,7 +137,8 @@ function safeRoutineAction(value: unknown): value is RoutineAction {
   if (action.type === "click-target") return typeof action.query === "string" && action.query.trim().length > 0 && action.query.length <= 100;
   if (action.type === "scroll") return ["up", "down", "top", "bottom"].includes(action.direction);
   if (action.type === "media") return ["play", "pause", "toggle"].includes(action.command);
-  if (action.type === "site-command") return action.site === "youtube" && routineYouTubeActions.has(action.action) && !!validateSiteRequest({ ...action, type: "site-action", documentId: "routine-validation", revision: 0, requestId: "routine-validation" });
+  if (action.type === "site-command") return (action.site === "youtube" && routineYouTubeActions.has(action.action) || action.site === "whatsapp" && action.action === "WA01" && typeof action.args?.query === "string" && !!action.args.query.trim()) && !!validateSiteRequest({ ...action, type: "site-action", documentId: "routine-validation", revision: 0, requestId: "routine-validation" });
+  if (action.type === "whatsapp-message") return typeof action.recipient?.identity === "string" && !!action.recipient.identity.trim() && action.recipient.identity.length <= 300 && typeof action.recipient.label === "string" && !!action.recipient.label.trim() && action.recipient.label.length <= 180 && typeof action.text === "string" && !!action.text.trim() && action.text.length <= 5000;
   if (action.type === "navigate") return ["back", "forward"].includes(action.direction);
   return false;
 }
@@ -161,6 +162,8 @@ async function setRoutineSession(next: RoutineSession, feedback?: string, announ
   }
 }
 function routineActionFromCommand(text: string, intent: Intent): RoutineAction | null {
+  if (intent.type === "site-action" && intent.site === "whatsapp" && intent.action === "WA01" && intent.args.query)
+    return { type: "site-command", site: "whatsapp", action: "WA01", args: { query: intent.args.query } };
   if (intent.type === "site-action" && intent.site === "youtube" && routineYouTubeActions.has(intent.action))
     return { type: "site-command", site: "youtube", action: intent.action, args: { ...intent.args } } as RoutineAction;
   const command = text.normalize("NFKC").trim().toLowerCase().replace(/[.!?,;:]+$/, "").replace(/\s+/g, " ");
@@ -202,12 +205,12 @@ function routineActionFromCommand(text: string, intent: Intent): RoutineAction |
 async function appendRoutineStep(action: RoutineAction) {
   if (!routineSession.recording || routineSession.recordingPaused) return;
   if (routineSession.draft.length >= 20) { await publish({ feedback: "This recording reached the 20-step limit. Say “stop recording routine” and review the draft in the dashboard." }); return; }
-  const label = (action.type === "site-command" ? `YouTube: ${catalogue.find(spec => spec.id === action.action)?.description || action.action}${action.args.query ? ` — ${action.args.query}` : action.args.index ? ` — video ${action.args.index}` : action.args.value !== undefined ? ` — ${action.args.value}` : action.args.mode ? ` — ${action.args.mode}` : ""}` : action.type === "open-site" ? `Open ${action.site}` : action.type === "search" ? `Search for ${action.query}${action.background ? " in the background" : " in a new tab"}` : action.type === "switch-tab" ? action.intent.type === "indexed-tab" ? `Switch to tab ${action.intent.index}` : `Switch to ${action.intent.name} tab` : action.type === "click-target" ? `Open ${action.query}` : action.type === "scroll" ? `Scroll ${action.direction}` : action.type === "media" ? `Media ${action.command}` : `Go ${action.direction}`).slice(0, 160);
+  const label = (action.type === "whatsapp-message" ? `Send WhatsApp to ${action.recipient.label}: ${action.text}` : action.type === "site-command" ? `${action.site === "whatsapp" ? "WhatsApp" : "YouTube"}: ${catalogue.find(spec => spec.id === action.action)?.description || action.action}${action.args.query ? ` — ${action.args.query}` : action.args.index ? ` — video ${action.args.index}` : action.args.value !== undefined ? ` — ${action.args.value}` : action.args.mode ? ` — ${action.args.mode}` : ""}` : action.type === "open-site" ? `Open ${action.site}` : action.type === "search" ? `Search for ${action.query}${action.background ? " in the background" : " in a new tab"}` : action.type === "switch-tab" ? action.intent.type === "indexed-tab" ? `Switch to tab ${action.intent.index}` : `Switch to ${action.intent.name} tab` : action.type === "click-target" ? `Open ${action.query}` : action.type === "scroll" ? `Scroll ${action.direction}` : action.type === "media" ? `Media ${action.command}` : `Go ${action.direction}`).slice(0, 160);
   const step: RoutineStep = { id: `step-${Date.now()}-${++routineIdCounter}`, label, action };
   await setRoutineSession({ ...routineSession, draft: [...routineSession.draft, step] }, `Step ${routineSession.draft.length + 1} recorded: ${label}.`);
 }
 function routineIntent(action: RoutineAction): Intent {
-  if (action.type === "site-command") throw new Error("Site routine steps require a fresh page snapshot.");
+  if (action.type === "site-command" || action.type === "whatsapp-message") throw new Error("Site routine steps require a fresh page snapshot.");
   if (action.type === "open-site") return { type: "new-tab" };
   if (action.type === "search") return { type: "search", query: action.query, background: action.background };
   if (action.type === "switch-tab") return action.intent;
@@ -217,9 +220,11 @@ function routineIntent(action: RoutineAction): Intent {
   return { type: action.direction };
 }
 interface RoutineDestination { tabId?: number; url?: string }
-interface RoutineExpectation { site: string; player: boolean; videos?: boolean }
+interface RoutineExpectation { site: string; player: boolean; videos?: boolean; recipient?: { identity: string; label: string } }
 function routineExpectation(action?: RoutineAction): RoutineExpectation | undefined {
+  if (action?.type === "whatsapp-message") return { site: "whatsapp", player: false };
   if (action?.type !== "site-command") return undefined;
+  if (action.site === "whatsapp") return { site: "whatsapp", player: false };
   return { site: action.site, player: !["YT01", "YT03", "YT04"].includes(action.action), videos: ["YT03", "YT04"].includes(action.action) };
 }
 async function applyRoutineSiteResult(result: SiteResult | null, destination: RoutineDestination, valid: () => boolean): Promise<boolean> {
@@ -268,8 +273,24 @@ async function executeRoutineAction(step: RoutineStep, destination: RoutineDesti
     const targets = await page({ type: "GET_TARGETS" });
     if (!Array.isArray(targets) || rankTargets(step.action.query, targets).kind !== "match") return false;
   }
-  const site = await page({ type: "GET_SITE_CONTEXT" });
+  let site = await page({ type: "GET_SITE_CONTEXT" });
   if (!valid()) return false;
+  if (step.action.type === "whatsapp-message") {
+    if (site?.site !== "whatsapp") return false;
+    if (site.current?.identity !== step.action.recipient.identity || site.current?.label !== step.action.recipient.label) {
+      const request = makeRequest(site, "WA01", { query: step.action.recipient.label });
+      const opened = await page({ type: "PAGE_ACTION", intent: request });
+      if (!await applyRoutineSiteResult(opened, destination, valid) || !await waitForRoutinePage(playbackToken, { site: "whatsapp", player: false, recipient: step.action.recipient }, destination) || !valid()) return false;
+      site = await page({ type: "GET_SITE_CONTEXT" });
+      if (!valid() || site?.current?.identity !== step.action.recipient.identity || site.current?.label !== step.action.recipient.label) return false;
+    }
+    const result = await page({ type: "RUN_WHATSAPP_MESSAGE", message: { recipient: step.action.recipient, text: step.action.text }, requestId: `routine-${playbackToken}-${step.id}-${Date.now()}` });
+    if (result?.state === "failed" && valid()) {
+      await setRoutineSession({ ...routineSession, playing: false, playbackPaused: false, playbackRoutineId: null, playbackStep: 0 }, "Routine stopped: WhatsApp could not verify the send. Inspect the chat before running it again; the message will not be retried automatically.", true);
+      return false;
+    }
+    return applyRoutineSiteResult(result, destination, valid);
+  }
   if (step.action.type === "site-command") {
     if (site?.site !== step.action.site) return false;
     const request = makeRequest(site, step.action.action, { ...step.action.args });
@@ -342,7 +363,7 @@ async function waitForRoutinePage(token: number, expectation?: RoutineExpectatio
         expectation ? page({ type: "GET_SITE_CONTEXT" }, tabId) : Promise.resolve(null),
       ]);
       if (tab?.status === "complete" && context && typeof context.url === "string" && context.url === tab.url) {
-        if (destination.url && !routineUrlMatches(context.url, destination.url) || expectation && (site?.site !== expectation.site || site.url !== context.url || expectation.videos && !site.entities?.some((entity: { kind: string }) => entity.kind === "video"))) {
+        if (destination.url && !routineUrlMatches(context.url, destination.url) || expectation && (site?.site !== expectation.site || site.url !== context.url || expectation.videos && !site.entities?.some((entity: { kind: string }) => entity.kind === "video") || expectation.recipient && (site.current?.identity !== expectation.recipient.identity || site.current?.label !== expectation.recipient.label))) {
           await new Promise(resolve => setTimeout(resolve, 200));
           continue;
         }
@@ -361,7 +382,7 @@ async function waitForRoutinePage(token: number, expectation?: RoutineExpectatio
   return false;
 }
 function routineActionMayNavigate(action: RoutineAction): boolean {
-  return action.type === "open-site" || action.type === "search" || action.type === "switch-tab" || action.type === "click-target" || action.type === "navigate" || action.type === "site-command" && ["YT01", "YT03", "YT04"].includes(action.action);
+  return action.type === "open-site" || action.type === "search" || action.type === "switch-tab" || action.type === "click-target" || action.type === "navigate" || action.type === "site-command" && ["YT01", "YT03", "YT04", "WA01"].includes(action.action);
 }
 async function runRoutine(name: string) {
   const routines = await getRoutines();
@@ -431,6 +452,7 @@ async function routineControl(command: Extract<Intent, {type:"routine-control"}>
   if (command.command === "pause-playback") {
     if (!routineSession.playing) { await publish({ feedback: "No routine is currently running." }); return; }
     ++playbackToken;
+    await page({ type: "SITE_DIALOGUE", text: "cancel" });
     await setRoutineSession({ ...routineSession, playing: false, playbackPaused: true }, "Routine paused. Say “resume routine” to continue, or “stop routine” to cancel.", true); return;
   }
   if (command.command === "resume-playback") {
@@ -439,6 +461,7 @@ async function routineControl(command: Extract<Intent, {type:"routine-control"}>
   }
   if (command.command === "stop-playback") {
     ++playbackToken;
+    await page({ type: "SITE_DIALOGUE", text: "cancel" });
     if (!routineSession.playing && !routineSession.playbackPaused) { await publish({ feedback: "No routine is currently running." }); return; }
     await setRoutineSession({ ...routineSession, playing: false, playbackPaused: false, playbackRoutineId: null, playbackStep: 0 }, "Routine stopped. Completed actions were left as they are.", true);
   }
@@ -475,6 +498,15 @@ async function resumeRoutinePlayback() {
     await setRoutineSession({ ...routineSession, playing: false, playbackPaused: false, playbackStep: 0, playbackRoutineId: null }, `Finished routine ${routine.name}.`, true); return;
 }
 async function voiceAction(text: string, intent: Intent, current: () => boolean = () => true) {
+  if (routineSession.recording && !routineSession.recordingPaused && intent.type === "site-action" && intent.site === "whatsapp" && intent.action === "WA06") {
+    const draft = await page({ type: "GET_WHATSAPP_DRAFT" });
+    if (!current()) return;
+    const step = draft && { type: "whatsapp-message", recipient: draft.recipient, text: draft.text };
+    if (!safeRoutineAction(step)) { await publish({ feedback: "Open the exact WhatsApp chat, dictate a message, then say “stop typing” and “send this message” to record it." }); return; }
+    await appendRoutineStep(step);
+    await publish({ feedback: `Recorded automatic send to ${step.type === "whatsapp-message" ? step.recipient.label : "the recipient"}. No message was sent during setup. Review and save the routine to enable sending.` });
+    return;
+  }
   if (intent.type === "click-target") {
     const targets = await page({ type: "GET_TARGETS" });
     if (!current() || !Array.isArray(targets) || rankTargets(intent.query, targets).kind !== "match") {
