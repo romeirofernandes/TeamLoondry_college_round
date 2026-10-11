@@ -8,7 +8,7 @@ use tauri_plugin_dialog::DialogExt;
 const MAX:usize=1024*1024;
 const FILE_MAX:usize=20*1024*1024;
 #[derive(Default)]
-pub struct Bridge { pub owner:Mutex<Option<u64>>, pub released:(Mutex<bool>,Condvar) }
+pub struct Bridge { pub owner:Mutex<Option<u64>>, pub credentials:Mutex<crate::credentials::CredentialControl>, pub released:(Mutex<bool>,Condvar) }
 fn directory()->Result<std::path::PathBuf,String>{if let Some(value)=std::env::var_os("HANDSFREE_BRIDGE_DIR"){let path=std::path::PathBuf::from(value);if !path.is_absolute(){return Err("Bridge directory must be absolute".into());}return Ok(path);}std::env::var_os("HOME").map(|p|std::path::PathBuf::from(p).join(".handsfree")).ok_or("Home directory unavailable".into())}
 fn read_frame(r:&mut impl Read)->Result<Value,String>{let mut n=[0;4];r.read_exact(&mut n).map_err(|e|e.to_string())?;let n=u32::from_ne_bytes(n) as usize;if n==0||n>MAX{return Err("Invalid native message length".into());}let mut body=vec![0;n];r.read_exact(&mut body).map_err(|e|e.to_string())?;serde_json::from_slice(&body).map_err(|e|e.to_string())}
 fn write_frame(w:&mut impl Write,v:&Value)->Result<(),String>{let body=serde_json::to_vec(v).map_err(|e|e.to_string())?;if body.len()>MAX{return Err("Native response too large".into());}w.write_all(&(body.len() as u32).to_ne_bytes()).and_then(|_|w.write_all(&body)).and_then(|_|w.flush()).map_err(|e|e.to_string())}
@@ -40,6 +40,16 @@ pub fn pair_extension(id:String)->Result<(),String>{register(&id)}
 #[tauri::command]
 pub fn handoff_ready(app:tauri::AppHandle)->Result<(),String>{let state=app.state::<Bridge>();*state.released.0.lock().map_err(|_|"Bridge lock failed")?=true;state.released.1.notify_all();Ok(())}
 #[tauri::command]
+pub fn credential_ready(app:tauri::AppHandle,token:String)->Result<(),String>{app.state::<Bridge>().credentials.lock().map_err(|_|"Bridge lock failed")?.ready(&token)}
+#[tauri::command]
+pub fn credential_return(app:tauri::AppHandle,token:String)->Result<(),String>{
+ let state=app.state::<Bridge>();let mut c=state.credentials.lock().map_err(|_|"Bridge lock failed")?;
+ if c.token!=token || c.owner.is_none(){return Err("Password popup session changed".into());}
+ crate::speech::stop(&app);
+ let snapshot=app.state::<Core>().lock().map_err(|_|"Session lock failed")?.stop();let _=app.emit("session",snapshot);
+ c.finish(&token)
+}
+#[tauri::command]
 pub fn capture_allowed(app:tauri::AppHandle)->Result<(),String>{assert_desktop(&app)}
 pub fn serve(app:tauri::AppHandle)->Result<(),String>{
  use std::os::unix::{net::UnixListener,fs::PermissionsExt};
@@ -50,8 +60,25 @@ pub fn serve(app:tauri::AppHandle)->Result<(),String>{
  let result=(||->Result<Value,String>{let state=app.state::<Bridge>();let kind=req["type"].as_str().ok_or("Message type required")?;
  match kind{
  "hello"=>Ok(json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"maxFileBytes":FILE_MAX})),
+ "credentialControl"=>{
+ let held=state.owner.lock().map_err(|_|"Bridge lock failed")?;
+ if held.is_some(){return Err("Release browser capture before controlling a password popup".into());}
+ state.credentials.lock().map_err(|_|"Bridge lock failed")?.begin(owner,id)?;
+ crate::speech::stop(&app);
+ let snapshot=app.state::<Core>().lock().map_err(|_|"Session lock failed")?.stop();let _=app.emit("session",snapshot);
+ app.emit("credential-control",id).map_err(|e|e.to_string())?;
+ if let Some(w)=app.get_webview_window("main"){w.show().map_err(|e|e.to_string())?;}
+ Ok(json!({"phase":"starting"}))
+ },
+ "credentialStatus"=>Ok(json!({"phase":state.credentials.lock().map_err(|_|"Bridge lock failed")?.status(owner)?})),
+ "credentialStop"=>{
+ {let mut c=state.credentials.lock().map_err(|_|"Bridge lock failed")?;c.status(owner)?;let token=c.token.clone();c.phase="stopping";app.emit("credential-stop",token).map_err(|e|e.to_string())?;}
+ crate::speech::stop(&app);let snapshot=app.state::<Core>().lock().map_err(|_|"Session lock failed")?.stop();let _=app.emit("session",snapshot);
+ Ok(json!({"phase":"stopping"}))
+ },
  "claim"=>{
- {let mut held=state.owner.lock().map_err(|_|"Bridge lock failed")?;if held.is_some_and(|x|x!=owner){return Err("Another browser session owns capture".into());}if *held==Some(owner){return Ok(json!({"owner":"browser"}));}*held=Some(owner);}
+ {let c=state.credentials.lock().map_err(|_|"Bridge lock failed")?;if c.owner.is_some(){if c.owner!=Some(owner)||c.phase!="returned"{return Err("Return from password popup control first".into());}}}
+ {let mut held=state.owner.lock().map_err(|_|"Bridge lock failed")?;if held.is_some_and(|x|x!=owner){return Err("Another browser session owns capture".into());}if *held==Some(owner){return Ok(json!({"owner":"browser"}));}*held=Some(owner);state.credentials.lock().map_err(|_|"Bridge lock failed")?.clear();}
  *state.released.0.lock().map_err(|_|"Bridge lock failed")?=false;
  crate::speech::stop(&app);
  let snapshot=app.state::<Core>().lock().map_err(|_|"Session lock failed")?.stop();app.emit("session",snapshot).map_err(|e|e.to_string())?;app.emit("browser-handoff",()).map_err(|e|e.to_string())?;
@@ -77,7 +104,9 @@ pub fn serve(app:tauri::AppHandle)->Result<(),String>{
  "fileDone"=>{file=None;Ok(json!({"cleared":true}))},_=>Err("Unsupported native request".into())
  }})();let response=match result{Ok(v)=>json!({"id":id,"ok":true,"result":v}),Err(e)=>json!({"id":id,"ok":false,"error":e})};if write_frame(&mut stream,&response).is_err(){break;}
  }
- let state=app.state::<Bridge>();if let Ok(mut held)=state.owner.lock(){if *held==Some(owner){*held=None;let _=app.emit("browser-released",());}};
+ let state=app.state::<Bridge>();
+ {let mut c=state.credentials.lock().unwrap();if c.owner==Some(owner){c.clear();crate::speech::stop(&app);if let Ok(mut core)=app.state::<Core>().lock(){let _=app.emit("session",core.stop());}let _=app.emit("browser-handoff",());}}
+ if let Ok(mut held)=state.owner.lock(){if *held==Some(owner){*held=None;let _=app.emit("browser-released",());}};
  });}}});Ok(())
 }
 #[cfg(test)]mod tests{use super::*;#[test]fn framing_roundtrip(){let v=json!({"id":"1","type":"hello"});let mut bytes=Vec::new();write_frame(&mut bytes,&v).unwrap();assert_eq!(read_frame(&mut bytes.as_slice()).unwrap(),v);}#[test]fn oversized_rejected(){assert!(read_frame(&mut ((MAX+1) as u32).to_ne_bytes().as_slice()).is_err());}#[test]fn truncated_rejected(){assert!(read_frame(&mut [5,0,0,0,b'{'].as_slice()).is_err());}}

@@ -1,4 +1,4 @@
-import {claimDesktop,releaseDesktop,connectDesktop,disconnectDesktop,paired,onDesktopLost} from "./desktop";
+import {claimDesktop,releaseDesktop,connectDesktop,disconnectDesktop,paired,onDesktopLost,startCredentialControl,stopCredentialControl} from "./desktop";
 import {uploadFile} from "./file-upload";
 import { parseSite, siteCandidates, unsafeSpeech, isCancellation, makeRequest, validateSiteRequest } from "./sites/language";
 import { siteHomes, catalogue } from "./sites/catalogue";
@@ -82,6 +82,11 @@ let hadTracking = false;
 let logs: MetricEvent[] = [];
 let routineSession: RoutineSession = { ...emptyRoutineSession };
 let playbackToken = 0;
+const transcriptionRequests = new Set<AbortController>();
+let nativeCredentialSession=false;
+let privateReady=false;
+let privateRevision=0;
+const privateSession=crypto.randomUUID();
 let routineIdCounter = 0;
 let lastActionSucceeded = false;
 let logsTimer: ReturnType<typeof setTimeout> | undefined;
@@ -113,6 +118,10 @@ const ready = (async () => {
       playbackStep: Number.isInteger(restored.playbackStep) && restored.playbackStep >= 0 ? restored.playbackStep : 0,
       feedback: typeof restored.feedback === "string" ? restored.feedback.slice(0, 300) : "",
     };
+  }
+  if (state.privateInput) {
+    state.lastHeard="";state.interimTranscript="";state.voice="Off — private entry";routineSession.recordingPaused=routineSession.recording;
+    void chrome.runtime.sendMessage({type:"OFFSCREEN_COMMAND",command:"private-enter",privateSession,privateRevision}).catch(()=>{});
   }
   // A restarted worker must not restore a pending confirmation.
 })();
@@ -522,7 +531,8 @@ async function voiceAction(text: string, intent: Intent, current: () => boolean 
 async function publish(patch: Partial<SessionState>, persist = true) {
   const oldFeedback = state.feedback;
   state = { ...state, ...patch };
-  if (patch.feedback && patch.feedback !== oldFeedback && settings.spokenFeedback)
+  if (state.privateInput) { state.lastHeard=""; state.interimTranscript=""; }
+  if (!state.privateInput && patch.feedback && patch.feedback !== oldFeedback && settings.spokenFeedback)
     void chrome.runtime.sendMessage({ type: "SPEAK_FEEDBACK", text: patch.feedback.slice(0,1200), enabled: true }).catch(() => {});
   if (persist) await chrome.storage.session.set({ state: { ...state, calibrationSnapshots: {} }, dashboardTabs: [...dashboardTabs] });
   const now = Date.now();
@@ -551,6 +561,7 @@ async function pageState(tabId = state.targetTabId) {
   return page(
     {
       type: "PAGE_STATE",
+      privateInput: state.privateInput,
       running: state.running,
       paused: state.paused,
       dictating: state.dictating,
@@ -600,6 +611,7 @@ async function target(tabId: number) {
   if (state.targetTabId !== null && state.targetTabId !== tabId)
     await page({
       type: "PAGE_STATE",
+      privateInput: state.privateInput,
       running: false,
       paused: true,
       dictating: false,
@@ -618,7 +630,7 @@ async function ensureOffscreen() {
 const captureChecks=new Set<chrome.runtime.Port>();
 async function releaseIdleDesktop(){if(!state.running&&uiVoiceTab===null&&!captureChecks.size)await releaseDesktop();}
 let captureRevision=0;
-async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>["command"], options: { gesture?: import("./shared").HandGesture; presets?: GesturePreset[] } = {}) {
+async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>["command"], options: { gesture?: import("./shared").HandGesture; presets?: GesturePreset[]; privateRevision?:number } = {}) {
   if (command === "start" || command === "ui-start") {
     const revision=captureRevision;await claimDesktop();
     if(revision!==captureRevision||command==="start"&&!state.running)throw new Error("Capture start cancelled");
@@ -627,13 +639,19 @@ async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>
   }
   if (command !== "start" && command !== "ui-start") {
     const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
-    if (!contexts.length) {if(command==="ui-stop")await releaseIdleDesktop();return;}
+    if (!contexts.length) {if(command==="ui-stop")await releaseIdleDesktop();return {ok:true};}
   }
-  await chrome.runtime.sendMessage({ type: "OFFSCREEN_COMMAND", command, settings: pageSettings(), ...options }).catch(() => {});
+  if (state.privateInput && command !== "private-exit" && command !== "stop") {
+    await chrome.runtime.sendMessage({type:"OFFSCREEN_COMMAND",command:"private-enter",privateSession,privateRevision});
+    if (command === "ui-start") return;
+  }
+  const result=await chrome.runtime.sendMessage({type:"OFFSCREEN_COMMAND",command,settings:pageSettings(),...options,...(command==="private-enter"||command==="private-exit"?{privateSession,privateRevision:options.privateRevision??privateRevision}:{})}).catch(()=>null);
+  if(command==="private-exit"&&result?.ok!==true)throw new Error("Voice remains off. Private entry changed; retry when finished.");
   if(command==="ui-stop")await releaseIdleDesktop();
 }
 async function stop() {
   captureRevision++;
+  nativeCredentialSession=false;await stopCredentialControl();
   uiVoiceTab = null; uiVoiceUntil = 0; ++narrationToken; chrome.tts?.stop();
   ++planToken; planDestination=null;
   activeProvider?.abort();
@@ -1061,6 +1079,8 @@ async function siteResult(result: (SiteResult & {dictating?:boolean}) | null, cu
 async function action(intent: Intent, current: () => boolean = () => true) {
   lastActionSucceeded = false;
   if (!current()) return;
+  if (state.privateInput && !["stop","pause"].includes(intent.type)) return;
+  if (intent.type === "private-keyboard") { await page({type:"PAGE_ACTION",intent}); return; }
   if (intent.type === "stop") {
     await stop();
     return;
@@ -1254,6 +1274,7 @@ let pendingTypingCommands = 0;
 
 /** Release the speech queue on cancellation even if a transport ignores abort. */
 async function providerWork(work: (signal: AbortSignal) => Promise<void>) {
+  if (state.privateInput) return;
   const controller = new AbortController();
   activeProvider = controller;
   const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]);
@@ -1323,6 +1344,8 @@ function storedTranscript(text: string): string {
 
 async function routeHeard(text: string, parsed: Intent, revision: number) {
   const originalText = text;
+  if(state.privateInput)return;
+  if(parsed.type==="private-keyboard"){await action(parsed);return;}
   if (revision !== pageRevision || !state.running || state.paused) return;
   await publish({ lastHeard: storedTranscript(text), interimTranscript: "" });
   if (revision !== pageRevision || !state.running || state.paused) return;
@@ -1463,16 +1486,72 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
   if (dashboard && !dashboardMessages.has(message.type)) return { ok: false, error: "This action is not available to the dashboard." };
   if (!trusted && sender.tab?.id !== state.targetTabId)
     return { ok: false, error: "Inactive page." };
-  if (!trusted && !["SET_STATE", "METRIC", "PAUSE"].includes(message.type))
+  if (!trusted && !["SET_STATE", "METRIC", "PAUSE", "PRIVATE_INPUT", "PRIVATE_POPUP"].includes(message.type))
     return {
       ok: false,
       error: "This message is reserved for extension controls.",
     };
+  if (state.privateInput && ["HEARD","TRANSCRIPT","UI_HEARD","UI_VOICE","UI_SPEAK","TRANSCRIBE_AUDIO","GESTURE_TRIGGER"].includes(message.type)) return {ok:false,error:"Voice is off during private entry. Leave the password field and choose Resume voice."};
   switch (message.type) {
+    case "PRIVATE_INPUT": {
+      if (!internal && (sender.tab?.id !== state.targetTabId || (sender.frameId ?? 0) !== 0)) return {ok:false};
+      if (message.command === "resume") {
+        // Page-local controls verify focus before requesting this explicit exit.
+        if(!privateReady)return {ok:false,error:"Wait for microphone shutdown before resuming voice."};
+        if(nativeCredentialSession)return {ok:false,error:"Return to browser from the desktop panel before resuming voice."};
+        if (!state.privateInput) return {ok:true};
+        const token=privateRevision;
+        const status=await page({type:"GET_PRIVATE_STATUS"});
+        if(status?.ok!==true||status.active||status.focused)return {ok:false,error:"Finish private entry and leave the password field first."};
+        if(token!==privateRevision || !privateReady)return {ok:false};
+        await controller("private-exit",{privateRevision:token});
+        if(token!==privateRevision || !privateReady)return {ok:false};
+        await publish({privateInput:false,feedback:"Voice resumed."});await pageState();return {ok:true};
+      }
+      if (message.command !== "enter") return {ok:false};
+      // Synchronous latch precedes the first await and invalidates every queued action.
+      privateReady=false;const privateToken=++privateRevision;
+      state.privateInput=true; state.lastHeard="";state.interimTranscript="";
+      activeProvider?.abort(); for (const request of transcriptionRequests) request.abort();
+      ++pageRevision;++playbackToken;++planToken;planDestination=null;++narrationToken;chrome.tts?.stop();
+      uiVoiceTab=null;uiVoiceUntil=0;
+      if(routineSession.recording || routineSession.playing) await setRoutineSession({...routineSession,recordingPaused:routineSession.recording,playing:false,playbackPaused:routineSession.playing||routineSession.playbackPaused},"Routine paused for private entry.");
+      await publish({privateInput:true,lastHeard:"",interimTranscript:"",dictating:false,voice:"Off — private entry"});
+      const contexts=await chrome.runtime.getContexts({contextTypes:[chrome.runtime.ContextType.OFFSCREEN_DOCUMENT]});
+      if(contexts.length) {
+        let timer:ReturnType<typeof setTimeout>|undefined;
+        const ack=await Promise.race([chrome.runtime.sendMessage({type:"OFFSCREEN_COMMAND",command:"private-enter",privateSession,privateRevision}),new Promise<{ok:false;privateInput?:boolean}>(resolve=>{timer=setTimeout(()=>resolve({ok:false}),5000);})]).finally(()=>clearTimeout(timer));
+        if(ack?.ok!==true || ack?.privateInput!==true) return {ok:false,error:"Microphone shutdown was not acknowledged. Keys remain locked."};
+      }
+      if(privateToken!==privateRevision)return {ok:false};
+      privateReady=true;await pageState();return {ok:true,privateInput:true};
+    }
+    case "PRIVATE_POPUP": {
+      if(!state.privateInput || !privateReady || !state.running || state.paused || !await paired())return {ok:false,error:"Start Handsfree, then connect and calibrate the macOS desktop companion first."};
+      if(!internal && (sender.tab?.id!==state.targetTabId || (sender.frameId??0)!==0))return {ok:false};
+      if(message.command!=="start")return {ok:false};
+      if(nativeCredentialSession)return {ok:false,error:"Password popup control is already active."};
+      nativeCredentialSession=true;
+      const revision=++captureRevision;
+      if(captureChecks.size){nativeCredentialSession=false;return {ok:false,error:"Finish device permission setup before controlling password popups."};}
+      try {
+      await controller("stop");
+      const contexts=await chrome.runtime.getContexts({contextTypes:[chrome.runtime.ContextType.OFFSCREEN_DOCUMENT]});
+      if(contexts.length)await chrome.offscreen.closeDocument();
+      await releaseDesktop();
+        await startCredentialControl(()=>{
+          nativeCredentialSession=false;
+          if(revision!==captureRevision||!state.running)return;
+          void controller("start").then(()=>publish({feedback:"Returned to browser. Microphone remains off until you choose Resume voice."})).catch(()=>stop());
+        });
+        await publish({camera:"Desktop password popup control",voice:"Off — private entry",feedback:"Use the Mac pointer to choose your saved login. Choose Return to browser in the desktop panel when finished."});
+        return {ok:true};
+      }catch(error){nativeCredentialSession=false;await publish({feedback:error instanceof Error?error.message:"Desktop popup control unavailable. Microphone remains off."});await controller("start");return {ok:false,error:state.feedback};}
+    }
     case "DESKTOP_CONNECT": return connectDesktop();
     case "DESKTOP_DISCONNECT": await stop();await disconnectDesktop();return {ok:true};
     case "DESKTOP_STATUS":return {paired:await paired()};
-    case "PREPARE_BROWSER_CAPTURE":await claimDesktop();return {ok:true};
+    case "PREPARE_BROWSER_CAPTURE":if(state.privateInput)return {ok:false,error:"Finish private entry before checking device access."};await claimDesktop();return {ok:true};
     case "UI_VOICE": {
       if (!dashboard || sender.tab?.id === undefined) return {ok:false,error:"Open the connected dashboard to use setup voice."};
       if (!message.enabled) {
@@ -1632,7 +1711,11 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       if ((!state.running && !setupActive) || settings.speechMode !== "browser") return { ok: false, error: "Voice session is stopped." };
       if (!Array.isArray(message.audio) || message.audio.length > 2000000 || !/^audio\/(webm|ogg|mp4)/.test(message.mime)) return { ok: false, error: "Invalid microphone recording." };
       const revision = pageRevision;
-      const text = await transcribeAudio(new Blob([new Uint8Array(message.audio)], { type: message.mime }), { ...groqOptions(), language: settings.language }, AbortSignal.timeout(12000));
+      const request=new AbortController();transcriptionRequests.add(request);
+      let text="";
+      try { text=await transcribeAudio(new Blob([new Uint8Array(message.audio)], {type:message.mime}), {...groqOptions(),language:settings.language}, AbortSignal.any([request.signal,AbortSignal.timeout(12000)])); }
+      finally {transcriptionRequests.delete(request);}
+      if(state.privateInput || request.signal.aborted)return {text:""};
       return { text: revision === pageRevision && (state.running || setupActive && uiVoiceTab === uiTab && Date.now() <= uiVoiceUntil && await activeDashboard(uiTab!)) ? text : "" };
     }
     case "TRANSCRIPT":
@@ -1743,7 +1826,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return { ok: true };
     case "SET_STATE": {
       const patch = trusted
-        ? message.patch
+        ? Object.fromEntries(Object.entries(message.patch).filter(([key])=>key!=="privateInput")) as Partial<SessionState>
         : {
             feedback: message.patch.feedback,
             dictating: message.patch.dictating,
@@ -1923,5 +2006,5 @@ chrome.runtime.onConnect?.addListener(port=>{
   let active=true;captureChecks.add(port);
   port.onDisconnect.addListener(()=>{active=false;captureChecks.delete(port);void releaseIdleDesktop();});
   port.onMessage.addListener(message=>{if(!message?.release)return;captureChecks.delete(port);void releaseIdleDesktop().finally(()=>{if(active)port.postMessage({released:true});});});
-  void ready.then(()=>claimDesktop()).then(()=>{if(active)port.postMessage({ok:true});else void releaseIdleDesktop();}).catch(error=>{if(active)port.postMessage({ok:false,error:error instanceof Error?error.message:String(error)});});
+  void ready.then(()=>{if(state.privateInput)throw new Error("Finish private entry before checking device access.");return claimDesktop();}).then(()=>{if(active)port.postMessage({ok:true});else void releaseIdleDesktop();}).catch(error=>{if(active)port.postMessage({ok:false,error:error instanceof Error?error.message:String(error)});});
 });

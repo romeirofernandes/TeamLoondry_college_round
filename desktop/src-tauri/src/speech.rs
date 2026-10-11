@@ -4,13 +4,19 @@ use tauri::{Manager,Emitter};
 pub fn stop(app:&tauri::AppHandle){if let Ok(mut state)=app.state::<Speech>().0.lock(){if let Some(mut child)=state.take(){let _=child.kill();let _=child.wait();}}}
 #[tauri::command]
 pub fn voice_start(app:tauri::AppHandle,epoch:u64)->Result<(),String>{
- crate::bridge::assert_desktop(&app)?;let snapshot=app.state::<crate::Core>().lock().map_err(|_|"Session lock failed")?.snapshot.clone();if snapshot.epoch!=epoch||snapshot.phase!=crate::session::Phase::Running{return Err("Session changed".into());}
+ let bridge=app.state::<crate::bridge::Bridge>();
+ let owner_guard=bridge.owner.lock().map_err(|_|"Bridge lock failed")?;
+ if owner_guard.is_some(){return Err("Browser control is active".into());}
+ let credential_guard=bridge.credentials.lock().map_err(|_|"Bridge lock failed")?;
+ if credential_guard.blocks_voice(){return Err("Speech is disabled during password popup control".into());}
+ let snapshot=app.state::<crate::Core>().lock().map_err(|_|"Session lock failed")?.snapshot.clone();if snapshot.epoch!=epoch||snapshot.phase!=crate::session::Phase::Running{return Err("Session changed".into());}
  stop(&app);
  #[cfg(not(target_os="macos"))]return Err("Native voice requires macOS".into());
  #[cfg(target_os="macos")] {
  let path=app.path().resolve("resources/handsfree-speech",tauri::path::BaseDirectory::Resource).map_err(|e|e.to_string())?;
  let mut child=Command::new(path).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e|e.to_string())?;let output=child.stdout.take().ok_or("Speech output unavailable")?;*app.state::<Speech>().0.lock().unwrap()=Some(child);
- std::thread::spawn(move||{for line in BufReader::new(output).lines().map_while(Result::ok){let Ok(value)=serde_json::from_str::<serde_json::Value>(&line)else{continue;};let active=app.state::<crate::Core>().lock().map(|s|s.snapshot.epoch==epoch&&s.snapshot.phase==crate::session::Phase::Running).unwrap_or(false);if !active{break;}
+ drop(credential_guard);drop(owner_guard);
+ std::thread::spawn(move||{for line in BufReader::new(output).lines().map_while(Result::ok){let Ok(value)=serde_json::from_str::<serde_json::Value>(&line)else{continue;};let active=app.state::<crate::Core>().lock().map(|s|s.snapshot.epoch==epoch&&s.snapshot.phase==crate::session::Phase::Running).unwrap_or(false);if !active || app.state::<crate::bridge::Bridge>().credentials.lock().map(|c|c.blocks_voice()).unwrap_or(true){break;}
  if value["kind"]=="utterance"{if let Some(text)=value["text"].as_str(){let normalized=text.trim().to_ascii_lowercase();if normalized=="stop handsfree"||normalized=="pause handsfree"{let snapshot=app.state::<crate::Core>().lock().unwrap().stop();let _=app.emit("session",snapshot);}else if crate::commands::bundle_id(&normalized).is_some(){if let Err(error)=crate::commands::native_command(normalized,app.clone()){let _=app.emit("native-error",error);}}let _=app.emit("voice-transcript",text);}}
  else if value["kind"]=="error"{let _=app.emit("native-error",value["message"].as_str().unwrap_or("Speech unavailable"));} }
  });Ok(()) }

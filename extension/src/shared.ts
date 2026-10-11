@@ -162,6 +162,7 @@ export interface PointerSample {
   latencyMs: number;
 }
 export interface SessionState {
+  privateInput: boolean;
   voiceOnly: boolean;
   running: boolean;
   paused: boolean;
@@ -181,6 +182,7 @@ export interface SessionState {
   calibrationSnapshots: Record<string, string>;
 }
 export const initialState: SessionState = {
+  privateInput: false,
   voiceOnly: false,
   running: false,
   paused: false,
@@ -247,6 +249,7 @@ export type FormCommand =
   | { type: "previous-section" }
   | { type: "submit" };
 export type Intent =
+  | { type: "private-keyboard" }
   | { type: "routine-control"; command: "start-recording" | "pause-recording" | "resume-recording" | "undo-step" | "stop-recording" | "list" | "run" | "pause-playback" | "resume-playback" | "stop-playback"; name?: string }
   | { type: "form-command"; command: FormCommand }
   | {type:"upload-file"}
@@ -321,6 +324,9 @@ export interface PermissionState {
 }
 export type PermissionStateValue = "granted" | "denied" | "prompt" | "unknown";
 export type Message =
+  | {type:"GET_PRIVATE_STATUS"}
+  | { type: "PRIVATE_INPUT"; command: "enter" | "resume" }
+  | { type: "PRIVATE_POPUP"; command: "start" | "return" }
   | { type: "UI_VOICE"; enabled: boolean }
   | { type: "UI_HEARD"; text: string }
   | { type: "UI_SPEAK"; text: string }
@@ -345,7 +351,7 @@ export type Message =
   | { type: "TRANSCRIBE_AUDIO"; audio: number[]; mime: string; language: string }
   | { type: "GET_CALIBRATION"; mode: PointerMode }
   | { type: "SAVE_CALIBRATION"; mode: PointerMode; calibration: Calibration }
-  | { type: "OFFSCREEN_COMMAND"; command: "start" | "pause" | "resume" | "stop" | "calibrate" | "settings" | "install-speech" | "ui-start" | "ui-stop" | "narration-start" | "narration-end" | "gesture-calibrate" | "gesture-cancel-calibration" | "gesture-presets"; settings?: Settings; gesture?: HandGesture; presets?: GesturePreset[] }
+  | { type: "OFFSCREEN_COMMAND"; command: "private-enter" | "private-exit" | "start" | "pause" | "resume" | "stop" | "calibrate" | "settings" | "install-speech" | "ui-start" | "ui-stop" | "narration-start" | "narration-end" | "gesture-calibrate" | "gesture-cancel-calibration" | "gesture-presets"; privateSession?:string; privateRevision?:number; settings?: Settings; gesture?: HandGesture; presets?: GesturePreset[] }
   | { type: "GET_GESTURE_PRESETS" }
   | { type: "SAVE_GESTURE_PRESETS"; presets: GesturePreset[] }
   | { type: "GET_ROUTINE_SESSION" }
@@ -374,6 +380,7 @@ export type Message =
   | { type: "ACTION"; intent: Intent }
   | {
       type: "PAGE_STATE";
+      privateInput?: boolean;
       running: boolean;
       paused: boolean;
       dictating: boolean;

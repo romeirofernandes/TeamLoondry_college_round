@@ -117,3 +117,34 @@ it.each([true,false])("preserves pause when voice-only changes to %s",async voic
  const send=vi.mocked(chrome.runtime.sendMessage);send.mockClear();mocks.speech.at(-1).heard("scroll down");await flush();expect(send).not.toHaveBeenCalledWith(expect.objectContaining({type:"TRANSCRIPT"}));
  dispatch("resume");await flush();expect(mocks.trackers.length).toBe(count+(voiceOnly ? 0 : 1));
 });
+it('privacy stops capture and blocks settings, pause, UI and narration restarts until explicit exit',async()=>{
+ mocks.fail=false;dispatch('start');await flush();const speech=mocks.speech[0];
+ const ack=vi.fn();command({type:'OFFSCREEN_COMMAND',command:'private-enter'},{},ack);await flush();
+ expect(speech.stop).toHaveBeenCalled();expect(ack).toHaveBeenCalledWith({ok:true,privateInput:true});
+ const count=mocks.speech.length;const send=vi.mocked(chrome.runtime.sendMessage);send.mockClear();speech.heard('sentinel-secret');
+ dispatch('settings',{...defaults,language:'hi-IN'});dispatch('pause');dispatch('resume');dispatch('ui-start');dispatch('narration-end');await flush();
+ expect(mocks.speech).toHaveLength(count);expect(send).not.toHaveBeenCalledWith(expect.objectContaining({type:'HEARD'}));
+ dispatch('private-exit');await flush();expect(mocks.speech.length).toBeGreaterThan(count);
+});
+it('privacy invalidates pending fallback startup',async()=>{
+ let release!:(v:any)=>void;providerStatus=()=>new Promise(r=>release=r);dispatch('start');await flush();
+ dispatch('private-enter');release({groqKeyCount:5});await flush();expect(mocks.fallback).toHaveLength(0);
+});
+it('does not acknowledge private entry until a pending microphone startup has settled',async()=>{
+ dispatch('start');await flush();
+ // Simulate a recorder awaiting permission; its stop invalidates generation,
+ // but acknowledgement must wait for start to release any late stream.
+ dispatch('stop');mocks.fallback=[];
+ // A deferred provider lookup is also a pending voice-start transaction.
+ let release!:(v:any)=>void;providerStatus=()=>new Promise(r=>release=r);
+ dispatch('start');await flush();const ack=vi.fn();command({type:'OFFSCREEN_COMMAND',command:'private-enter'},{},ack);
+ expect(ack).not.toHaveBeenCalled();release({groqKeyCount:5});await flush();
+ expect(ack).toHaveBeenCalledWith({ok:true,privateInput:true});expect(mocks.fallback).toHaveLength(0);
+});
+it('ignores a stale private exit after a newer password-entry generation',async()=>{
+ mocks.fail=false;dispatch('start');await flush();
+ command({type:'OFFSCREEN_COMMAND',command:'private-enter',privateSession:'worker',privateRevision:1},{},()=>{});await flush();
+ command({type:'OFFSCREEN_COMMAND',command:'private-enter',privateSession:'worker',privateRevision:2},{},()=>{});await flush();const count=mocks.speech.length;
+ const ack=vi.fn();command({type:'OFFSCREEN_COMMAND',command:'private-exit',privateSession:'worker',privateRevision:1},{},ack);await flush();
+ expect(mocks.speech).toHaveLength(count);expect(ack).toHaveBeenCalledWith({ok:false});
+});

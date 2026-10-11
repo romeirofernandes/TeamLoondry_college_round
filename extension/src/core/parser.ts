@@ -12,6 +12,9 @@ export function normalizeSpeech(text: string): string {
 }
 
 const fixed: Record<string, Intent> = {
+  "open private keyboard": {type:"private-keyboard"},
+  "show password keyboard": {type:"private-keyboard"},
+  "private keyboard": {type:"private-keyboard"},
   "upload file":{type:"upload-file"},"attach file":{type:"upload-file"},"choose file":{type:"upload-file"},
   "show links": { type: "show-links" },
   "scroll up": { type: "scroll", direction: "up" },

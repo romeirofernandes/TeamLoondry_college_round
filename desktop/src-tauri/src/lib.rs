@@ -1,5 +1,6 @@
 mod native;
 mod bridge;
+mod credentials;
 mod commands;
 mod speech;
 mod session;
@@ -94,7 +95,7 @@ pub fn run(){
         .manage(speech::Speech::default())
         .manage(bridge::Bridge::default())
         .manage(Mutex::new(Session::default()))
-        .invoke_handler(tauri::generate_handler![status,request_access,open_help,start,control,heartbeat,pointer,dwell_click,frontend_ready,bridge::pair_extension,bridge::handoff_ready,bridge::capture_allowed,commands::native_command,commands::panel_layout,speech::voice_start,speech::voice_stop])
+        .invoke_handler(tauri::generate_handler![status,request_access,open_help,start,control,heartbeat,pointer,dwell_click,frontend_ready,bridge::pair_extension,bridge::handoff_ready,bridge::capture_allowed,bridge::credential_ready,bridge::credential_return,commands::native_command,commands::panel_layout,speech::voice_start,speech::voice_stop])
         .setup(|app|{
             if let Err(e)=bridge::serve(app.handle().clone()){eprintln!("Native bridge unavailable: {e}");}
             use tauri::menu::{Menu,MenuItem};

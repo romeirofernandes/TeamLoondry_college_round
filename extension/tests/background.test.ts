@@ -17,7 +17,7 @@ const pageSender = (id: number): chrome.runtime.MessageSender => ({
   url: "https://example.test/",
 });
 
-async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: string; settings?: Record<string, unknown>; legacySettings?: Record<string, unknown> } = {}) {
+async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: string; sessionState?:Record<string,unknown>; settings?: Record<string, unknown>; legacySettings?: Record<string, unknown> } = {}) {
   let listener: Listener | undefined;
   let pageDictating = false;
   const event = () => ({ addListener: vi.fn() });
@@ -32,7 +32,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
         })),
         set: vi.fn(async () => {}),
       },
-      session: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) },
+      session: { get: vi.fn(async () => (options.sessionState ? {state:options.sessionState} : {})), set: vi.fn(async () => {}) },
     },
     runtime: {
       getURL: (path: string) => "chrome-extension://handsfree-test/" + path,
@@ -1316,4 +1316,56 @@ describe("routine navigation readiness", () => {
     expect(pageActions).toMatchObject([{ type: "site-action", site: "spotify", action: "S07" }]);
     expect(openedUrls).toEqual([spotifyUrl, "https://www.google.com/search?q=physics%20notes"]);
   });
+});
+it('latches password privacy, clears transcripts and rejects providers and ordinary commands',async()=>{
+ const {send,browser,fetch}=await setup({key:'fixture'});
+ await send({type:'TRANSCRIPT',text:'old words',final:true});
+ expect(await send({type:'PRIVATE_INPUT',command:'enter'} as any,pageSender(1))).toMatchObject({ok:true,privateInput:true});
+ expect(await send({type:'GET_STATE'})).toMatchObject({privateInput:true,lastHeard:'',interimTranscript:''});
+ browser.tabs.create.mockClear();
+ await send({type:'HEARD',text:'new tab'});await send({type:'TRANSCRIPT',text:'sentinel',final:true});
+ await send({type:'TRANSCRIBE_AUDIO',audio:[1],mime:'audio/webm',language:'en'});
+ await send({type:'ACTION',intent:{type:'new-tab'}});
+ expect(browser.tabs.create).not.toHaveBeenCalled();expect(fetch).not.toHaveBeenCalled();
+ expect(JSON.stringify(await send({type:'GET_STATE'}))).not.toContain('sentinel');
+ expect(await send({type:'PRIVATE_INPUT',command:'resume'} as any,pageSender(2))).toMatchObject({ok:false});
+});
+
+it('restores private entry across worker restart and keeps speech off on start',async()=>{
+ const {send,browser}=await setup({sessionState:{privateInput:true,lastHeard:'old',interimTranscript:'old'}});
+ expect(await send({type:'GET_STATE'})).toMatchObject({privateInput:true,lastHeard:'',interimTranscript:''});
+ expect(browser.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({type:'OFFSCREEN_COMMAND',command:'private-enter'}));
+ await send({type:'HEARD',text:'new tab'});expect(browser.tabs.create).not.toHaveBeenCalled();
+});
+it('device preparation stays blocked during private entry',async()=>{
+ const {send}=await setup();await send({type:'PRIVATE_INPUT',command:'enter'} as any,pageSender(1));
+ expect(await send({type:'PREPARE_BROWSER_CAPTURE'})).toMatchObject({ok:false});
+});
+it('private resume checks that the page has finished password entry',async()=>{
+ const {send,browser}=await setup();await send({type:'PRIVATE_INPUT',command:'enter'} as any,pageSender(1));
+ browser.tabs.sendMessage.mockImplementation(async(_id,message)=>message.type==='GET_PRIVATE_STATUS' as any?{ok:true,active:true,focused:true}:{ok:true});
+ expect(await send({type:'PRIVATE_INPUT',command:'resume'} as any,pageSender(1))).toMatchObject({ok:false});
+ expect(await send({type:'GET_STATE'})).toMatchObject({privateInput:true});
+});
+it('a new password focus cancels an in-flight Resume voice request',async()=>{
+ const {send,browser}=await setup();await send({type:'PRIVATE_INPUT',command:'enter'},pageSender(1));
+ let release!:(v:any)=>void;browser.tabs.sendMessage.mockImplementation(async(_id,message)=>message.type==='GET_PRIVATE_STATUS'?new Promise(r=>release=r):{ok:true});
+ const resume=send({type:'PRIVATE_INPUT',command:'resume'},pageSender(1));for(let i=0;i<20&&!release;i++)await Promise.resolve();
+ await send({type:'PRIVATE_INPUT',command:'enter'},pageSender(1));release({ok:true,active:false,focused:false});await resume;
+ expect(await send({type:'GET_STATE'})).toMatchObject({privateInput:true});
+});
+it('aborts an in-flight transcription and discards a transport result that ignores cancellation',async()=>{
+ const {send,fetch}=await setup({key:'fixture'});let finish!:(value:unknown)=>void;let signal:AbortSignal|undefined;
+ fetch.mockImplementation((_url,options)=>{signal=options.signal;return new Promise(resolve=>finish=resolve);});
+ const pending=send({type:'TRANSCRIBE_AUDIO',audio:[1,2,3],mime:'audio/webm',language:'en-US'});
+ for(let i=0;i<100&&!finish;i++)await Promise.resolve();expect(finish).toBeDefined();
+ await send({type:'PRIVATE_INPUT',command:'enter'},pageSender(1));expect(signal?.aborted).toBe(true);
+ finish({ok:true,json:async()=>({text:'late-secret'})});await pending;
+ expect(JSON.stringify(await send({type:'GET_STATE'}))).not.toContain('late-secret');
+});
+it('pauses routine recording for private entry and does not capture later commands',async()=>{
+ const {send}=await setup();await send({type:'HEARD',text:'start recording routine'});
+ await send({type:'PRIVATE_INPUT',command:'enter'},pageSender(1));
+ expect(await send({type:'GET_ROUTINE_SESSION'})).toMatchObject({recording:true,recordingPaused:true,draft:[]});
+ await send({type:'HEARD',text:'search for sentinel-secret'});expect(await send({type:'GET_ROUTINE_SESSION'})).toMatchObject({draft:[]});
 });
