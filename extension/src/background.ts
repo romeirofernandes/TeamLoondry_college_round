@@ -51,7 +51,6 @@ dashboardMessages.add("GET_GESTURE_STATUS");
 dashboardMessages.add("CALIBRATE_GESTURE");
 dashboardMessages.add("CANCEL_GESTURE_CALIBRATION");
 dashboardMessages.add("GET_GESTURE_PREVIEW");
-let wakeUntil = 0;
 let mediaPermissions: { camera: "granted" | "denied" | "prompt" | "unknown"; microphone: "granted" | "denied" | "prompt" | "unknown" } = { camera: "unknown", microphone: "unknown" };
 let gestureRuntimeStatus: GestureRuntimeStatus = { ready: false, detected: null, confidence: 0 };
 let gesturePreviewFrame: string | null = null;
@@ -180,7 +179,6 @@ async function attach(tabId: number) {
 }
 async function target(tabId: number) {
   ++planToken; planDestination=null;
-  wakeUntil = 0;
   activeProvider?.abort();
   pageRevision++;
   if (state.targetTabId !== null && state.targetTabId !== tabId)
@@ -223,7 +221,6 @@ async function stop() {
   captureRevision++;
   uiVoiceTab = null; uiVoiceUntil = 0; ++narrationToken; chrome.tts?.stop();
   ++planToken; planDestination=null;
-  wakeUntil = 0;
   activeProvider?.abort();
   pageRevision++;
   pendingClose = null;
@@ -255,7 +252,6 @@ async function stop() {
 }
 async function pause() {
   ++planToken; planDestination=null;
-  wakeUntil = 0;
   activeProvider?.abort();
   pageRevision++;
   pendingClose = null;
@@ -541,7 +537,12 @@ async function arbitrarySingle(query: string, signal?: AbortSignal) {
     record("find-error");
   }
 }
-async function arbitraryFind(query:string){
+async function arbitraryFind(text:string){
+  const query = wakeRequest(text);
+  if (!query) {
+    await publish({ feedback: 'Start each arbitrary request with "hey handsfree", followed by your request.' });
+    return;
+  }
   // Direct requests keep their existing finite command contract. Explicit sequences use fresh-page steps.
   await providerWork(signal=> /\b(?:then|after that)\b|\band (?:play|open|click|search|scroll|pause)\b/i.test(query)
     ? arbitraryPlan(query,signal) : arbitrarySingle(query,signal));
@@ -746,7 +747,11 @@ async function action(intent: Intent, current: () => boolean = () => true) {
     return;
   }
   if (intent.type === "find") {
-    await arbitraryFind(intent.query);
+    const listed = await page({ type: "GET_TARGETS" });
+    if (!current()) return;
+    const matches = rankTargets(intent.query, Array.isArray(listed) ? listed : []);
+    const result = await page({ type: "FIND_RESULT", ids: matches.ids });
+    if (current() && result?.error) await publish({ feedback: result.error });
     return;
   }
   if (intent.type.startsWith("media-") && state.targetTabId !== null) {
@@ -896,6 +901,7 @@ function storedTranscript(text: string): string {
 }
 
 async function routeHeard(text: string, parsed: Intent, revision: number) {
+  const originalText = text;
   if (revision !== pageRevision || !state.running || state.paused) return;
   await publish({ lastHeard: storedTranscript(text), interimTranscript: "" });
   if (revision !== pageRevision || !state.running || state.paused) return;
@@ -919,10 +925,9 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     return;
   }
   if (isCancellation(text)) { await action({type:"cancel"},current); return; }
-  const wake = wakeRequest(text);
+  const wake = wakeRequest(originalText);
   const wakeForm = wake === null ? null : parseFormCommand(wake);
   if (parsed.type === "form-command" || wakeForm) {
-    wakeUntil = 0;
     await action(wakeForm ? { type: "form-command", command: wakeForm } : parsed, current);
     return;
   }
@@ -955,19 +960,9 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     if (/^(next|stop)$/i.test(text.trim())) { await publish({feedback:'Specify what to stop or advance, such as next episode or pause Handsfree.'}); return; }
   }
   if (wake !== null) {
-    wakeUntil = 0;
-    if (!wake) {
-      wakeUntil = Date.now() + 10000;
-      await publish({ feedback: "Hey Handsfree is ready. Say your request within ten seconds." });
-    } else await arbitraryFind(wake);
+    await arbitraryFind(originalText);
     return;
   }
-  if (wakeUntil > Date.now()) {
-    wakeUntil = 0;
-    await arbitraryFind(text);
-    return;
-  }
-  wakeUntil = 0;
   if (parsed.type === "find" && !site?.site) {
     const listed = await page({ type: "GET_TARGETS" });
     if (revision !== pageRevision || !state.running || state.paused) return;
@@ -998,8 +993,7 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
     const intent = await mapCommand(text, { ...options, tabs, targets, site:site?.site, siteCandidates:domainCandidates, forceClassification: classifyNamed || !!site?.site }, signal);
     if (signal.aborted || revision !== pageRevision || !state.running || state.paused) return;
     if (intent.type === "unknown") {
-      if (groqOptions().groqKeys.length) { await arbitraryFind(text); return; }
-      await publish({ feedback: `No command matched "${text}". Add a Groq key to use arbitrary browser commands.` });
+      await publish({ feedback: `No command matched "${text}". Start arbitrary requests with "hey handsfree".` });
       return;
     }
     if (parsed.type === "click-target" && parsed.disposition && intent.type === "click-target")
@@ -1213,7 +1207,6 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
         linkAuthorizationRevision++;
         ++planToken;
         planDestination = null;
-        wakeUntil = 0;
         pendingClose = null;
         tabChoices = [];
         await publish({ confidence: 0, calibrationProgress: null, calibrationStage: "", calibrationSnapshots: {}, ...(!inputMethods(settings).includes("voice") ? { dictating: false, interimTranscript: "" } : {}) });
@@ -1403,7 +1396,6 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
     if (tabId !== state.targetTabId) return;
     if (change.url && planDestination && change.url !== planDestination) { ++planToken; planDestination=null; }
     if (change.status === "loading") {
-      wakeUntil = 0;
       activeProvider?.abort();
       pageRevision++;
       pendingClose = null;
@@ -1439,7 +1431,6 @@ chrome.permissions.onRemoved?.addListener(() => {
     pendingClose = null;
     tabChoices = [];
     activeProvider?.abort();
-    wakeUntil = 0;
     pageRevision++;
     if (state.running) await pause();
   });

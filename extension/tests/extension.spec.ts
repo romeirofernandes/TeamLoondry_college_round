@@ -417,11 +417,13 @@ test("wake answers, find highlights and named clicks use the real worker and con
   await worker.evaluate(() => {
     const scope = globalThis as any;
     scope.fixtureOriginalFetch = scope.fetch;
+    scope.fixtureArbitraryCalls = [];
     scope.fetch = async (url: any, init: any) => {
       if (!String(url).startsWith("https://api.groq.com/")) return scope.fixtureOriginalFetch(url, init);
       const data = JSON.parse(JSON.parse(init.body).messages[1].content);
       scope.fixturePageContext = data.page;
       const phrase = data.phrase as string;
+      scope.fixtureArbitraryCalls.push(phrase);
       const output = phrase.startsWith("find")
         ? { ids: [data.targets.find((target: any) => target.text === "Count a selection").id] }
         : phrase.startsWith("click")
@@ -436,6 +438,9 @@ test("wake answers, find highlights and named clicks use the real worker and con
   });
   try {
     await page.locator("#search").fill("INPUT_SECRET");
+    for (const text of ["summarize this page", "hey handsfree", "summarize this page", "hello handsfree summarize this page"])
+      await heard(text);
+    expect(await worker.evaluate(() => (globalThis as any).fixtureArbitraryCalls)).toEqual([]);
     await heard("hey handsfree summarize this page");
     await expect(page.locator("#handsfree-assist-overlay .feedback")).toHaveText("<b>A useful answer</b>");
     await expect(page.locator("#handsfree-assist-overlay .feedback b")).toHaveCount(0);
@@ -443,6 +448,8 @@ test("wake answers, find highlights and named clicks use the real worker and con
     const pageContext = await worker.evaluate(() => (globalThis as any).fixturePageContext);
     expect(pageContext.text).toContain("A controlled page");
     expect(pageContext.text).not.toContain("INPUT_SECRET");
+    await heard("summarize this page again");
+    expect(await worker.evaluate(() => (globalThis as any).fixtureArbitraryCalls)).toEqual(["summarize this page"]);
     await heard("hey handsfree find Count a selection");
     await expect(page.locator("#clicks")).toHaveText("0");
     await expect(page.locator("#handsfree-assist-overlay .feedback")).toContainText("Found Count a selection");
@@ -470,6 +477,7 @@ test("wake answers, find highlights and named clicks use the real worker and con
       scope.fetch = scope.fixtureOriginalFetch;
       delete scope.fixtureOriginalFetch;
       delete scope.fixturePageContext;
+      delete scope.fixtureArbitraryCalls;
     });
     await message({ type: "SAVE_PROVIDERS", groqKeys: [], jevKey: "" });
   }

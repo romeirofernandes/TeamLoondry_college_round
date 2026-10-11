@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { normalizeSpeech, parseIntent } from "../src/core/parser";
+import { normalizeSpeech, parseIntent, wakeRequest } from "../src/core/parser";
 import { ActivationGate } from "../src/core/safety";
 import { adjacentTabId, rankTabs, rankTargets } from "../src/core/ranking";
 import { appendMetric, summarizeMetrics } from "../src/core/metrics";
+
+describe("explicit arbitrary request prefix", () => {
+  it.each(["hey handsfree summarize this page", "Hey, Hands Free: summarize this page", "hey hands-free summarize this page"])("accepts the prefix at the start of %s", text => {
+    expect(wakeRequest(text)).toBe("summarize this page");
+  });
+  it.each(["summarize this page", "hello handsfree summarize this page", "okay handsfree summarize this page", "ok handsfree summarize this page", "please hey handsfree summarize this page", "I said hey handsfree summarize this page", "handsfree hey handsfree summarize this page"])("rejects %s as arbitrary authorization", text => {
+    expect(wakeRequest(text)).toBeNull();
+  });
+});
 
 describe("fixed speech and explicit query commands", () => {
   it.each([

@@ -113,7 +113,7 @@ export function sessionIntent(text: string, settings: Settings): Intent | null {
 }
 
 export function wakeRequest(text: string): string | null {
-  const match = /^(?:hey|hello|okay|ok)[\s,]+hands?[\s-]*free\b[\s,:.!-]*(.*)$/i.exec(text.trim());
+  const match = /^hey[\s,]+hands[\s-]*free\b[\s,:.!-]*(.*)$/i.exec(text.trim());
   return match ? match[1].trim() : null;
 }
 

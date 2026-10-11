@@ -201,13 +201,39 @@ describe("background command and permission boundary", () => {
     await send({ type: "HEARD", text: "carry on" });
     expect(await send({ type: "GET_STATE" })).toMatchObject({ paused: false });
   });
-  it("arms the wake route across separate final transcripts", async () => {
+  it("requires the wake prefix on the same transcript as each arbitrary request", async () => {
     const { send, fetch } = await setup({ key: "fixture-key" });
     fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ ids: [], intent: { type: "new-tab" } }) } }] }) });
     await send({ type: "HEARD", text: "Hey, Hands Free." });
     expect(fetch).not.toHaveBeenCalled();
-    await send({ type: "HEARD", text: "open a fresh tab" });
+    await send({ type: "HEARD", text: "summarize this page" });
+    expect(fetch).not.toHaveBeenCalled();
+    await send({ type: "HEARD", text: "hey handsfree summarize this page" });
     expect(fetch.mock.calls[0]?.[0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+    fetch.mockClear();
+    await send({ type: "HEARD", text: "summarize another page" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("does not send unrecognized ordinary speech to Groq, even with a key configured", async () => {
+    const { send, fetch } = await setup({ key: "fixture-key" });
+    for (const text of ["summarize this page", "hello handsfree summarize this page", "okay handsfree summarize this page", "please hey handsfree summarize this page"])
+      await send({ type: "HEARD", text });
+    expect(fetch).not.toHaveBeenCalled();
+    expect((await send({ type: "GET_STATE" })).feedback).toContain('Start arbitrary requests with "hey handsfree"');
+  });
+  it("does not fall back to Groq when Jev cannot select a supported command", async () => {
+    const { send, fetch } = await setup({ key: "fixture-groq", jevKey: "fixture-jev" });
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ answers: {} }) });
+    await send({ type: "HEARD", text: "summarize this page" });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][0]).not.toBe("https://api.groq.com/openai/v1/chat/completions");
+    expect((await send({ type: "GET_STATE" })).feedback).toContain('Start arbitrary requests with "hey handsfree"');
+  });
+  it("keeps direct find intents local instead of bypassing the arbitrary prefix", async () => {
+    const { browser, send, fetch } = await setup({ key: "fixture-key" });
+    await send({ type: "ACTION", intent: { type: "find", query: "Careers" } });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1, { type: "FIND_RESULT", ids: ["careers"] });
   });
   it("does no tab reads or mutations when optional tab permission is denied", async () => {
     const { browser, send } = await setup({ tabPermission: false });
