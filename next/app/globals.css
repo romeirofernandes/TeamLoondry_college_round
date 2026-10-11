@@ -1337,3 +1337,9 @@ html.reading-comfort {
     scroll-snap-align: start;
   }
 }
+
+@media (max-width: 480px) {
+  .site-header .brand-wordmark {
+    display: none;
+  }
+}

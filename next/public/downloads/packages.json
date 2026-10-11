@@ -1,0 +1,14 @@
+{
+  "chrome": {
+    "filename": "handsfree-chrome-0.1.0.zip",
+    "version": "0.1.0",
+    "bytes": 16471911,
+    "sha256": "306619d9d18e66785eab1582a81afd5efa1b47b318506ab27a5f8805346fca7f"
+  },
+  "firefox": {
+    "filename": "handsfree-firefox-0.1.0.zip",
+    "version": "0.1.0",
+    "bytes": 16476622,
+    "sha256": "c17c6251e1f8cb9a50e88340e98b894a347e2b99db78813b857e1adc01492bf1"
+  }
+}

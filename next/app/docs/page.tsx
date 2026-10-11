@@ -141,10 +141,10 @@ export default function DocsPage() {
             <h2>Get started</h2>
             <ol className="docs-steps">
               <li>
-                <h3>Connect the Chrome extension</h3>
+                <h3>Install the extension</h3>
                 <p>
-                  Load <code>extension/dist</code> as an unpacked extension in{" "}
-                  <code>chrome://extensions</code>, then open the dashboard.
+                  <a href="/downloads">Download Handsfree</a> and follow the
+                  Chrome or Firefox installation steps, then open the dashboard.
                 </p>
               </li>
               <li>

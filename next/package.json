@@ -6,7 +6,8 @@
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "package:downloads": "node scripts/prepare-downloads.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

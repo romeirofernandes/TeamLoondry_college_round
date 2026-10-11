@@ -409,6 +409,7 @@ export default function HandsfreeLanding() {
         <div className="footer-bottom">
           <span>A Team Loondry project.</span>
           <div>
+            <a href="/downloads">Downloads</a>
             <a href="#quick-guide">Quick guide</a>
             <a href="#designed-for-you">Our approach</a>
           </div>
