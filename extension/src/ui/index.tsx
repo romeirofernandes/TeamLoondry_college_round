@@ -117,7 +117,6 @@ function Popup() {
 
   return (
     <main className="popup">
-      <div className="desktop-connection"><button onClick={()=>void send<{ok:boolean;error?:string}>({type:"DESKTOP_CONNECT"}).then(r=>setNotice(r?.ok?"Desktop connected. Browser Start will hide its panel.":r?.error||"Connection failed.")).catch(e=>setNotice(String(e)))}>Connect desktop</button><button onClick={()=>void send({type:"DESKTOP_DISCONNECT"}).then(()=>setNotice("Desktop disconnected. Browser can run independently."))}>Disconnect</button></div>
       <header>
         <a
           className="brand"
