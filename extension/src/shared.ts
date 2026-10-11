@@ -167,6 +167,7 @@ export interface SessionState {
   modeAutomatic: boolean;
   modeReason: string;
   writingVerbatim: boolean;
+  privateInput: boolean;
   voiceOnly: boolean;
   running: boolean;
   paused: boolean;
@@ -187,6 +188,7 @@ export interface SessionState {
 }
 export const initialState: SessionState = {
   activityMode: "browsing", modeAutomatic: true, modeReason: "Choose a task or use automatic detection.", writingVerbatim: false,
+  privateInput: false,
   voiceOnly: false,
   running: false,
   paused: false,
@@ -206,6 +208,10 @@ export const initialState: SessionState = {
   calibrationSnapshots: {},
 };
 export type LinkDisposition = "new-tab" | "background";
+export interface WhatsAppRoutineMessage {
+  recipient: { identity: string; label: string };
+  text: string;
+}
 export type RoutineAction =
   | { type: "open-site"; site: keyof typeof import("./sites/catalogue").siteHomes }
   | { type: "search"; query: string; background: boolean }
@@ -214,6 +220,8 @@ export type RoutineAction =
   | { type: "scroll"; direction: "up" | "down" | "top" | "bottom" }
   | { type: "media"; command: "play" | "pause" | "toggle" }
   | { type: "site-command"; site: "youtube"; action: Extract<import("./sites/types").ActionId, "YT01" | "YT03" | "YT04" | "YT05" | "YT06" | "YT07" | "YT08" | "YT09" | "YT11" | "YT12">; args: import("./sites/types").SiteArgs }
+  | { type: "site-command"; site: "whatsapp"; action: "WA01"; args: import("./sites/types").SiteArgs }
+  | ({ type: "whatsapp-message" } & WhatsAppRoutineMessage)
   | { type: "navigate"; direction: "back" | "forward" };
 export interface RoutineStep { id: string; label: string; action: RoutineAction }
 export interface VoiceRoutine { id: string; name: string; steps: RoutineStep[]; createdAt: number; updatedAt: number }
@@ -250,6 +258,7 @@ export type Intent =
   | { type: "activity-mode"; mode: ActivityMode | "auto" }
   | { type: "reading-command"; command: string; text?: string; value?: number }
   | { type: "writing-command"; command: "scratch" | "restore" | "sentence" | "paragraph" | "replace" | "rewrite" | "verbatim" | "cleaned" | "readback"; from?: string; to?: string; instruction?: string }
+  | { type: "private-keyboard" }
   | { type: "routine-control"; command: "start-recording" | "pause-recording" | "resume-recording" | "undo-step" | "stop-recording" | "list" | "run" | "pause-playback" | "resume-playback" | "stop-playback"; name?: string }
   | { type: "form-command"; command: FormCommand }
   | {type:"upload-file"}
@@ -331,6 +340,9 @@ export type Message =
   | { type: "EDIT_APPLY"; command: string; text?: string; from?: string; to?: string; expected?: string }
   | { type: "READ_SELECT"; start: number; end: number; revision: string }
   | { type: "DOCS_INPUT"; text: string; command: "insert" | "scratch" | "restore"; expected: string; url: string; generation: number }
+  | {type:"GET_PRIVATE_STATUS"}
+  | { type: "PRIVATE_INPUT"; command: "enter" | "resume" }
+  | { type: "PRIVATE_POPUP"; command: "start" | "return" }
   | { type: "UI_VOICE"; enabled: boolean }
   | { type: "UI_HEARD"; text: string }
   | { type: "UI_SPEAK"; text: string }
@@ -356,7 +368,7 @@ export type Message =
   | { type: "TRANSCRIBE_AUDIO"; audio: number[]; mime: string; language: string }
   | { type: "GET_CALIBRATION"; mode: PointerMode }
   | { type: "SAVE_CALIBRATION"; mode: PointerMode; calibration: Calibration }
-  | { type: "OFFSCREEN_COMMAND"; command: "start" | "pause" | "resume" | "stop" | "calibrate" | "settings" | "install-speech" | "ui-start" | "ui-stop" | "narration-start" | "narration-end" | "gesture-calibrate" | "gesture-cancel-calibration" | "gesture-presets"; settings?: Settings; gesture?: HandGesture; presets?: GesturePreset[] }
+  | { type: "OFFSCREEN_COMMAND"; command: "private-enter" | "private-exit" | "start" | "pause" | "resume" | "stop" | "calibrate" | "settings" | "install-speech" | "ui-start" | "ui-stop" | "narration-start" | "narration-end" | "gesture-calibrate" | "gesture-cancel-calibration" | "gesture-presets"; privateSession?:string; privateRevision?:number; settings?: Settings; gesture?: HandGesture; presets?: GesturePreset[] }
   | { type: "GET_GESTURE_PRESETS" }
   | { type: "SAVE_GESTURE_PRESETS"; presets: GesturePreset[] }
   | { type: "GET_ROUTINE_SESSION" }
@@ -387,12 +399,15 @@ export type Message =
       type: "PAGE_STATE";
       activityMode?: ActivityMode;
       modeAutomatic?: boolean;
+      privateInput?: boolean;
       running: boolean;
       paused: boolean;
       dictating: boolean;
       settings: Settings;
     }
   | { type: "PAGE_ACTION"; intent: Intent }
+  | { type: "GET_WHATSAPP_DRAFT" }
+  | { type: "RUN_WHATSAPP_MESSAGE"; message: WhatsAppRoutineMessage; requestId: string }
   | { type: "AGENT_ACTION"; action: AgentAction }
   | { type: "DICTATE"; text: string; binding?: number; expected?: string }
   | { type: "GET_TARGETS" }

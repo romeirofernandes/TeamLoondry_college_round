@@ -42,7 +42,7 @@ function Popup() {
     let stream: MediaStream | null = null;
     setPreview(false);
     setPreviewError("");
-    if (!state.running || state.voiceOnly) return;
+    if (!state.running || state.voiceOnly || state.privateInput) return;
     void navigator.mediaDevices
       .getUserMedia({
         video: { width: { ideal: 480 }, height: { ideal: 300 } },
@@ -66,7 +66,7 @@ function Popup() {
       stream?.getTracks().forEach((track) => track.stop());
       if (video.current) video.current.srcObject = null;
     };
-  }, [state.running, state.voiceOnly, retry]);
+  }, [state.running, state.voiceOnly, state.privateInput, retry]);
 
   async function run(work: () => Promise<unknown>) {
     if (busy) return;
@@ -88,6 +88,7 @@ function Popup() {
     }
   }
   async function start() {
+    if(state.privateInput){await send({type:"START"});return;}
     const release=await captureCheck();
     try{
     // These prompts belong to this extension origin. A denied camera must not block microphone access.
@@ -137,11 +138,11 @@ function Popup() {
       <section className="mode-panel" aria-label="Activity mode">
         <p role="status" aria-live="polite">Current mode: <strong>{(state.activityMode || "browsing").replace(/^./, c => c.toUpperCase())}</strong> · {state.modeAutomatic ? "Automatic" : "Selected by you"}</p>
         <div className="mode-buttons" role="group" aria-label="Choose a task mode">
-          {(["browsing", "reading", "writing"] as const).map(mode => <button key={mode} disabled={busy || !state.running || state.paused} aria-pressed={state.activityMode === mode} onClick={() => void run(() => send({type:"ACTION",intent:{type:"activity-mode",mode}}))}>{mode.replace(/^./, c => c.toUpperCase())}</button>)}
-          <button disabled={busy || !state.running || state.paused} aria-pressed={state.modeAutomatic} onClick={() => void run(() => send({type:"ACTION",intent:{type:"activity-mode",mode:"auto"}}))}>Auto</button>
+          {(["browsing", "reading", "writing"] as const).map(mode => <button key={mode} disabled={busy || !state.running || state.paused || state.privateInput} aria-pressed={state.activityMode === mode} onClick={() => void run(() => send({type:"ACTION",intent:{type:"activity-mode",mode}}))}>{mode.replace(/^./, c => c.toUpperCase())}</button>)}
+          <button disabled={busy || !state.running || state.paused || state.privateInput} aria-pressed={state.modeAutomatic} onClick={() => void run(() => send({type:"ACTION",intent:{type:"activity-mode",mode:"auto"}}))}>Auto</button>
         </div>
       </section>
-      {state.running && !state.voiceOnly && (
+      {state.running && !state.voiceOnly && !state.privateInput && (
         <div className="camera-preview">
           <video
             ref={video}
@@ -212,7 +213,7 @@ function Popup() {
         )}
       </div>
       <p className="feedback" role="status" aria-live="polite">
-        {notice || state.feedback}
+        {notice || (state.privateInput ? "Private entry: microphone off. Finish with the on-page keyboard, then choose Resume voice." : state.feedback)}
       </p>
       <button
         className="website-button"

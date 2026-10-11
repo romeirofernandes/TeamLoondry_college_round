@@ -120,7 +120,7 @@ export class SiteContext {
       const chatIds =
         site === "whatsapp" &&
         kind === "chat" &&
-        !node.closest("#pane-side")
+        !node.closest("#pane-side,#side")
           ? [
               ...new Set(
                 [
@@ -140,7 +140,7 @@ export class SiteContext {
             ]
           : [];
       const identity =
-        chatIds.length === 1 && !node.closest("#pane-side")
+        chatIds.length === 1 && !node.closest("#pane-side,#side")
           ? chatIds[0]
           : undefined;
       const title =
@@ -153,7 +153,7 @@ export class SiteContext {
             )?.textContent
           : undefined) ||
         node.getAttribute("post-title") ||
-        (site === "whatsapp" && kind === "chat" && node.closest("#pane-side")
+        (site === "whatsapp" && kind === "chat" && node.closest("#pane-side,#side")
           ? node
               .querySelector<HTMLElement>(
                 '[data-testid="cell-frame-title"] [title],span[title]',
@@ -210,7 +210,10 @@ export class SiteContext {
       const found = elements(selector!);
       const ordered = site === "youtube" && kind === "video"
         ? visualOrder(found)
-        : found;
+        : site === "whatsapp" && kind === "chat"
+          // A list item may wrap a row; expose one target per conversation.
+          ? found.filter(node => !found.some(other => other !== node && node.contains(other)))
+          : found;
       for (const node of ordered) {
         if (
           site === "wikipedia" &&
@@ -227,7 +230,14 @@ export class SiteContext {
         if (kindCount >= 40) break;
       }
     }
-    const currentNodes = elements(adapter.current);
+    let currentNodes = elements(adapter.current);
+    if (site === "whatsapp") {
+      const explicit = elements('#main header [data-testid="conversation-info-header-chat-title"]');
+      currentNodes = explicit.length ? explicit : currentNodes.filter(node =>
+        !node.closest('button,[role="button"],a') &&
+        !currentNodes.some(other => other !== node && other.contains(node))
+      );
+    }
     const currentNode = site === "chatgpt"
       ? currentNodes.at(-1)
       : currentNodes.length === 1

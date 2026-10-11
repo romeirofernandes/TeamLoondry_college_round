@@ -11,3 +11,12 @@ it("a release racing a pending claim leaves no owned lease or heartbeat",async()
  receiver({id:releaseMessage.id,ok:true,result:{owner:"none"}});await release;
  const count=messages.length;await vi.advanceTimersByTimeAsync(2000);expect(messages.length).toBe(count);disconnect();expect(lost).not.toHaveBeenCalled();
 });
+it('popup handoff uses a speech-disabled native session and waits for acknowledged return',async()=>{
+ vi.resetModules();vi.useFakeTimers();const messages:any[]=[];let receiver!:(v:any)=>void;
+ const port={onMessage:{addListener:(f:any)=>receiver=f},onDisconnect:{addListener:vi.fn()},disconnect:vi.fn(),postMessage:(m:any)=>{messages.push(m);queueMicrotask(()=>receiver({id:m.id,ok:true,result:m.type==='hello'?{protocol:1}:m.type==='credentialStatus'?{phase:'returned'}:{phase:'starting'}}));}};
+ vi.stubGlobal('chrome',{runtime:{connectNative:()=>port},storage:{local:{get:async()=>({desktopPaired:true})}}});
+ const desktop=await import('../src/desktop');const returned=vi.fn();await desktop.startCredentialControl(returned);
+ expect(messages.map(m=>m.type)).toContain('credentialControl');expect(returned).not.toHaveBeenCalled();
+ await vi.advanceTimersByTimeAsync(1000);expect(returned).toHaveBeenCalledOnce();
+ expect(messages.every(m=>!JSON.stringify(m).includes('password-value'))).toBe(true);
+});

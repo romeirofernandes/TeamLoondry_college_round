@@ -28,6 +28,7 @@ import { Overlay } from "./overlay";
 import { ScrollMotion, scrollPixels } from "./scroll";
 import { mediaControl } from "./media";
 import { FormAssistant } from "./forms";
+import {PrivateKeyboard,passwordField} from "./private-keyboard";
 
 type Pending = {
   target: HTMLElement;
@@ -47,6 +48,11 @@ export class ContentRuntime {
   private binding = 0;
   private autoSuppressed = false;
   private evidenceMode = "";
+  private privateInput=false;
+  private privateEpoch=0;
+  private privateAwaitLeave:DOMRect|null=null;
+  private privateKeys=new PrivateKeyboard(()=>void this.resumeVoice(),()=>void this.popupControl(),()=>this.gate.reset());
+
   private targets = new PageTargets();
   private overlay = new Overlay();
   private gate = new ActivationGate({
@@ -91,6 +97,7 @@ export class ContentRuntime {
     this.docs = new GoogleDocsEditor((text, command, expected, generation) => this.send({type:"DOCS_INPUT",text,command,expected,url:location.href,generation}));
     this.observer = new MutationObserver(() => {
       this.forms.onMutation();
+      if(this.privateKeys.active && !this.privateKeys.valid())this.privateKeys.close();
       if (
         this.pending &&
         (!this.pending.target.isConnected ||
@@ -167,6 +174,7 @@ export class ContentRuntime {
     this.choiceSnapshots = new Map(this.choices.map(element => [element, this.selectionSignature(element)]));
   }
   private pageChanged = () => {
+    if(this.privateKeys.active)this.privateKeys.close();
     this.sites.invalidate();
     this.forms.pageChanged();
     this.scrollMotion.cancel();
@@ -206,6 +214,7 @@ export class ContentRuntime {
   };
   private onReadingPointer = (event: PointerEvent) => {if(this.running&&!this.paused&&this.activityMode==="reading")this.reading.point(event.clientX,event.clientY,true);};
   private evidence(mode:"reading"|"writing"|"browsing",reason:"composition"|"reading-interaction"|"navigation",autoArm=false){
+    if(this.privateInput)return;
     if(this.evidenceMode===mode&&(mode!=="writing"||this.dictating||!autoArm))return; this.evidenceMode=mode;
     void this.send({type:"MODE_EVIDENCE",mode,reason,autoArm}).catch(()=>{});
   }
@@ -225,6 +234,7 @@ export class ContentRuntime {
       else if(event.target.matches("input[type=search],[role=searchbox]")||event.target.closest("[role=search],form[role=search]"))this.evidence("browsing","navigation");
     }
     if(this.dictating&&this.isDocs()&&event.target instanceof HTMLElement&&!event.target.matches(".docs-texteventtarget-iframe")&&!event.target.closest("[data-handsfree-ignore]"))this.stopTyping("Focus changed. Dictation stopped.");
+    if(this.running && event.target instanceof HTMLInputElement && event.target.type==="password")void this.enterPrivate(passwordField(event.target)?event.target:undefined);
     if (
       this.dictating &&
       this.typingTarget &&
@@ -234,6 +244,31 @@ export class ContentRuntime {
     )
       this.stopTyping("Focus changed. Dictation stopped.");
   };
+  private async enterPrivate(field?:HTMLInputElement) {
+    const epoch=++this.privateEpoch;
+    this.privateInput=true;this.privateKeys.lock();this.reading.enable(false);
+    this.scrollMotion.cancel();this.edge=null;this.sites.invalidate();this.forms.cancel();this.cancelPending();this.stopTyping();
+    this.choices=[];this.overlay.options([]);this.select(null);this.overlay.transcript("",false,false);this.gate.reset();
+    if(field)this.privateKeys.open(field);else this.privateKeys.show();
+    try {
+      const ack=await this.send({type:"PRIVATE_INPUT",command:"enter"}) as {ok?:boolean;privateInput?:boolean};
+      if(!this.destroyed && epoch===this.privateEpoch)this.privateKeys.ready(ack?.ok===true&&ack.privateInput===true);
+    } catch {if(epoch===this.privateEpoch)this.privateKeys.ready(false);}
+  }
+  private async resumeVoice() {
+    if(this.privateKeys.active || passwordField(document.activeElement)){this.feedback("Finish private entry and leave the password field before resuming voice.");return;}
+    const epoch=++this.privateEpoch;
+    try {
+      const result=await this.send({type:"PRIVATE_INPUT",command:"resume"}) as {ok?:boolean};
+      if(epoch!==this.privateEpoch || result?.ok!==true)return;
+      this.privateInput=false;this.privateKeys.destroy();this.gate.reset();
+    } catch {this.feedback("Voice remains off. Reconnect Handsfree and retry.");}
+  }
+  private async popupControl() {
+    this.privateKeys.close();
+    try {const result=await this.send({type:"PRIVATE_POPUP",command:"start"}) as {ok?:boolean;error?:string};if(result?.ok===false)this.feedback(result.error||"Connect and calibrate the desktop companion first.");}
+    catch{this.feedback("Connect and calibrate the macOS desktop companion to control Chrome popups.");}
+  }
   private onFormEdit = (event: Event) => {
     if(event.isTrusted&&event.target instanceof HTMLElement&&this.running&&!this.paused&&this.longEditor(event.target))this.evidence("writing","composition",!this.autoSuppressed);
     if (event.target instanceof HTMLElement && event.target.matches('input,textarea,select,[role="combobox"],[role="radio"],[role="checkbox"]')) {
@@ -302,6 +337,15 @@ export class ContentRuntime {
     const tracked = !!this.sample && now - this.receivedAt < 650;
     const confident =
       tracked && this.sample!.confidence >= this.settings.confidenceThreshold;
+    if(this.privateInput) {
+      if(this.privateKeys.active && !this.privateKeys.valid())this.privateKeys.close();
+      if(this.privateAwaitLeave){const r=this.privateAwaitLeave;if(this.x>=r.left&&this.x<=r.right&&this.y>=r.top&&this.y<=r.bottom){this.overlay.pointer(this.x,this.y,this.running&&!!this.sample,1);return;}this.privateAwaitLeave=null;this.gate.reset();}
+      const button=this.privateKeys.hit(this.x,this.y);
+      const result=this.gate.update({targetId:button?this.privateKeys.buttonId(button):null,confidence:this.sample?.confidence??0,paused:!this.running||this.paused,tracking:tracked,now,activate:!this.settings.dwellEnabled&&this.sample?.handHold?"hand":"dwell",handHold:!this.settings.dwellEnabled&&(this.sample?.handHold??false),dwellEnabled:this.settings.dwellEnabled});
+      this.overlay.pointer(this.x,this.y,this.running&&!!this.sample,result.progress);
+      if(result.activate&&button){this.privateAwaitLeave=button.getBoundingClientRect();this.privateKeys.activate(button);}
+      return;
+    }
     const blocked =
       !this.running ||
       this.paused ||
@@ -375,6 +419,12 @@ export class ContentRuntime {
     this.metric("scroll", direction);
   }
   async handle(message: Message): Promise<unknown> {
+    if(message.type==="GET_PRIVATE_STATUS")return {ok:true,active:this.privateKeys.active,focused:document.activeElement instanceof HTMLInputElement&&document.activeElement.type==="password"};
+    if(this.privateInput && !["PAGE_STATE","POINTER"].includes(message.type)) {
+      if(message.type==="GET_TARGETS")return [];
+      if(["GET_PAGE_CONTEXT","GET_SITE_CONTEXT","GET_WHATSAPP_DRAFT"].includes(message.type))return null;
+      return {ok:false,error:"Private entry is active. Use the private controls."};
+    }
     switch (message.type) {
       case "MODE_CONTEXT": return {longEditor:document.activeElement instanceof HTMLElement && this.longEditor(document.activeElement),docs:docsSnapshot(),reading:collectReading().text.length>800};
       case "EDIT_CONTEXT": return this.isDocs() ? this.docs.context() : {binding:this.binding,expected:this.typingTarget?editorText(this.typingTarget):"",text:this.ledger.context()?.text??""};
@@ -390,6 +440,14 @@ export class ContentRuntime {
         this.feedback(message.command==="scratch"?"Removed the last segment. Say put that back to restore it.":"Correction applied and verified.");return {ok:true};
       }
       case "GET_SITE_CONTEXT": return this.sites.snapshot();
+      case "GET_WHATSAPP_DRAFT":
+        return this.running && !this.paused && !this.dictating ? this.sites.whatsappDraft() : null;
+      case "RUN_WHATSAPP_MESSAGE": {
+        if (!this.running || this.paused || this.dictating) return { state: "unavailable", feedback: "Resume Handsfree and finish dictation before sending a saved message." };
+        const result = await this.sites.sendRoutineMessage(message.message, message.requestId);
+        this.feedback(result.feedback);
+        return result;
+      }
       case "SITE_DIALOGUE": {
         if (!this.running || this.paused || this.dictating) return null;
         const result = await this.sites.dialogue(message.text);
@@ -401,7 +459,9 @@ export class ContentRuntime {
         const oldMode=this.activityMode;
         this.activityMode=message.activityMode??this.activityMode;
         if(oldMode!==this.activityMode){this.evidenceMode=this.activityMode;this.binding++;this.stopTyping();this.docs.clear();this.ledger.clear();this.autoSuppressed=false;}
-        this.reading.enable(message.running&&!message.paused&&this.activityMode==="reading");
+        if(message.privateInput===true && !this.privateInput)void this.enterPrivate();
+        if(message.privateInput===false && this.privateInput){this.privateInput=false;++this.privateEpoch;this.privateKeys.destroy();this.gate.reset();}
+        this.reading.enable(message.running&&!message.paused&&!this.privateInput&&this.activityMode==="reading");
         if (this.settings.pointerMode !== message.settings.pointerMode || this.settings.voiceOnly !== message.settings.voiceOnly || JSON.stringify(this.settings.enabledInputs) !== JSON.stringify(message.settings.enabledInputs)) {
           this.gate.reset();
           this.sample = null;
@@ -443,6 +503,7 @@ export class ContentRuntime {
             });
         } else if (!message.dictating && this.dictating) this.stopTyping();
         if (!this.running) {
+          if(this.privateKeys.active)this.privateKeys.close();
           this.select(null);
           this.sample = null;
           this.overlay.pointer(0, 0, false);
@@ -456,6 +517,7 @@ export class ContentRuntime {
           this.feedback(
             "Handsfree is ready. Point at a target or say find followed by its name.",
           );
+        if(this.running && !this.privateInput && passwordField(document.activeElement))void this.enterPrivate(document.activeElement);
         if (this.paused) this.overlay.transcript("", false, false);
         return { ok: true };
       }
@@ -477,7 +539,7 @@ export class ContentRuntime {
         ) {
           this.x = Math.max(0, Math.min(1, sample.x)) * innerWidth;
           this.y = Math.max(0, Math.min(1, sample.y)) * innerHeight;
-          if (!this.choices.length)
+          if (!this.privateInput && !this.choices.length)
             this.select(this.targets.snap(this.x, this.y, this.target), true);
         }
         if(this.running&&!this.paused&&this.activityMode==="reading")this.reading.point(this.x,this.y,sample.confidence>=this.settings.confidenceThreshold);
@@ -541,6 +603,14 @@ export class ContentRuntime {
       }
       case "PAGE_ACTION": {
         if(message.intent.type==="reading-command"){if(!this.running||this.paused)return {ok:false};return this.reading.command(message.intent.command,message.intent.text);}
+        if(message.intent.type==="private-keyboard") {
+          if(!this.running||this.paused)return {ok:false};
+          const focused=document.activeElement;
+          const fields=Array.from(document.querySelectorAll('input[type="password"]')).filter(passwordField);
+          const field=passwordField(focused)?focused:fields.length===1?fields[0]:null;
+          if(!field){this.feedback(fields.length>1?"Point at the password field you want to enter.":"No supported password field. Use HTTPS or localhost and a top-level password input.");return {ok:false};}
+          await this.enterPrivate(field);return {ok:true};
+        }
         if (message.intent.type === "confirm" && this.running && !this.paused && !this.dictating) {
           const result=await this.sites.dialogue("confirm");
           if(result){this.feedback(result.feedback);return result;}
@@ -945,6 +1015,7 @@ export class ContentRuntime {
     return false;
   }
   private activate(element: HTMLElement, source: "voice" | "pointer", point?: { x: number; y: number }): boolean {
+    if(source==="pointer" && passwordField(element)){element.focus({preventScroll:true});if(!this.privateInput)void this.enterPrivate(element);return true;}
     if (!element.isConnected || !usable(element) || sensitive(element)) {
       this.feedback("That target is unavailable or sensitive.");
       return false;
@@ -1007,6 +1078,7 @@ export class ContentRuntime {
     cancelAnimationFrame(this.frame);
     this.observer.disconnect();
     this.overlay.destroy();
+    ++this.privateEpoch;this.privateKeys.destroy();
     removeEventListener("popstate", this.pageChanged);
     removeEventListener("hashchange", this.pageChanged);
     removeEventListener("keydown", this.onKey);

@@ -5,7 +5,7 @@ export const whatsapp: Adapter = {
   current: '#main header [data-testid="conversation-info-header-chat-title"],#main header [title]:not([data-testid="conversation-info-header-chat-title"]):not([data-testid="conversation-info-header-chat-title"] *)',
   currentKind: "chat",
   entities: {
-    chat: '#pane-side [role="row"]',
+    chat: '#pane-side [role="row"],#side [role="row"],#side [role="listitem"],#pane-side [role="listitem"]',
     message: "#main .message-in,#main .message-out",
   },
   actions: [

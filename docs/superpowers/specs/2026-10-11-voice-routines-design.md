@@ -1,5 +1,18 @@
 # Voice Routines
 
+## Approved extension: WhatsApp messages (2026-10-11)
+
+The user explicitly requested WhatsApp routines and automatic sending on saved-routine replay, without a confirmation for every send. This extends the original v1 boundary below only for saved WhatsApp messages.
+
+- Record opening WhatsApp and named chats. After dictating and saying “stop typing,” “send this message” captures the current draft and exact chat identity; recording does not send it.
+- Show the full recipient name and message in the dashboard. Saving authorizes that message to send whenever the user explicitly runs the routine. No scheduled sending is included.
+- Replay uses fresh page state, reopens the named chat if needed, verifies its identity and name, inserts the literal saved text, and activates the unique Send control once. Duplicate names, changed recipients, missing identity, and conflicting existing drafts stop playback.
+- An uncertain send stops the routine without an automatic retry. Repeated delivery of the same request is idempotent within the document.
+- Message bodies remain in local routine storage and the page interaction. They are not sent to providers or metrics. Ordinary non-routine WhatsApp sending keeps its existing rules.
+- Camera, pointer, head movement, gestures, and dwell behavior remain unchanged.
+
+Example commands: “start recording routine,” “open WhatsApp,” “open my chat with Mira,” “write a message,” dictate the message, “stop typing,” “send this message,” “stop recording routine.” Review and name it in the dashboard, then say “run [name].”
+
 ## Goal
 
 Let a Handsfree user record a repeatable browser task using ordinary voice commands, review and name the draft in the dashboard, then replay it later by name.

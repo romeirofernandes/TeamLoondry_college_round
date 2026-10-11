@@ -6,6 +6,11 @@ import { RecordedSpeech } from "./recording";
 import { send, voiceEnabled, type Message, type Settings, type Calibration, type PointerMode, type GesturePreset, type GestureRuntimeStatus } from "./shared";
 
 let settings: Settings;
+let privateInput = false;
+let privateSession="legacy",privateRevision=0;
+const voiceStarts = new Set<Promise<void>>();
+function trackVoice(work:Promise<void>) {voiceStarts.add(work);void work.finally(()=>voiceStarts.delete(work)).catch(()=>{});return work;}
+function beginVoice(token:number) {return trackVoice(startVoice(token));}
 let tracker: Tracker | null = null;
 let speech: SpeechAdapter | null = null;
 let fallback: RecordedSpeech | null = null;
@@ -44,9 +49,10 @@ function gesturePreview(active: boolean) {
   }, 250);
 }
 function createGestureRuntime(presets: GesturePreset[]) {
-  return new GestureRuntime(video, presets, presetId => {
-    void send({ type: "GESTURE_TRIGGER", presetId }).catch(() => {});
+  const runtime = new GestureRuntime(video, presets, presetId => {
+    if (!privateInput) void send({ type: "GESTURE_TRIGGER", presetId }).catch(() => {});
   }, gestureStatus, gesturePreview);
+  runtime.setPaused(privateInput || desired!=="running");return runtime;
 }
 function gestureStatus(status: GestureRuntimeStatus) { void send({ type: "GESTURE_STATUS", status }).catch(() => {}); }
 function setGesturePresets(presets: GesturePreset[]) {
@@ -77,7 +83,7 @@ function status(patch: Record<string, unknown>) {
   void send({ type: "SET_STATE", patch }).catch(() => {});
 }
 function heard(text: string) {
-  if (feedbackSpeaking) return;
+  if (privateInput || feedbackSpeaking) return;
   if (uiListening) { void send({ type: "UI_HEARD", text }).catch(() => {}); return; }
   if (desired === "stopped") return;
   if (desired === "running") void send({ type: "TRANSCRIPT", text, final: true }).catch(() => {});
@@ -89,15 +95,17 @@ function stopVoice() {
   speech = null; fallback = null;
   oldSpeech?.stop(); oldFallback?.stop();
 }
-async function beginVoice(token: number) {
+async function startVoice(token: number) {
   stopVoice();
+  if (privateInput) { status({voice:"Off — private entry"}); return; }
   if (!settings || (!uiListening && !voiceEnabled(settings))) { status({ voice: "Off, voice input not selected" }); return; }
   const voiceToken = voiceGeneration;
   const voiceSettings = { ...settings };
-  const current = () => token === generation && voiceToken === voiceGeneration && (desired !== "stopped" || uiListening) && !feedbackSpeaking;
+  const current = () => !privateInput && token === generation && voiceToken === voiceGeneration && (desired !== "stopped" || uiListening) && !feedbackSpeaking;
   if (!current()) return;
   let fallbackStarting = false;
-  const beginFallback = async () => {
+  const beginFallback = () => trackVoice(startFallback());
+  const startFallback = async () => {
     if (!current() || voiceSettings.speechMode !== "browser" || fallbackStarting || fallback) return;
     fallbackStarting = true;
     try {
@@ -180,7 +188,7 @@ function resume() {
   if (!settings.voiceOnly && !tracker) { void start(settings); return; }
   desired = "running";
   tracker?.resume();
-  gestureRuntime?.setPaused(false);
+  gestureRuntime?.setPaused(privateInput);
   void beginVoice(generation);
 }
 function stop() {
@@ -204,7 +212,7 @@ async function calibrate() {
 }
 function voiceActive() { return desired !== "stopped" || uiListening; }
 async function speakFeedback(text: string) {
- if (!settings?.spokenFeedback || desired === "stopped" || !text.trim() || typeof speechSynthesis === "undefined") return;
+ if (privateInput || !settings?.spokenFeedback || desired === "stopped" || !text.trim() || typeof speechSynthesis === "undefined") return;
  const token = ++feedbackGeneration;
  stopVoice(); feedbackSpeaking = true; speechSynthesis.cancel();
  const utterance = new SpeechSynthesisUtterance(text.slice(0,800));
@@ -221,8 +229,27 @@ async function speakFeedback(text: string) {
  void beginVoice(generation);
 }
 chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
+  if (_sender.tab && !_sender.url?.startsWith(chrome.runtime.getURL(""))) return;
   if (message.type === "SPEAK_FEEDBACK") { if(message.enabled) void speakFeedback(message.text); respond({ok:true});return; }
   if (message.type !== "OFFSCREEN_COMMAND") return;
+  if (message.command === "private-enter") {
+    const session=message.privateSession??"legacy",revision=message.privateRevision??0;
+    if(session===privateSession&&revision<privateRevision){respond({ok:false});return;}
+    privateSession=session;privateRevision=revision;
+    privateInput = true; ++feedbackGeneration; feedbackSpeaking = false;
+    uiListening = false; clearTimeout(uiLease); stopVoice();
+    if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
+    gestureRuntime?.setPaused(true);
+    status({voice:"Off — private entry"});
+    void Promise.allSettled([...voiceStarts]).then(()=>respond({ok:true,privateInput:true})); return true;
+  }
+  if (message.command === "private-exit") {
+    if((message.privateSession??"legacy")!==privateSession || (message.privateRevision??0)!==privateRevision){respond({ok:false});return;}
+    privateInput = false; if (desired === "running") gestureRuntime?.setPaused(false);
+    if (voiceActive()) void beginVoice(generation);
+    respond({ok:true}); return;
+  }
+  if (message.command === "ui-start" && privateInput) { respond({ok:false}); return; }
   if (message.command === "ui-start" && message.settings) {
     const wasListening = uiListening;
     uiListening = true; settings = message.settings;

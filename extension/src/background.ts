@@ -1,6 +1,6 @@
 import {readingPreferences} from "./reading/model";
 import { docsInput } from "./editing/docs-input";
-import {claimDesktop,releaseDesktop,connectDesktop,disconnectDesktop,paired,onDesktopLost} from "./desktop";
+import {claimDesktop,releaseDesktop,connectDesktop,disconnectDesktop,paired,onDesktopLost,startCredentialControl,stopCredentialControl} from "./desktop";
 import {uploadFile} from "./file-upload";
 import { parseSite, siteCandidates, unsafeSpeech, isCancellation, makeRequest, validateSiteRequest } from "./sites/language";
 import { siteHomes, catalogue } from "./sites/catalogue";
@@ -87,6 +87,11 @@ let hadTracking = false;
 let logs: MetricEvent[] = [];
 let routineSession: RoutineSession = { ...emptyRoutineSession };
 let playbackToken = 0;
+const transcriptionRequests = new Set<AbortController>();
+let nativeCredentialSession=false;
+let privateReady=false;
+let privateRevision=0;
+const privateSession=crypto.randomUUID();
 let routineIdCounter = 0;
 let lastActionSucceeded = false;
 let logsTimer: ReturnType<typeof setTimeout> | undefined;
@@ -119,6 +124,10 @@ const ready = (async () => {
       feedback: typeof restored.feedback === "string" ? restored.feedback.slice(0, 300) : "",
     };
   }
+  if (state.privateInput) {
+    state.lastHeard="";state.interimTranscript="";state.voice="Off — private entry";routineSession.recordingPaused=routineSession.recording;
+    void chrome.runtime.sendMessage({type:"OFFSCREEN_COMMAND",command:"private-enter",privateSession,privateRevision}).catch(()=>{});
+  }
   // A restarted worker must not restore a pending confirmation.
 })();
 function uiSender(sender: chrome.runtime.MessageSender) {
@@ -142,7 +151,8 @@ function safeRoutineAction(value: unknown): value is RoutineAction {
   if (action.type === "click-target") return typeof action.query === "string" && action.query.trim().length > 0 && action.query.length <= 100;
   if (action.type === "scroll") return ["up", "down", "top", "bottom"].includes(action.direction);
   if (action.type === "media") return ["play", "pause", "toggle"].includes(action.command);
-  if (action.type === "site-command") return action.site === "youtube" && routineYouTubeActions.has(action.action) && !!validateSiteRequest({ ...action, type: "site-action", documentId: "routine-validation", revision: 0, requestId: "routine-validation" });
+  if (action.type === "site-command") return (action.site === "youtube" && routineYouTubeActions.has(action.action) || action.site === "whatsapp" && action.action === "WA01" && typeof action.args?.query === "string" && !!action.args.query.trim()) && !!validateSiteRequest({ ...action, type: "site-action", documentId: "routine-validation", revision: 0, requestId: "routine-validation" });
+  if (action.type === "whatsapp-message") return typeof action.recipient?.identity === "string" && !!action.recipient.identity.trim() && action.recipient.identity.length <= 300 && typeof action.recipient.label === "string" && !!action.recipient.label.trim() && action.recipient.label.length <= 180 && typeof action.text === "string" && !!action.text.trim() && action.text.length <= 5000;
   if (action.type === "navigate") return ["back", "forward"].includes(action.direction);
   return false;
 }
@@ -166,6 +176,8 @@ async function setRoutineSession(next: RoutineSession, feedback?: string, announ
   }
 }
 function routineActionFromCommand(text: string, intent: Intent): RoutineAction | null {
+  if (intent.type === "site-action" && intent.site === "whatsapp" && intent.action === "WA01" && intent.args.query)
+    return { type: "site-command", site: "whatsapp", action: "WA01", args: { query: intent.args.query } };
   if (intent.type === "site-action" && intent.site === "youtube" && routineYouTubeActions.has(intent.action))
     return { type: "site-command", site: "youtube", action: intent.action, args: { ...intent.args } } as RoutineAction;
   const command = text.normalize("NFKC").trim().toLowerCase().replace(/[.!?,;:]+$/, "").replace(/\s+/g, " ");
@@ -207,12 +219,12 @@ function routineActionFromCommand(text: string, intent: Intent): RoutineAction |
 async function appendRoutineStep(action: RoutineAction) {
   if (!routineSession.recording || routineSession.recordingPaused) return;
   if (routineSession.draft.length >= 20) { await publish({ feedback: "This recording reached the 20-step limit. Say “stop recording routine” and review the draft in the dashboard." }); return; }
-  const label = (action.type === "site-command" ? `YouTube: ${catalogue.find(spec => spec.id === action.action)?.description || action.action}${action.args.query ? ` — ${action.args.query}` : action.args.index ? ` — video ${action.args.index}` : action.args.value !== undefined ? ` — ${action.args.value}` : action.args.mode ? ` — ${action.args.mode}` : ""}` : action.type === "open-site" ? `Open ${action.site}` : action.type === "search" ? `Search for ${action.query}${action.background ? " in the background" : " in a new tab"}` : action.type === "switch-tab" ? action.intent.type === "indexed-tab" ? `Switch to tab ${action.intent.index}` : `Switch to ${action.intent.name} tab` : action.type === "click-target" ? `Open ${action.query}` : action.type === "scroll" ? `Scroll ${action.direction}` : action.type === "media" ? `Media ${action.command}` : `Go ${action.direction}`).slice(0, 160);
+  const label = (action.type === "whatsapp-message" ? `Send WhatsApp to ${action.recipient.label}: ${action.text}` : action.type === "site-command" ? `${action.site === "whatsapp" ? "WhatsApp" : "YouTube"}: ${catalogue.find(spec => spec.id === action.action)?.description || action.action}${action.args.query ? ` — ${action.args.query}` : action.args.index ? ` — video ${action.args.index}` : action.args.value !== undefined ? ` — ${action.args.value}` : action.args.mode ? ` — ${action.args.mode}` : ""}` : action.type === "open-site" ? `Open ${action.site}` : action.type === "search" ? `Search for ${action.query}${action.background ? " in the background" : " in a new tab"}` : action.type === "switch-tab" ? action.intent.type === "indexed-tab" ? `Switch to tab ${action.intent.index}` : `Switch to ${action.intent.name} tab` : action.type === "click-target" ? `Open ${action.query}` : action.type === "scroll" ? `Scroll ${action.direction}` : action.type === "media" ? `Media ${action.command}` : `Go ${action.direction}`).slice(0, 160);
   const step: RoutineStep = { id: `step-${Date.now()}-${++routineIdCounter}`, label, action };
   await setRoutineSession({ ...routineSession, draft: [...routineSession.draft, step] }, `Step ${routineSession.draft.length + 1} recorded: ${label}.`);
 }
 function routineIntent(action: RoutineAction): Intent {
-  if (action.type === "site-command") throw new Error("Site routine steps require a fresh page snapshot.");
+  if (action.type === "site-command" || action.type === "whatsapp-message") throw new Error("Site routine steps require a fresh page snapshot.");
   if (action.type === "open-site") return { type: "new-tab" };
   if (action.type === "search") return { type: "search", query: action.query, background: action.background };
   if (action.type === "switch-tab") return action.intent;
@@ -222,9 +234,11 @@ function routineIntent(action: RoutineAction): Intent {
   return { type: action.direction };
 }
 interface RoutineDestination { tabId?: number; url?: string }
-interface RoutineExpectation { site: string; player: boolean; videos?: boolean }
+interface RoutineExpectation { site: string; player: boolean; videos?: boolean; recipient?: { identity: string; label: string } }
 function routineExpectation(action?: RoutineAction): RoutineExpectation | undefined {
+  if (action?.type === "whatsapp-message") return { site: "whatsapp", player: false };
   if (action?.type !== "site-command") return undefined;
+  if (action.site === "whatsapp") return { site: "whatsapp", player: false };
   return { site: action.site, player: !["YT01", "YT03", "YT04"].includes(action.action), videos: ["YT03", "YT04"].includes(action.action) };
 }
 async function applyRoutineSiteResult(result: SiteResult | null, destination: RoutineDestination, valid: () => boolean): Promise<boolean> {
@@ -273,8 +287,24 @@ async function executeRoutineAction(step: RoutineStep, destination: RoutineDesti
     const targets = await page({ type: "GET_TARGETS" });
     if (!Array.isArray(targets) || rankTargets(step.action.query, targets).kind !== "match") return false;
   }
-  const site = await page({ type: "GET_SITE_CONTEXT" });
+  let site = await page({ type: "GET_SITE_CONTEXT" });
   if (!valid()) return false;
+  if (step.action.type === "whatsapp-message") {
+    if (site?.site !== "whatsapp") return false;
+    if (site.current?.identity !== step.action.recipient.identity || site.current?.label !== step.action.recipient.label) {
+      const request = makeRequest(site, "WA01", { query: step.action.recipient.label });
+      const opened = await page({ type: "PAGE_ACTION", intent: request });
+      if (!await applyRoutineSiteResult(opened, destination, valid) || !await waitForRoutinePage(playbackToken, { site: "whatsapp", player: false, recipient: step.action.recipient }, destination) || !valid()) return false;
+      site = await page({ type: "GET_SITE_CONTEXT" });
+      if (!valid() || site?.current?.identity !== step.action.recipient.identity || site.current?.label !== step.action.recipient.label) return false;
+    }
+    const result = await page({ type: "RUN_WHATSAPP_MESSAGE", message: { recipient: step.action.recipient, text: step.action.text }, requestId: `routine-${playbackToken}-${step.id}-${Date.now()}` });
+    if (result?.state === "failed" && valid()) {
+      await setRoutineSession({ ...routineSession, playing: false, playbackPaused: false, playbackRoutineId: null, playbackStep: 0 }, "Routine stopped: WhatsApp could not verify the send. Inspect the chat before running it again; the message will not be retried automatically.", true);
+      return false;
+    }
+    return applyRoutineSiteResult(result, destination, valid);
+  }
   if (step.action.type === "site-command") {
     if (site?.site !== step.action.site) return false;
     const request = makeRequest(site, step.action.action, { ...step.action.args });
@@ -347,7 +377,7 @@ async function waitForRoutinePage(token: number, expectation?: RoutineExpectatio
         expectation ? page({ type: "GET_SITE_CONTEXT" }, tabId) : Promise.resolve(null),
       ]);
       if (tab?.status === "complete" && context && typeof context.url === "string" && context.url === tab.url) {
-        if (destination.url && !routineUrlMatches(context.url, destination.url) || expectation && (site?.site !== expectation.site || site.url !== context.url || expectation.videos && !site.entities?.some((entity: { kind: string }) => entity.kind === "video"))) {
+        if (destination.url && !routineUrlMatches(context.url, destination.url) || expectation && (site?.site !== expectation.site || site.url !== context.url || expectation.videos && !site.entities?.some((entity: { kind: string }) => entity.kind === "video") || expectation.recipient && (site.current?.identity !== expectation.recipient.identity || site.current?.label !== expectation.recipient.label))) {
           await new Promise(resolve => setTimeout(resolve, 200));
           continue;
         }
@@ -366,7 +396,7 @@ async function waitForRoutinePage(token: number, expectation?: RoutineExpectatio
   return false;
 }
 function routineActionMayNavigate(action: RoutineAction): boolean {
-  return action.type === "open-site" || action.type === "search" || action.type === "switch-tab" || action.type === "click-target" || action.type === "navigate" || action.type === "site-command" && ["YT01", "YT03", "YT04"].includes(action.action);
+  return action.type === "open-site" || action.type === "search" || action.type === "switch-tab" || action.type === "click-target" || action.type === "navigate" || action.type === "site-command" && ["YT01", "YT03", "YT04", "WA01"].includes(action.action);
 }
 async function runRoutine(name: string) {
   const routines = await getRoutines();
@@ -436,6 +466,7 @@ async function routineControl(command: Extract<Intent, {type:"routine-control"}>
   if (command.command === "pause-playback") {
     if (!routineSession.playing) { await publish({ feedback: "No routine is currently running." }); return; }
     ++playbackToken;
+    await page({ type: "SITE_DIALOGUE", text: "cancel" });
     await setRoutineSession({ ...routineSession, playing: false, playbackPaused: true }, "Routine paused. Say “resume routine” to continue, or “stop routine” to cancel.", true); return;
   }
   if (command.command === "resume-playback") {
@@ -444,6 +475,7 @@ async function routineControl(command: Extract<Intent, {type:"routine-control"}>
   }
   if (command.command === "stop-playback") {
     ++playbackToken;
+    await page({ type: "SITE_DIALOGUE", text: "cancel" });
     if (!routineSession.playing && !routineSession.playbackPaused) { await publish({ feedback: "No routine is currently running." }); return; }
     await setRoutineSession({ ...routineSession, playing: false, playbackPaused: false, playbackRoutineId: null, playbackStep: 0 }, "Routine stopped. Completed actions were left as they are.", true);
   }
@@ -480,6 +512,15 @@ async function resumeRoutinePlayback() {
     await setRoutineSession({ ...routineSession, playing: false, playbackPaused: false, playbackStep: 0, playbackRoutineId: null }, `Finished routine ${routine.name}.`, true); return;
 }
 async function voiceAction(text: string, intent: Intent, current: () => boolean = () => true) {
+  if (routineSession.recording && !routineSession.recordingPaused && intent.type === "site-action" && intent.site === "whatsapp" && intent.action === "WA06") {
+    const draft = await page({ type: "GET_WHATSAPP_DRAFT" });
+    if (!current()) return;
+    const step = draft && { type: "whatsapp-message", recipient: draft.recipient, text: draft.text };
+    if (!safeRoutineAction(step)) { await publish({ feedback: "Open the exact WhatsApp chat, dictate a message, then say “stop typing” and “send this message” to record it." }); return; }
+    await appendRoutineStep(step);
+    await publish({ feedback: `Recorded automatic send to ${step.type === "whatsapp-message" ? step.recipient.label : "the recipient"}. No message was sent during setup. Review and save the routine to enable sending.` });
+    return;
+  }
   if (intent.type === "click-target") {
     const targets = await page({ type: "GET_TARGETS" });
     if (!current() || !Array.isArray(targets) || rankTargets(intent.query, targets).kind !== "match") {
@@ -495,7 +536,8 @@ async function voiceAction(text: string, intent: Intent, current: () => boolean 
 async function publish(patch: Partial<SessionState>, persist = true) {
   const oldFeedback = state.feedback;
   state = { ...state, ...patch };
-  if (patch.feedback && patch.feedback !== oldFeedback && settings.spokenFeedback)
+  if (state.privateInput) { state.lastHeard=""; state.interimTranscript=""; }
+  if (!state.privateInput && patch.feedback && patch.feedback !== oldFeedback && settings.spokenFeedback)
     void chrome.runtime.sendMessage({ type: "SPEAK_FEEDBACK", text: patch.feedback.slice(0,1200), enabled: true }).catch(() => {});
   if (persist) await chrome.storage.session.set({ state: { ...state, calibrationSnapshots: {} }, dashboardTabs: [...dashboardTabs] });
   const now = Date.now();
@@ -525,6 +567,7 @@ async function pageState(tabId = state.targetTabId) {
     {
       type: "PAGE_STATE",
       activityMode: state.activityMode, modeAutomatic: state.modeAutomatic,
+      privateInput: state.privateInput,
       running: state.running,
       paused: state.paused,
       dictating: state.dictating,
@@ -574,6 +617,7 @@ async function target(tabId: number) {
   if (state.targetTabId !== null && state.targetTabId !== tabId)
     await page({
       type: "PAGE_STATE",
+      privateInput: state.privateInput,
       running: false,
       paused: true,
       dictating: false,
@@ -593,7 +637,7 @@ async function ensureOffscreen() {
 const captureChecks=new Set<chrome.runtime.Port>();
 async function releaseIdleDesktop(){if(!state.running&&uiVoiceTab===null&&!captureChecks.size)await releaseDesktop();}
 let captureRevision=0;
-async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>["command"], options: { gesture?: import("./shared").HandGesture; presets?: GesturePreset[] } = {}) {
+async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>["command"], options: { gesture?: import("./shared").HandGesture; presets?: GesturePreset[]; privateRevision?:number } = {}) {
   if (command === "start" || command === "ui-start") {
     const revision=captureRevision;await claimDesktop();
     if(revision!==captureRevision||command==="start"&&!state.running)throw new Error("Capture start cancelled");
@@ -602,13 +646,19 @@ async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>
   }
   if (command !== "start" && command !== "ui-start") {
     const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
-    if (!contexts.length) {if(command==="ui-stop")await releaseIdleDesktop();return;}
+    if (!contexts.length) {if(command==="ui-stop")await releaseIdleDesktop();return {ok:true};}
   }
-  await chrome.runtime.sendMessage({ type: "OFFSCREEN_COMMAND", command, settings: pageSettings(), ...options }).catch(() => {});
+  if (state.privateInput && command !== "private-exit" && command !== "stop") {
+    await chrome.runtime.sendMessage({type:"OFFSCREEN_COMMAND",command:"private-enter",privateSession,privateRevision});
+    if (command === "ui-start") return;
+  }
+  const result=await chrome.runtime.sendMessage({type:"OFFSCREEN_COMMAND",command,settings:pageSettings(),...options,...(command==="private-enter"||command==="private-exit"?{privateSession,privateRevision:options.privateRevision??privateRevision}:{})}).catch(()=>null);
+  if(command==="private-exit"&&result?.ok!==true)throw new Error("Voice remains off. Private entry changed; retry when finished.");
   if(command==="ui-stop")await releaseIdleDesktop();
 }
 async function stop() {
   captureRevision++;
+  nativeCredentialSession=false;await stopCredentialControl();
   uiVoiceTab = null; uiVoiceUntil = 0; ++narrationToken; chrome.tts?.stop();
   ++planToken; planDestination=null;
   activeProvider?.abort();
@@ -1036,6 +1086,8 @@ async function siteResult(result: (SiteResult & {dictating?:boolean}) | null, cu
 async function action(intent: Intent, current: () => boolean = () => true) {
   lastActionSucceeded = false;
   if (!current()) return;
+  if (state.privateInput && !["stop","pause"].includes(intent.type)) return;
+  if (intent.type === "private-keyboard") { await page({type:"PAGE_ACTION",intent}); return; }
   if (intent.type === "stop") {
     await stop();
     return;
@@ -1230,6 +1282,7 @@ let pendingTypingCommands = 0;
 
 /** Release the speech queue on cancellation even if a transport ignores abort. */
 async function providerWork(work: (signal: AbortSignal) => Promise<void>) {
+  if (state.privateInput) return;
   const controller = new AbortController();
   activeProvider = controller;
   const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]);
@@ -1349,6 +1402,8 @@ function storedTranscript(text: string): string {
 
 async function routeHeard(text: string, parsed: Intent, revision: number) {
   const originalText = text;
+  if(state.privateInput)return;
+  if(parsed.type==="private-keyboard"){await action(parsed);return;}
   if (revision !== pageRevision || !state.running || state.paused) return;
   await publish({ lastHeard: storedTranscript(text), interimTranscript: "" });
   if (revision !== pageRevision || !state.running || state.paused) return;
@@ -1507,11 +1562,12 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
   if (dashboard && !dashboardMessages.has(message.type)) return { ok: false, error: "This action is not available to the dashboard." };
   if (!trusted && sender.tab?.id !== state.targetTabId)
     return { ok: false, error: "Inactive page." };
-  if (!trusted && !["SET_STATE", "METRIC", "PAUSE", "MODE_EVIDENCE", "DOCS_INPUT", "READING_AUDIO", "READING_PREFERENCES"].includes(message.type))
+  if (!trusted && !["SET_STATE", "METRIC", "PAUSE", "MODE_EVIDENCE", "DOCS_INPUT", "READING_AUDIO", "READING_PREFERENCES", "PRIVATE_INPUT", "PRIVATE_POPUP"].includes(message.type))
     return {
       ok: false,
       error: "This message is reserved for extension controls.",
     };
+  if (state.privateInput && ["HEARD","TRANSCRIPT","UI_HEARD","UI_VOICE","UI_SPEAK","TRANSCRIBE_AUDIO","GESTURE_TRIGGER"].includes(message.type)) return {ok:false,error:"Voice is off during private entry. Leave the password field and choose Resume voice."};
   switch (message.type) {
     case "READING_PREFERENCES": {
       if(!internal&&(sender.frameId!==0||sender.tab?.id!==state.targetTabId))return {ok:false};
@@ -1519,23 +1575,80 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return readingPreferences((await chrome.storage.local.get("readingPreferences")).readingPreferences);
     }
     case "MODE_EVIDENCE": {
-      if(trusted||sender.frameId!==0||!state.running||state.paused||!["browsing","reading","writing"].includes(message.mode)||![["writing","composition"],["reading","reading-interaction"],["browsing","navigation"]].some(([mode,reason])=>mode===message.mode&&reason===message.reason))return {ok:false};
+      if(trusted||sender.frameId!==0||!state.running||state.paused||state.privateInput||!["browsing","reading","writing"].includes(message.mode)||![["writing","composition"],["reading","reading-interaction"],["browsing","navigation"]].some(([mode,reason])=>mode===message.mode&&reason===message.reason))return {ok:false};
+      const evidenceRevision=pageRevision;
       const context=await page({type:"MODE_CONTEXT"});
+      if(state.privateInput||evidenceRevision!==pageRevision||!state.running||state.paused)return {ok:false};
       if(message.mode==="writing"&&!context?.longEditor&&!(context?.docs?.editable&&context?.docs?.focused) || message.mode==="reading"&&!context?.reading)return {ok:false};
       if(state.activityMode!==message.mode)await chooseMode(message.mode,true,"Clear new task interaction.");
       if(message.mode==="writing"&&message.autoArm&&!state.dictating)await action({type:"start-typing"});return {ok:true};
     }
-    case "READING_AUDIO": {if(sender.tab?.id!==state.targetTabId||sender.frameId!==0||!state.running||state.paused||state.activityMode!=="reading")return {ok:false};readingAudio=message.active?String(message.text).slice(0,8000):"";return {ok:true};}
+    case "READING_AUDIO": {if(sender.tab?.id!==state.targetTabId||sender.frameId!==0||!state.running||state.paused||state.privateInput||state.activityMode!=="reading")return {ok:false};readingAudio=message.active?String(message.text).slice(0,8000):"";return {ok:true};}
     case "DOCS_INPUT": {
       if(trusted||sender.frameId!==0||!state.running||state.paused||!state.dictating||state.activityMode!=="writing"||typeof message.text!=="string"||message.text.length>6000||!["insert","scratch","restore"].includes(message.command))return {ok:false};
       const tabId=state.targetTabId!,revision=pageRevision;const valid=()=>state.running&&!state.paused&&state.dictating&&state.activityMode==="writing"&&state.targetTabId===tabId&&revision===pageRevision;
       const context=await page({type:"EDIT_CONTEXT"});if(!valid()||!context?.docs||context.binding!==message.generation||context.expected!==message.expected)return {ok:false,error:"Docs editor context changed."};
       return docsInput(tabId,message.command,message.text,message.expected,message.url,valid);
     }
+    case "PRIVATE_INPUT": {
+      if (!internal && (sender.tab?.id !== state.targetTabId || (sender.frameId ?? 0) !== 0)) return {ok:false};
+      if (message.command === "resume") {
+        // Page-local controls verify focus before requesting this explicit exit.
+        if(!privateReady)return {ok:false,error:"Wait for microphone shutdown before resuming voice."};
+        if(nativeCredentialSession)return {ok:false,error:"Return to browser from the desktop panel before resuming voice."};
+        if (!state.privateInput) return {ok:true};
+        const token=privateRevision;
+        const status=await page({type:"GET_PRIVATE_STATUS"});
+        if(status?.ok!==true||status.active||status.focused)return {ok:false,error:"Finish private entry and leave the password field first."};
+        if(token!==privateRevision || !privateReady)return {ok:false};
+        await controller("private-exit",{privateRevision:token});
+        if(token!==privateRevision || !privateReady)return {ok:false};
+        await publish({privateInput:false,feedback:"Voice resumed."});await pageState();return {ok:true};
+      }
+      if (message.command !== "enter") return {ok:false};
+      // Synchronous latch precedes the first await and invalidates every queued action.
+      privateReady=false;const privateToken=++privateRevision;
+      state.privateInput=true; state.lastHeard="";state.interimTranscript="";readingAudio="";writingProposal=null;
+      activeProvider?.abort(); for (const request of transcriptionRequests) request.abort();
+      ++pageRevision;++playbackToken;++planToken;planDestination=null;++narrationToken;chrome.tts?.stop();
+      uiVoiceTab=null;uiVoiceUntil=0;
+      if(routineSession.recording || routineSession.playing) await setRoutineSession({...routineSession,recordingPaused:routineSession.recording,playing:false,playbackPaused:routineSession.playing||routineSession.playbackPaused},"Routine paused for private entry.");
+      await publish({privateInput:true,lastHeard:"",interimTranscript:"",dictating:false,voice:"Off — private entry"});
+      const contexts=await chrome.runtime.getContexts({contextTypes:[chrome.runtime.ContextType.OFFSCREEN_DOCUMENT]});
+      if(contexts.length) {
+        let timer:ReturnType<typeof setTimeout>|undefined;
+        const ack=await Promise.race([chrome.runtime.sendMessage({type:"OFFSCREEN_COMMAND",command:"private-enter",privateSession,privateRevision}),new Promise<{ok:false;privateInput?:boolean}>(resolve=>{timer=setTimeout(()=>resolve({ok:false}),5000);})]).finally(()=>clearTimeout(timer));
+        if(ack?.ok!==true || ack?.privateInput!==true) return {ok:false,error:"Microphone shutdown was not acknowledged. Keys remain locked."};
+      }
+      if(privateToken!==privateRevision)return {ok:false};
+      privateReady=true;await pageState();return {ok:true,privateInput:true};
+    }
+    case "PRIVATE_POPUP": {
+      if(!state.privateInput || !privateReady || !state.running || state.paused || !await paired())return {ok:false,error:"Start Handsfree, then connect and calibrate the macOS desktop companion first."};
+      if(!internal && (sender.tab?.id!==state.targetTabId || (sender.frameId??0)!==0))return {ok:false};
+      if(message.command!=="start")return {ok:false};
+      if(nativeCredentialSession)return {ok:false,error:"Password popup control is already active."};
+      nativeCredentialSession=true;
+      const revision=++captureRevision;
+      if(captureChecks.size){nativeCredentialSession=false;return {ok:false,error:"Finish device permission setup before controlling password popups."};}
+      try {
+      await controller("stop");
+      const contexts=await chrome.runtime.getContexts({contextTypes:[chrome.runtime.ContextType.OFFSCREEN_DOCUMENT]});
+      if(contexts.length)await chrome.offscreen.closeDocument();
+      await releaseDesktop();
+        await startCredentialControl(()=>{
+          nativeCredentialSession=false;
+          if(revision!==captureRevision||!state.running)return;
+          void controller("start").then(()=>publish({feedback:"Returned to browser. Microphone remains off until you choose Resume voice."})).catch(()=>stop());
+        });
+        await publish({camera:"Desktop password popup control",voice:"Off — private entry",feedback:"Use the Mac pointer to choose your saved login. Choose Return to browser in the desktop panel when finished."});
+        return {ok:true};
+      }catch(error){nativeCredentialSession=false;await publish({feedback:error instanceof Error?error.message:"Desktop popup control unavailable. Microphone remains off."});await controller("start");return {ok:false,error:state.feedback};}
+    }
     case "DESKTOP_CONNECT": return connectDesktop();
     case "DESKTOP_DISCONNECT": await stop();await disconnectDesktop();return {ok:true};
     case "DESKTOP_STATUS":return {paired:await paired()};
-    case "PREPARE_BROWSER_CAPTURE":await claimDesktop();return {ok:true};
+    case "PREPARE_BROWSER_CAPTURE":if(state.privateInput)return {ok:false,error:"Finish private entry before checking device access."};await claimDesktop();return {ok:true};
     case "UI_VOICE": {
       if (!dashboard || sender.tab?.id === undefined) return {ok:false,error:"Open the connected dashboard to use setup voice."};
       if (!message.enabled) {
@@ -1695,7 +1808,11 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       if ((!state.running && !setupActive) || settings.speechMode !== "browser") return { ok: false, error: "Voice session is stopped." };
       if (!Array.isArray(message.audio) || message.audio.length > 2000000 || !/^audio\/(webm|ogg|mp4)/.test(message.mime)) return { ok: false, error: "Invalid microphone recording." };
       const revision = pageRevision;
-      const text = await transcribeAudio(new Blob([new Uint8Array(message.audio)], { type: message.mime }), { ...groqOptions(), language: settings.language }, AbortSignal.timeout(12000));
+      const request=new AbortController();transcriptionRequests.add(request);
+      let text="";
+      try { text=await transcribeAudio(new Blob([new Uint8Array(message.audio)], {type:message.mime}), {...groqOptions(),language:settings.language}, AbortSignal.any([request.signal,AbortSignal.timeout(12000)])); }
+      finally {transcriptionRequests.delete(request);}
+      if(state.privateInput || request.signal.aborted)return {text:""};
       return { text: revision === pageRevision && (state.running || setupActive && uiVoiceTab === uiTab && Date.now() <= uiVoiceUntil && await activeDashboard(uiTab!)) ? text : "" };
     }
     case "TRANSCRIPT":
@@ -1806,7 +1923,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       return { ok: true };
     case "SET_STATE": {
       const patch = trusted
-        ? message.patch
+        ? Object.fromEntries(Object.entries(message.patch).filter(([key])=>key!=="privateInput")) as Partial<SessionState>
         : {
             feedback: message.patch.feedback,
             dictating: message.patch.dictating,
@@ -1991,5 +2108,5 @@ chrome.runtime.onConnect?.addListener(port=>{
   let active=true;captureChecks.add(port);
   port.onDisconnect.addListener(()=>{active=false;captureChecks.delete(port);void releaseIdleDesktop();});
   port.onMessage.addListener(message=>{if(!message?.release)return;captureChecks.delete(port);void releaseIdleDesktop().finally(()=>{if(active)port.postMessage({released:true});});});
-  void ready.then(()=>claimDesktop()).then(()=>{if(active)port.postMessage({ok:true});else void releaseIdleDesktop();}).catch(error=>{if(active)port.postMessage({ok:false,error:error instanceof Error?error.message:String(error)});});
+  void ready.then(()=>{if(state.privateInput)throw new Error("Finish private entry before checking device access.");return claimDesktop();}).then(()=>{if(active)port.postMessage({ok:true});else void releaseIdleDesktop();}).catch(error=>{if(active)port.postMessage({ok:false,error:error instanceof Error?error.message:String(error)});});
 });

@@ -14,6 +14,8 @@ function App(){
   const [status,setStatus]=useState<Status>(preview),[session,setSession]=useState<Session>(stopped);
   const [prefs,setPrefs]=useState<Preferences>(()=>readPreferences(localStorage.getItem("handsfree-desktop-v1")));
   const [advanced,setAdvanced]=useState(true),[camera,setCamera]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  const [credentialMode,setCredentialMode]=useState(false);
+  const credentialToken=useRef<string|null>(null),credentialStart=useRef<(token:string)=>Promise<void>>(async()=>{});
   const voice=prefs.enabledInputs.includes("voice"),pointerEnabled=prefs.enabledInputs.some(i=>i==="face"||i==="hand");
   const [compact,setCompact]=useState(localStorage.getItem("handsfree-desktop-onboarded")==="1"),[step,setStep]=useState(0),[corner,setCorner]=useState(localStorage.getItem("handsfree-panel-corner")||"bottom-right"),[extensionId,setExtensionId]=useState(""),[command,setCommand]=useState(""),[commandResult,setCommandResult]=useState("");
   const [confidence,setConfidence]=useState(0),[fps,setFps]=useState(0),[stage,setStage]=useState<CalibrationStage|null>(null),[progress,setProgress]=useState(0),[displayId,setDisplayId]=useState(0);
@@ -25,20 +27,22 @@ function App(){
   const save=(p:Preferences)=>{settings.current=p;setPrefs(p);localStorage.setItem("handsfree-desktop-v1",JSON.stringify({version:1,...p}));};
   const fail=(e:unknown)=>setError(e instanceof Error?e.message:String(e));
   const releaseCapture=async()=>{generation.current++;calibration.current=null;setStage(null);setBusy(false);if(isTauri())await invoke("voice_stop");await tracker.current.shutdown();setCamera(false);setConfidence(0);dwell.current=null;};
-  const stop=async()=>{generation.current++;calibration.current=null;setStage(null);setBusy(false);if(isTauri())await invoke("voice_stop");await tracker.current.shutdown();setCamera(false);setConfidence(0);dwell.current=null;if(isTauri())apply(await invoke<Session>("control",{action:"stop"}));else apply(stopped);};
+  const stop=async()=>{const credential=credentialToken.current;generation.current++;calibration.current=null;setStage(null);setBusy(false);if(isTauri())await invoke("voice_stop");await tracker.current.shutdown();setCamera(false);setConfidence(0);dwell.current=null;if(isTauri())apply(await invoke<Session>("control",{action:"stop"}));else apply(stopped);if(credential&&isTauri()){await invoke("credential_return",{token:credential});credentialToken.current=null;setCredentialMode(false);}};
   const pause=async()=>{dwell.current=null;if(isTauri())apply(await invoke<Session>("control",{action:"pause"}));};
   useEffect(()=>{
     let alive=true;
     const refresh=async()=>{if(!isTauri())return;try{const s=await invoke<Status>("status");if(!alive)return;setStatus(s);setDisplayId(id=>id||s.capabilities.displays[0]?.id||0);if(s.session.epoch!==current.current.epoch)apply(s.session);}catch(e){if(alive)fail(e);}};
     void refresh();const timer=setInterval(()=>{void refresh();if(current.current.phase==="running")void invoke("heartbeat",{epoch:current.current.epoch}).catch(fail);},500);
     const unlisten=isTauri()?listen<Session>("session",e=>{apply(e.payload);if(e.payload.phase==="stopped")void releaseCapture().catch(fail);else if(e.payload.phase==="paused")void invoke("voice_stop").catch(fail);}):Promise.resolve(()=>{});
-    const handoff=isTauri()?listen("browser-handoff",()=>{void releaseCapture().then(()=>invoke("handoff_ready")).catch(fail);}):Promise.resolve(()=>{});
+    const handoff=isTauri()?listen("browser-handoff",()=>{void releaseCapture().then(()=>{credentialToken.current=null;setCredentialMode(false);return invoke("handoff_ready");}).catch(fail);}):Promise.resolve(()=>{});
+    const credential=isTauri()?listen<string>("credential-control",e=>{void credentialStart.current(e.payload).catch(fail);}):Promise.resolve(()=>{});
+    const credentialStop=isTauri()?listen<string>("credential-stop",e=>{if(e.payload===credentialToken.current)void stop().catch(fail);}):Promise.resolve(()=>{});
     const popup=isTauri()?listen("show-panel",()=>{setCompact(true);void invoke("panel_layout",{compact:true}).catch(fail);}):Promise.resolve(()=>{});
     const setup=isTauri()?listen("show-settings",()=>{setCompact(false);void invoke("panel_layout",{compact:false}).catch(fail);}):Promise.resolve(()=>{});
     const unerror=isTauri()?listen<string>("native-error",e=>setError(e.payload)):Promise.resolve(()=>{});
     // Called only after the real React tree commits in the packaged WKWebView.
 
-    return()=>{alive=false;clearInterval(timer);void unlisten.then(f=>f());void unerror.then(f=>f());void handoff.then(f=>f());void setup.then(f=>f());void popup.then(f=>f());tracker.current.stop();};
+    return()=>{alive=false;clearInterval(timer);void unlisten.then(f=>f());void unerror.then(f=>f());void handoff.then(f=>f());void setup.then(f=>f());void popup.then(f=>f());void credential.then(f=>f());void credentialStop.then(f=>f());tracker.current.stop();};
   },[]);
   useEffect(()=>{if(isTauri())void invoke("panel_layout",{compact,corner:compact?corner:undefined}).then(()=>invoke("frontend_ready",{view:compact?"compact":"setup"})).catch(fail);},[compact]);
   useEffect(()=>{const escape=(e:KeyboardEvent)=>{if(e.key==="Escape")void pause();};window.addEventListener("keydown",escape);return()=>window.removeEventListener("keydown",escape);},[]);
@@ -58,7 +62,7 @@ function App(){
     void invoke("pointer",{sample:{epoch,sequence:++sequence.current,x:mapped.x,y:mapped.y,confidence:mapped.confidence,ageMs:Math.max(0,performance.now()-time)}}).then(async()=>{
       if(current.current.epoch!==epoch||current.current.phase!=="running")return;
       if(mapped.confidence<0.7){dwell.current=null;return;}
-      if(!p.dwell){dwell.current=null;return;}
+      if(!p.dwell && !credentialToken.current){dwell.current=null;return;}
       const d=dwell.current;
       if(!d||Math.hypot(mapped.x-d.x,mapped.y-d.y)>0.018){dwell.current={x:mapped.x,y:mapped.y,since:performance.now(),fired:false};return;}
       if(!d.fired&&performance.now()-d.since>=1200){d.fired=true;await invoke("dwell_click",{epoch});}
@@ -79,15 +83,32 @@ function App(){
   };
   const start=async()=>{
     setError("");setBusy(true);const token=++generation.current;
-    try{const c=settings.current.calibrations[settings.current.mode];if(pointerEnabled&&!c)throw new Error("Calibrate your selected movement first.");if(pointerEnabled)await startCamera();if(generation.current!==token)return;if(c)filter.current.setCalibration(c);sequence.current=0;const active=await invoke<Session>("start",{displayId,pointerEnabled});apply(active);if(voice)await invoke("voice_start",{epoch:active.epoch});}
+    try{const c=settings.current.calibrations[settings.current.mode];if(pointerEnabled&&!c)throw new Error("Calibrate your selected movement first.");if(pointerEnabled)await startCamera();if(generation.current!==token)return;if(c)filter.current.setCalibration(c);sequence.current=0;const active=await invoke<Session>("start",{displayId,pointerEnabled});apply(active);if(voice&&!credentialToken.current)await invoke("voice_start",{epoch:active.epoch});}
     catch(e){await stop();fail(e);}finally{if(generation.current===token)setBusy(false);}
+  };
+  credentialStart.current=async(token:string)=>{
+    await releaseCapture();credentialToken.current=token;setCredentialMode(true);setCompact(true);setError("");
+    const epoch=++generation.current;
+    try {
+      const p=settings.current,c=p.calibrations[p.mode];
+      if(!p.enabledInputs.includes(p.mode)||!c)throw new Error("Calibrate head or hand control in desktop settings before controlling password popups.");
+      await invoke("capture_allowed");
+      if(!video.current)throw new Error("Camera preview unavailable");
+      await tracker.current.start(video.current,p.mode,onPoint,message=>{fail(message);void stop().catch(fail);});
+      if(epoch!==generation.current)throw new Error("Password popup capture cancelled");
+      setCamera(true);filter.current.setCalibration(c);sequence.current=0;
+      const nativeStatus=await invoke<Status>("status");
+      const active=await invoke<Session>("start",{displayId:displayId||nativeStatus.capabilities.displays[0]?.id||0,pointerEnabled:true});
+      if(epoch!==generation.current)throw new Error("Password popup capture cancelled");
+      apply(active);await invoke("credential_ready",{token});
+    } catch(e){await stop();fail(e);}
   };
   const switchMode=async(mode:Preferences["mode"])=>{await stop();save({...settings.current,mode});};
   const running=session.phase==="running";
   const calibrated=!pointerEnabled||Boolean(prefs.calibrations[prefs.mode]);
   const chooseInput=async(input:"face"|"hand"|"voice")=>{await stop();const enabledInputs=prefs.enabledInputs.includes(input)?prefs.enabledInputs.filter(i=>i!==input):[...prefs.enabledInputs,input];if(!enabledInputs.length){setError("Choose at least one input.");return;}const mode=enabledInputs.includes(prefs.mode)?prefs.mode:enabledInputs.includes("face")?"face":enabledInputs.includes("hand")?"hand":prefs.mode;save({...settings.current,enabledInputs,mode});};
   const showPanel=async()=>{await stop();if(isTauri())await invoke("panel_layout",{compact:true,corner});localStorage.setItem("handsfree-desktop-onboarded","1");setCompact(true);};
-  return <main className={compact?"compact":"setup"}>
+  return <main className={`${compact?"compact":"setup"}${credentialMode?" credential":""}`}>
     {!compact&&<nav className="setup-steps" aria-label="Desktop setup">{["Inputs","Access","Practice","Ready"].map((name,i)=><button key={name} className={step===i?"selected":""} onClick={()=>setStep(i)}>{i+1}. {name}</button>)}</nav>}
     {!compact&&step===0&&<section className="onboarding"><h2>Choose your inputs</h2><p>Use the same comfortable head or hand movement as the browser extension. Choose voice, head or hand, or combine them. If both movement inputs are selected, switch the primary pointer deliberately below. Camera recognition and calibration stay on this Mac.</p><div className="input-choices">{(["face","hand","voice"] as const).map(input=><label key={input}><input type="checkbox" checked={prefs.enabledInputs.includes(input)} onChange={()=>void chooseInput(input).catch(fail)}/>{input==="face"?"Head movement":input==="hand"?"Hand movement":"Voice commands"}</label>)}</div><button className="secondary" onClick={()=>setStep(1)}>Continue to access</button></section>}
     {!compact&&step===1&&<section className="onboarding"><h2>Allow only what you use</h2><p>Camera access is requested during calibration. macOS control access is needed to move or click the pointer. A floating window needs no Screen Recording permission.</p><button className="secondary" onClick={()=>void invoke("open_help",{kind:"camera"}).catch(fail)}>Camera settings</button><button className="secondary" onClick={()=>setStep(2)}>Continue to practice</button></section>}
@@ -106,7 +127,9 @@ function App(){
     {status.capabilities.nativeControl&&pointerEnabled&&!status.capabilities.inputAccess&&<div className="notice"><strong>Allow control of your Mac</strong><p>Allow Handsfree to control your Mac when macOS asks.</p><button onClick={()=>void invoke<boolean>("request_access").then(granted=>granted?undefined:invoke("open_help",{kind:"accessibility"})).catch(fail)}>Allow control access <ArrowUpRight size={14}/></button></div>}
     </>}
     {error&&!compact&&<div className="error" role="alert">{error}<button onClick={()=>setError("")} aria-label="Dismiss error">×</button></div>}
-    <div className="actions"><button className="primary" disabled={busy||!!stage||!status.capabilities.nativeControl||pointerEnabled&&!status.capabilities.inputAccess||compact&&!calibrated} title={compact&&!calibrated?"Open Settings and setup from the menu bar to calibrate":undefined} onClick={()=>void (running?stop():compact||calibrated?start():calibrate()).catch(fail)}>{running?<Square size={18}/>:compact||calibrated?<Play size={18}/>:<ScanFace size={18}/>} {busy?"Preparing…":running?"Stop":compact||calibrated?"Start":"Calibrate & set up"}</button>{!compact&&<button className="stop" disabled={!camera&&!busy} onClick={()=>void stop().catch(fail)}><Square size={17}/>Stop</button>}</div>
+    {credentialMode&&<p role="status">Password popup control · Microphone off · Hold still for 1.2 seconds to click.</p>}
+    {credentialMode&&<button className="secondary" onClick={()=>void stop().catch(fail)}>Return to browser</button>}
+    <div className="actions"><button className="primary" disabled={busy||!!stage||!status.capabilities.nativeControl||pointerEnabled&&!status.capabilities.inputAccess||compact&&!calibrated} title={compact&&!calibrated?"Open Settings and setup from the menu bar to calibrate":undefined} onClick={()=>void (running||credentialMode?stop():compact||calibrated?start():calibrate()).catch(fail)}>{running?<Square size={18}/>:compact||calibrated?<Play size={18}/>:<ScanFace size={18}/>} {busy?"Preparing…":running?"Stop":compact||calibrated?"Start":"Calibrate & set up"}</button>{!compact&&<button className="stop" disabled={!camera&&!busy} onClick={()=>void stop().catch(fail)}><Square size={17}/>Stop</button>}</div>
     {!compact&&<>
     {stage&&<button className="text-button" onClick={()=>void stop().catch(fail)}>Cancel calibration</button>}
     <p className="shortcut">Pause anytime with <kbd>⌘</kbd><kbd>⇧</kbd><kbd>P</kbd></p>

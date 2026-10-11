@@ -119,7 +119,9 @@ export function Routines({ running, disabled }: { running: boolean; disabled: bo
       </FieldGroup>
       <ol aria-label="Routine steps" className="routine-step-list">
         {steps.map((step, index) => <li key={step.id} className="routine-step-row">
-          <span><b>{index + 1}.</b> {step.label}</span>
+          <div><b>{index + 1}.</b> {step.action.type === "whatsapp-message" ? `Send WhatsApp to ${step.action.recipient.label}` : step.label}
+            {step.action.type === "whatsapp-message" && <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{step.action.text}</p>}
+          </div>
           <div className="routine-step-actions">
             <Button type="button" variant="ghost" size="icon" aria-label={`Move ${step.label} up`} disabled={editorLocked || index === 0} onClick={() => move(index, -1)}><ArrowUp aria-hidden="true" /></Button>
             <Button type="button" variant="ghost" size="icon" aria-label={`Move ${step.label} down`} disabled={editorLocked || index === steps.length - 1} onClick={() => move(index, 1)}><ArrowDown aria-hidden="true" /></Button>
@@ -128,6 +130,7 @@ export function Routines({ running, disabled }: { running: boolean; disabled: bo
         </li>)}
       </ol>
       {steps.length === 0 && <p>No steps yet. Record supported actions before saving.</p>}
+      {steps.some(step => step.action.type === "whatsapp-message") && <p className="dashboard-hint">Saving this routine authorizes the messages shown above to send automatically each time you run it, without another confirmation. Messages stay on this device. A different unsent draft or an unverified recipient stops playback.</p>}
       <div className="dashboard-actions">
         <Button type="button" disabled={editorLocked || !name.trim() || !steps.length} onClick={() => void save()}><CheckCircle data-icon="inline-start" aria-hidden="true" />{editing ? "Save changes" : "Save routine"}</Button>
         {hasDraft && !editing && <Button type="button" variant="outline" disabled={editorLocked} onClick={() => void discard()}><Trash data-icon="inline-start" aria-hidden="true" />Discard draft</Button>}
@@ -138,7 +141,7 @@ export function Routines({ running, disabled }: { running: boolean; disabled: bo
     <div className="dashboard-panel">
       <h3>Saved routines</h3>
       {!routines.length ? <p>No saved routines yet.</p> : <ul className="routine-saved-list">{routines.map(routine => <li key={routine.id} className="routine-step-row">
-        <div><b>{routine.name}</b><p>{routine.steps.length} {routine.steps.length === 1 ? "step" : "steps"}</p><ol>{routine.steps.map((step, index) => <li key={step.id}>{index + 1}. {step.label}</li>)}</ol></div>
+        <div><b>{routine.name}</b><p>{routine.steps.length} {routine.steps.length === 1 ? "step" : "steps"}</p><ol>{routine.steps.map((step, index) => <li key={step.id}>{index + 1}. {step.action.type === "whatsapp-message" ? `Automatically send WhatsApp to ${step.action.recipient.label}` : step.label}{step.action.type === "whatsapp-message" && <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{step.action.text}</p>}</li>)}</ol></div>
         <div className="routine-step-actions">
           <Button type="button" variant="outline" disabled={disabled || !running} onClick={() => void request({ type: "HEARD", text: `run ${routine.name}` }).then(() => setNotice(`Asked Handsfree to run “${routine.name}”.`)).catch(cause => setError(cause instanceof Error ? cause.message : "Could not start routine."))}><Play data-icon="inline-start" aria-hidden="true" />Run</Button>
           <Button type="button" variant="ghost" disabled={disabled} onClick={() => editRoutine(routine)}>Edit</Button>

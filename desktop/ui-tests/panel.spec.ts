@@ -38,3 +38,41 @@ test("a voice startup error stops the session and keeps compact controls visible
  });
  await page.goto("/");await page.getByRole("button",{name:"Start",exact:true}).click();await expect(page.getByRole("alert")).toContainText("Speech helper could not start");await expect(page.getByRole("button",{name:"Start",exact:true})).toBeVisible();await expect(page.locator("main button")).toHaveCount(1);const box=await page.locator("main").boundingBox();expect(box!.height).toBeLessThanOrEqual(310);
 });
+test('password popup handoff fails closed without calibration and never starts speech',async({page})=>{
+ await page.addInitScript(()=>{
+  localStorage.setItem('handsfree-desktop-onboarded','1');localStorage.setItem('handsfree-desktop-v1',JSON.stringify({version:1,enabledInputs:['face','voice'],mode:'face',calibrations:{}}));
+  (window as any).isTauri=true;(window as any).calls=[];const callbacks:any={},events:any={};let next=0;
+  (window as any).emitNative=(name:string,payload:any)=>callbacks[events[name]]?.({event:name,id:1,payload});
+  (window as any).__TAURI_INTERNALS__={transformCallback:(fn:any)=>{callbacks[++next]=fn;return next;},invoke:async(cmd:string,args:any)=>{
+   (window as any).calls.push({cmd,args});if(cmd==='plugin:event|listen'){events[args.event]=args.handler;return 1;}
+   const session={phase:'stopped',epoch:0,reason:'Ready',displayId:1};if(cmd==='status')return {session,capabilities:{nativeControl:true,inputAccess:true,displays:[{id:1,width:1024,height:900}]}};return cmd==='control'?session:null;
+  }};
+ });
+ await page.goto('/');await page.waitForFunction(()=>(window as any).calls.some((c:any)=>c.cmd==='plugin:event|listen'&&c.args.event==='credential-control'));
+ await page.evaluate(()=>(window as any).emitNative('credential-control','fixture-token'));
+ await expect(page.getByRole('alert')).toContainText('Calibrate head or hand');
+ const calls=await page.evaluate(()=>(window as any).calls);expect(calls.some((c:any)=>c.cmd==='voice_start')).toBe(false);expect(calls.some((c:any)=>c.cmd==='credential_return'&&c.args.token==='fixture-token')).toBe(true);
+});
+test('password popup session keeps voice off, fits compact panel and releases camera before return',async({page})=>{
+ await page.addInitScript(()=>{
+  localStorage.setItem('handsfree-desktop-onboarded','1');localStorage.setItem('handsfree-desktop-v1',JSON.stringify({version:1,enabledInputs:['face','voice'],mode:'face',dwell:true,calibrations:{face:{neutralX:.5,neutralY:.5,rangeX:.1,rangeY:.1}}}));
+  (window as any).isTauri=true;(window as any).calls=[];const callbacks:any={},events:any={};let next=0;let session={phase:'stopped',epoch:0,reason:'Ready',displayId:1};
+  (window as any).emitNative=(name:string,payload:any)=>callbacks[events[name]]?.({event:name,id:1,payload});
+  (window as any).__TAURI_INTERNALS__={transformCallback:(fn:any)=>{callbacks[++next]=fn;return next;},invoke:async(cmd:string,args:any)=>{
+   (window as any).calls.push({cmd,args});if(cmd==='plugin:event|listen'){events[args.event]=args.handler;return 1;}
+   if(cmd==='start')session={...session,phase:'running',epoch:1};if(cmd==='control')session={...session,phase:'stopped',epoch:2};
+   if(cmd==='status')return {session,capabilities:{nativeControl:true,inputAccess:true,displays:[{id:1,width:1024,height:900}]}};return cmd==='control'||cmd==='start'?session:null;
+  }};
+  Object.defineProperty(navigator,'mediaDevices',{value:{getUserMedia:async()=>{const c=document.createElement('canvas');c.width=2;c.height=2;const stream=c.captureStream();for(const t of stream.getTracks()){const stop=t.stop.bind(t);t.stop=()=>{(window as any).calls.push({cmd:'track-stop'});stop();};}return stream;}}});
+  HTMLMediaElement.prototype.play=async()=>{};
+  (window as any).Worker=class {onmessage:any;onerror:any;postMessage(m:any){if(m.type==='init')queueMicrotask(()=>this.onmessage?.({data:{type:'ready'}}));}terminate(){}};
+ });
+ await page.goto('/');await page.waitForFunction(()=>(window as any).calls.some((c:any)=>c.cmd==='plugin:event|listen'&&c.args.event==='credential-control'));
+ await page.evaluate(()=>(window as any).emitNative('credential-control','fixture-token'));
+ await expect(page.getByRole('button',{name:'Return to browser',exact:true})).toBeVisible();
+ await page.waitForFunction(()=>(window as any).calls.some((c:any)=>c.cmd==='credential_ready'));
+ const box=await page.locator('main').boundingBox();expect(box!.height).toBeLessThanOrEqual(300);
+ await page.getByRole('button',{name:'Return to browser',exact:true}).click();
+ const calls=await page.evaluate(()=>(window as any).calls);expect(calls.some((c:any)=>c.cmd==='voice_start')).toBe(false);
+ expect(calls.findIndex((c:any)=>c.cmd==='track-stop')).toBeLessThan(calls.findIndex((c:any)=>c.cmd==='credential_return'));
+});
