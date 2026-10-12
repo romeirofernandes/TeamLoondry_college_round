@@ -1,6 +1,7 @@
 import type { Calibration, PointerMode, Settings } from "./types";
 
 export interface RawPoint {
+  pose?: import("./pose").HeadPose | null;
   x: number;
   y: number;
   confidence: number;

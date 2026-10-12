@@ -187,7 +187,7 @@ describe("Group B boundaries and commands", () => {
   it("has every Group B plan ID exactly once", () => {
     expect(
       catalogue.filter((a) => Object.keys(bodies).includes(a.site)),
-    ).toHaveLength(64);
+    ).toHaveLength(70);
     expect(new Set(catalogue.map((a) => a.id)).size).toBe(catalogue.length);
   });
   it("normalizes owned recipients without accepting arbitrary sites", () => {
@@ -794,4 +794,15 @@ describe("WhatsApp chat navigation layouts", () => {
     expect((await engine.run(req(engine, "open chat with mom"))).state).toBe("available");
     expect(engine.snapshot()?.current?.label).toBe("Mom");
   });
+});
+describe('Meet natural controls',()=>{
+ it('routes plain mic and camera phrases to desired-state actions',()=>{
+  const e=fixture('meet');expect(req(e,'mute my mic')).toMatchObject({action:'ME02'});expect(req(e,'turn my camera off')).toMatchObject({action:'ME03',args:{mode:'off'}});
+ });
+ it('reports mic state without clicking and clears only the chat draft',async()=>{
+  const e=fixture('meet');const mic=document.querySelector<HTMLButtonElement>('[aria-label="Turn off microphone"]')!;mic.onclick=vi.fn();
+  expect((await e.run(req(e,'am I muted'))).feedback).toContain('on');expect(mic.onclick).not.toHaveBeenCalled();
+  const editor=document.querySelector('textarea')!;editor.value='private draft';
+  const clear=await e.run(req(e,'clear my chat draft'));expect(clear.state).toBe('available');expect(editor.value).toBe('');
+ });
 });

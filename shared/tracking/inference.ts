@@ -1,3 +1,4 @@
+import {poseFromMatrix} from "./pose";
 import {
   FaceLandmarker,
   HandLandmarker,
@@ -8,6 +9,7 @@ import { landmarkPoint, type RawPoint } from "./math";
 
 export interface Inference {
   detect(image: HTMLVideoElement | ImageBitmap, time: number): RawPoint | null;
+  setPoseEnabled?(enabled:boolean):Promise<void>;
   close(): void;
 }
 export async function createInference(
@@ -35,8 +37,11 @@ export async function createInference(
     return {
       detect(image, time) {
         const result = model.detectForVideo(image, time);
-        return landmarkPoint(result.faceLandmarks[0] ?? [], "face");
+        const point=landmarkPoint(result.faceLandmarks[0] ?? [], "face");
+        if(point&&result.facialTransformationMatrixes?.[0])point.pose=poseFromMatrix(result.facialTransformationMatrixes[0].data,point.confidence);
+        return point;
       },
+      async setPoseEnabled(enabled:boolean){await model.setOptions({outputFacialTransformationMatrixes:enabled});},
       close() {
         model.close();
       },

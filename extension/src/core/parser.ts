@@ -116,6 +116,12 @@ export function sessionIntent(text: string, settings: Settings): Intent | null {
   return intent && ["pause", "resume", "stop"].includes(intent.type) ? { ...intent } : null;
 }
 
+/** Recognizer variants of the in-call address; preserve the literal payload. */
+export function meetRequest(text: string): string | null {
+  const match = /^(?:hey[\s,]+)?hands[\s\-\u2010-\u2015]*free\b[\s,:.!-]+(.*)$/i.exec(text.trim());
+  return match ? match[1].trim() : null;
+}
+
 export function wakeRequest(text: string): string | null {
   const match = /^hey[\s,]+hands[\s-]*free\b[\s,:.!-]*(.*)$/i.exec(text.trim());
   return match ? match[1].trim() : null;

@@ -10,6 +10,9 @@ export class GestureRuntime {
   private armed = true;
   private heldGesture: HandGesture | null = null;
   private heldFrames = 0;
+  private heldSince=0;
+  private lastPose=-Infinity;
+  private lastFired=-Infinity;
   private neutralFrames = 0;
   private calibrationGesture: HandGesture | null = null;
   private calibrationFrames = 0;
@@ -27,16 +30,22 @@ export class GestureRuntime {
     private onCalibrationPreview: (active: boolean) => void = () => {},
   ) {
     this.presets = presets;
+    if(presets.some(p=>p.holdMs!==undefined))this.armed=false;
     this.worker = new Worker(chrome.runtime.getURL("gesture-worker.js"));
     this.worker.onmessage = event => this.receive(event.data);
     this.worker.onerror = event => this.publish({ ready: false, detected: null, confidence: 0, error: event.message || "Gesture recognition stopped." });
     this.worker.postMessage({ type: "init", baseURL: chrome.runtime.getURL("") });
     this.timer = setInterval(() => void this.frame(), 150);
   }
-  update(presets: GesturePreset[]) { this.presets = presets; }
+  update(presets: GesturePreset[]) {
+    const scoped=(items:GesturePreset[])=>JSON.stringify(items.filter(p=>p.holdMs!==undefined));
+    if(scoped(this.presets)!==scoped(presets)) {this.armed=false;this.heldGesture=null;this.heldFrames=0;this.neutralFrames=0;this.lastPose=-Infinity;}
+    this.presets=presets;
+  }
   setPaused(paused: boolean) {
     this.paused = paused;
-    this.armed = true;
+    this.armed = !this.presets.some(p=>p.holdMs!==undefined);
+    this.lastPose=-Infinity;
     this.heldGesture = null;
     this.heldFrames = 0;
     this.neutralFrames = 0;
@@ -109,6 +118,11 @@ export class GestureRuntime {
     this.busy = false;
     const pose = message as PoseMessage;
     if (this.paused) return;
+    if(this.presets.some(p=>p.holdMs!==undefined)){
+      if(!Number.isFinite(pose.timestamp)||pose.timestamp<=this.lastPose)return;
+      if(pose.timestamp-this.lastPose>500){this.heldGesture=null;this.heldFrames=0;this.neutralFrames=0;}
+      this.lastPose=pose.timestamp;
+    }
     if (this.calibrationGesture) {
       if (pose.gesture === this.calibrationGesture && pose.confidence >= 0.35) {
         this.calibrationFrames++;
@@ -150,8 +164,9 @@ export class GestureRuntime {
     const preset = this.presets.find(item => item.enabled && item.gesture === pose.gesture && pose.confidence >= item.calibration.threshold);
     if (!preset) { this.heldGesture = null; this.heldFrames = 0; return; }
     if (this.heldGesture === pose.gesture) this.heldFrames++;
-    else { this.heldGesture = pose.gesture; this.heldFrames = 1; }
-    if (this.armed && this.heldFrames >= 5) {
+    else { this.heldGesture = pose.gesture; this.heldFrames = 1;this.heldSince=pose.timestamp; }
+    if (this.armed && (preset.holdMs===undefined?this.heldFrames>=5:pose.timestamp-this.heldSince>=preset.holdMs&&pose.timestamp-this.lastFired>=(preset.cooldownMs??1200))) {
+      this.lastFired=pose.timestamp;
       this.armed = false;
       this.onTrigger(preset.id);
       this.publish({ ready: true, detected: pose.gesture, confidence: pose.confidence }, true);

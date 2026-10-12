@@ -1,3 +1,6 @@
+import {defaultMeetPreferences,type MeetPreferences,type HeadGesture} from "./meet/model";
+import {MeetGestureGate,HeadCalibration,matchHead,type HeadPose} from "./meet/gestures";
+import {inputMethods,type MeetRuntimeContext} from "./shared";
 import { Tracker } from "./tracking";
 import { GestureRuntime } from "./gesture-runtime";
 import { normalizeGesturePresets } from "./gestures";
@@ -7,6 +10,29 @@ import { send, voiceEnabled, type Message, type Settings, type Calibration, type
 
 let settings: Settings;
 let privateInput = false;
+let meetContext:MeetRuntimeContext|null=null;
+let meetPreferences:MeetPreferences=structuredClone(defaultMeetPreferences);
+let browsingPresets:GesturePreset[]=[];
+let headCalibration:HeadCalibration|null=null;
+let headCalibrationTimer:ReturnType<typeof setTimeout>|null=null;
+const meetHeadGate=new MeetGestureGate();
+let meetSuppressUntil=0,lastMeetPose=0;
+function poseStatus(value:import("./shared").MeetPoseStatus){void send({type:"MEET_POSE_STATUS",status:value}).catch(()=>{});}
+function headSample(pose:HeadPose|null,time:number){
+ if(privateInput||desired!=="running"){meetHeadGate.reset();return;}
+ if(headCalibration){headCalibration.sample(pose,time);if(time-lastMeetPose>150){lastMeetPose=time;poseStatus({pose,stage:time-headCalibration.started<2000?"Hold your comfortable neutral pose.":`Now ${headCalibration.gesture.replaceAll('-',' ')} comfortably and hold.`});}return;}
+ if(!meetContext||!meetPreferences.face||!settings||!inputMethods(settings).includes("face"))return;
+ const mapping=pose?matchHead(pose,meetPreferences.head):null;
+ if(mapping)meetSuppressUntil=performance.now()+500;
+ if(meetHeadGate.update(mapping?.gesture??null,!!pose&&pose.quality>=0.7,time,meetPreferences.holdMs,meetPreferences.cooldownMs)&&mapping){void send({type:"MEET_GESTURE_TRIGGER",context:meetContext,gesture:mapping.gesture,inputKind:"face"}).catch(()=>{});}
+}
+function setHeadTracking(){tracker?.setPoseListener((headCalibration||meetContext&&meetPreferences.face&&meetPreferences.head.some(m=>m.enabled))&&settings?.pointerMode==="face"?headSample:null);}
+function cancelHeadCalibration(){if(headCalibrationTimer)clearTimeout(headCalibrationTimer);headCalibrationTimer=null;headCalibration=null;gestureRuntime?.setPaused(privateInput||desired!=="running");gesturePreview(false);meetHeadGate.reset();setHeadTracking();}
+function configureMeet(context:MeetRuntimeContext|null,preferences:MeetPreferences){
+ const changed=JSON.stringify(meetContext)!==JSON.stringify(context);meetContext=context;meetPreferences=preferences;if(changed){meetHeadGate.reset();meetSuppressUntil=0;}
+ setHeadTracking();setGesturePresets(browsingPresets);
+}
+
 let privateSession="legacy",privateRevision=0;
 const voiceStarts = new Set<Promise<void>>();
 function trackVoice(work:Promise<void>) {voiceStarts.add(work);void work.finally(()=>voiceStarts.delete(work)).catch(()=>{});return work;}
@@ -40,7 +66,7 @@ function gesturePreview(active: boolean) {
   const context = gesturePreviewCanvas.getContext("2d", { alpha: false });
   if (!context) return;
   gesturePreviewTimer = setInterval(() => {
-    if (desired !== "running" || !gestureRuntime || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return;
+    if (desired !== "running" || (!gestureRuntime&&!headCalibration) || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return;
     const scale = Math.min(1, 480 / video.videoWidth);
     gesturePreviewCanvas!.width = Math.round(video.videoWidth * scale);
     gesturePreviewCanvas!.height = Math.round(video.videoHeight * scale);
@@ -50,18 +76,23 @@ function gesturePreview(active: boolean) {
 }
 function createGestureRuntime(presets: GesturePreset[]) {
   const runtime = new GestureRuntime(video, presets, presetId => {
-    if (!privateInput) void send({ type: "GESTURE_TRIGGER", presetId }).catch(() => {});
+    if(privateInput||headCalibration)return;
+    const mapping=meetContext&&meetPreferences.hand?meetPreferences.hands.find(m=>m.enabled&&presetId===`hf_meet_${m.gesture}`):null;
+    if(mapping){void send({type:"MEET_GESTURE_TRIGGER",context:meetContext!,gesture:mapping.gesture,inputKind:"hand"}).catch(()=>{});return;}
+    void send({ type: "GESTURE_TRIGGER", presetId }).catch(() => {});
   }, gestureStatus, gesturePreview);
   runtime.setPaused(privateInput || desired!=="running");return runtime;
 }
-function gestureStatus(status: GestureRuntimeStatus) { void send({ type: "GESTURE_STATUS", status }).catch(() => {}); }
+function gestureStatus(status: GestureRuntimeStatus) { if(meetContext&&status.detected&&meetPreferences.hands.some(m=>m.enabled&&m.gesture===status.detected))meetSuppressUntil=performance.now()+500;void send({ type: "GESTURE_STATUS", status }).catch(() => {}); }
 function setGesturePresets(presets: GesturePreset[]) {
+  browsingPresets=normalizeGesturePresets(presets);
   if (settings?.voiceOnly || desired !== "running" || !tracker) {
     gestureRuntime?.stop(); gestureRuntime = null;
     gestureStatus({ ready: false, detected: null, confidence: 0 });
     return;
   }
-  const enabled = normalizeGesturePresets(presets);
+  const scoped:GesturePreset[]=meetContext&&meetPreferences.hand&&inputMethods(settings).includes("hand")?meetPreferences.hands.filter(m=>m.enabled).map(m=>({id:`hf_meet_${m.gesture}`,name:"Meet gesture",gesture:m.gesture as import("./shared").HandGesture,action:{type:"media-play"},enabled:true,calibration:{threshold:m.threshold,calibratedAt:m.calibratedAt},holdMs:meetPreferences.holdMs,cooldownMs:meetPreferences.cooldownMs})):[];
+  const enabled=[...scoped,...browsingPresets.filter(p=>!scoped.some(m=>m.gesture===p.gesture))];
   if (!enabled.some(preset => preset.enabled) && !gestureRuntime) {
     gestureStatus({ ready: false, detected: null, confidence: 0 });
     return;
@@ -146,7 +177,7 @@ async function start(next: Settings) {
   starting = true;
   if (!next.voiceOnly) tracker = new Tracker(video, sample => {
     if (token !== generation || desired !== "running") return;
-    void send({ type: "POINTER", sample }).catch(() => {});
+    void send({ type: "POINTER", sample:{...sample,meetGestureHeld:performance.now()<meetSuppressUntil||!!headCalibration} }).catch(() => {});
     const now = performance.now();
     if (now - lastTelemetry > 500) {
       lastTelemetry = now;
@@ -156,6 +187,7 @@ async function start(next: Settings) {
     getCalibration: (mode: PointerMode) => send<Calibration | undefined>({ type: "GET_CALIBRATION", mode }),
     saveCalibration: async (mode: PointerMode, calibration: Calibration) => { await send({ type: "SAVE_CALIBRATION", mode, calibration }); },
   });
+  setHeadTracking();
   // Voice starts independently: loading a vision model must not delay listening.
   void beginVoice(token);
   try { if (tracker) await tracker.start(next); else status({camera:"Off, voice-only session", trackingBackend:"Voice only", confidence:0, fps:0}); }
@@ -169,6 +201,7 @@ async function start(next: Settings) {
         try {
           const presets = await send<GesturePreset[]>({ type: "GET_GESTURE_PRESETS" });
           setGesturePresets(normalizeGesturePresets(presets));
+          const meet=await send<{runtimeContext:MeetRuntimeContext|null;preferences:MeetPreferences}>({type:"GET_MEET_STATUS"});if(token===generation)configureMeet(meet.runtimeContext,meet.preferences);
         } catch (error) {
           setGesturePresets([]);
           status({ feedback: `Gesture presets could not be loaded: ${error instanceof Error ? error.message : String(error)}` });
@@ -178,6 +211,7 @@ async function start(next: Settings) {
   }
 }
 function pause() {
+  cancelHeadCalibration();meetHeadGate.reset();meetSuppressUntil=0;
   ++feedbackGeneration; feedbackSpeaking=false; if(typeof speechSynthesis!=="undefined")speechSynthesis.cancel();
   desired = "paused";
   tracker?.pause(); gestureRuntime?.setPaused(true); stopVoice();
@@ -192,6 +226,7 @@ function resume() {
   void beginVoice(generation);
 }
 function stop() {
+  cancelHeadCalibration();meetHeadGate.reset();meetSuppressUntil=0;meetContext=null;
   uiListening = false; clearTimeout(uiLease);
   desired = "stopped"; ++generation; ++feedbackGeneration;
   feedbackSpeaking = false; if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
@@ -231,11 +266,19 @@ async function speakFeedback(text: string) {
 chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
   if (_sender.tab && !_sender.url?.startsWith(chrome.runtime.getURL(""))) return;
   if (message.type === "SPEAK_FEEDBACK") { if(message.enabled) void speakFeedback(message.text); respond({ok:true});return; }
+  if(message.type==="MEET_RUNTIME"){configureMeet(message.context,message.preferences);respond({ok:true});return;}
+  if(message.type==="MEET_HEAD_CANCEL"){cancelHeadCalibration();respond({ok:true});return;}
+  if(message.type==="MEET_HEAD_CALIBRATE"){
+    if(privateInput||desired!=="running"||!tracker||settings.pointerMode!=="face"){respond({ok:false});return;}
+    cancelHeadCalibration();gestureRuntime?.setPaused(true);headCalibration=new HeadCalibration(message.gesture,performance.now());setHeadTracking();gesturePreview(true);
+    headCalibrationTimer=setTimeout(()=>{const result=headCalibration?.result();cancelHeadCalibration();gestureRuntime?.setPaused(privateInput||desired!=="running");poseStatus(result?{pose:null,calibration:result,stage:"Head gesture calibrated."}:{pose:null,error:"Could not calibrate a distinct comfortable pose. Keep your face visible and try again."});},5000);respond({ok:true});return;
+  }
   if (message.type !== "OFFSCREEN_COMMAND") return;
   if (message.command === "private-enter") {
     const session=message.privateSession??"legacy",revision=message.privateRevision??0;
     if(session===privateSession&&revision<privateRevision){respond({ok:false});return;}
     privateSession=session;privateRevision=revision;
+    cancelHeadCalibration();meetHeadGate.reset();meetSuppressUntil=0;
     privateInput = true; ++feedbackGeneration; feedbackSpeaking = false;
     uiListening = false; clearTimeout(uiLease); stopVoice();
     if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();

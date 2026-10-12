@@ -58,6 +58,14 @@ const validCalibration = (value: unknown, mode: PointerMode): value is Calibrati
 };
 
 export class Tracker {
+  private poseEnabled=false;
+  private poseConfiguration:Promise<void>=Promise.resolve();
+  private poseListener:((pose:import("../../../shared/tracking/pose").HeadPose|null,time:number)=>void)|null=null;
+  setPoseListener(listener:((pose:import("../../../shared/tracking/pose").HeadPose|null,time:number)=>void)|null){
+    this.poseListener=listener;const enabled=!!listener;if(enabled===this.poseEnabled)return;this.poseEnabled=enabled;
+    this.worker?.postMessage({type:"pose-enable",enabled});
+    const model=this.model;if(model)this.poseConfiguration=this.poseConfiguration.then(()=>model===this.model?model.setPoseEnabled?.(enabled):undefined).catch(()=>{});
+  }
   private settings!: Settings;
   private generation = 0;
   private active = false;
@@ -228,6 +236,7 @@ export class Tracker {
       worker.postMessage({
         type: "init",
         mode: this.settings.pointerMode,
+        includePose:this.poseEnabled,
         baseURL: chrome.runtime.getURL(""),
       });
     });
@@ -249,6 +258,7 @@ export class Tracker {
       return;
     }
     this.model = model;
+    if(this.poseEnabled)await this.model.setPoseEnabled?.(true);
     this.onStatus({ trackingBackend: "Main thread / CPU fallback" });
   }
   private async recoverWorker(token: number, error: Error) {
@@ -374,6 +384,7 @@ export class Tracker {
     let bitmap: ImageBitmap | null = null;
     try {
       bitmap = await createImageBitmap(image);
+      if(!worker)await this.poseConfiguration;
       const calibration = this.calibrationRun;
       if (calibration && typeof document !== "undefined") {
         const elapsed = timestamp - calibration.start;
@@ -435,6 +446,7 @@ export class Tracker {
     }
   }
   private accept(point: RawPoint | null, time: number, latencyMs: number) {
+    if(this.poseEnabled)this.poseListener?.(this.calibrationRun?null:point?.pose??null,time);
     this.lastReply = performance.now();
     this.count++;
     if (time - this.fpsStart > 1000) {
@@ -465,6 +477,7 @@ export class Tracker {
     this.onStatus({ confidence: sample.confidence, fps: this.fps, latencyMs });
   }
   private loss() {
+    if(this.poseEnabled)this.poseListener?.(null,performance.now());
     if (!this.settings) return;
     this.filter.reset();
     this.onSample({

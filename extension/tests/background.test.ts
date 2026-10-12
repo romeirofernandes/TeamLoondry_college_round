@@ -30,7 +30,7 @@ async function setup(options: { tabPermission?: boolean; key?: string; jevKey?: 
           providers: { groqKeys: options.key ? [options.key] : [], jevKey: options.jevKey ?? "" },
           logs: [],
         })),
-        set: vi.fn(async () => {}),
+        set: vi.fn(async (_value?: unknown) => {}),
       },
       session: { get: vi.fn(async () => (options.sessionState ? {state:options.sessionState} : {})), set: vi.fn(async () => {}) },
     },
@@ -1400,4 +1400,40 @@ it('rejects automatic mode evidence while private entry is active',async()=>{
  const before=(await send({type:'GET_STATE'})).activityMode;
  expect(await send({type:'MODE_EVIDENCE',mode:'reading',reason:'reading-interaction'},{...pageSender(1),frameId:0})).toMatchObject({ok:false});
  expect((await send({type:'GET_STATE'})).activityMode).toBe(before);
+});
+
+describe('Meet worker boundaries',()=>{
+ it('accepts captions only from the bound tab/document and never exposes text through status',async()=>{
+  const {browser,send}=await setup();let local:any=await browser.storage.local.get();
+  browser.storage.local.get.mockImplementation(async()=>local);
+  browser.storage.local.set.mockImplementation(async(value?:any)=>{local={...local,...value}});
+  browser.tabs.get.mockImplementation(async(id:number)=>({id,active:true,windowId:1,index:id-1,url:'https://meet.google.com/abc-defg-hij',title:'Meet'}));
+  const original=browser.tabs.sendMessage.getMockImplementation()!;
+  browser.tabs.sendMessage.mockImplementation(async(id:number,m:any)=>m.type==='MEET_PAGE_STATUS'?{code:'abc-defg-hij',documentId:'meet-doc',active:true}:m.type==='MEET_CAPTURE'?{ok:true}:original(id,m));
+  expect(await send({type:'MEET_CONTROL',command:'start-transcript'})).toEqual({ok:true});
+  const status=await send({type:'GET_MEET_STATUS'}),id=status.active.id;
+  const batch:any={type:'MEET_CAPTIONS',sessionId:id,documentId:'meet-doc',sequence:1,lines:[{text:'caption-only-secret',at:1000}]};
+  expect(await send(batch,{...pageSender(2),frameId:0})).toMatchObject({ok:false});
+  expect(await send({...batch,documentId:'stale'},{...pageSender(1),frameId:0})).toMatchObject({ok:false});
+  expect(await send(batch,{...pageSender(1),frameId:1})).toMatchObject({ok:false});
+  expect(await send(batch,{...pageSender(1),frameId:0})).toEqual({ok:true});
+  expect(JSON.stringify(await send({type:'GET_MEET_STATUS'}))).not.toContain('caption-only-secret');
+  expect(await send({type:'MEET_TRANSCRIPT_READ',id})).toMatchObject({ok:false});
+  expect((await send({type:'MEET_TRANSCRIPT_READ',id},{...extensionSender,url:'chrome-extension://handsfree-test/meet-transcript.html?id='+id})).lines[0].text).toBe('caption-only-secret');
+  await send({type:'STOP'});expect(await send({...batch,sequence:2},{...pageSender(1),frameId:0})).toMatchObject({ok:false});
+ });
+ it('rejects a forged Meet gesture from a content script or a stale offscreen context',async()=>{
+  const {send,browser}=await setup();browser.tabs.sendMessage.mockClear();
+  const m:any={type:'MEET_GESTURE_TRIGGER',gesture:'fist',inputKind:'hand',context:{tabId:1,documentId:'old',code:'abc-defg-hij',pageRevision:0,nonce:'old'}};
+  expect(await send(m,pageSender(1))).toMatchObject({ok:false});
+  expect(await send(m,{...extensionSender,url:'chrome-extension://handsfree-test/offscreen.html'})).toMatchObject({ok:false});
+  expect(browser.tabs.sendMessage).not.toHaveBeenCalledWith(expect.anything(),expect.objectContaining({type:'SITE_DIALOGUE'}));
+ });
+});
+
+it.each(['Hands-Free mute my mic','Hands Free mute my mic','Handsfree, mute my mic','Hey Handsfree mute my mic','Hey, Hands-Free: mute my mic'])('routes the recognized Meet address without changing the command: %s',async text=>{
+ const {send,browser,fetch}=await setup();const original=browser.tabs.sendMessage.getMockImplementation()!;
+ browser.tabs.sendMessage.mockImplementation(async(id,m)=>m.type==='GET_SITE_CONTEXT'?{site:'meet',meetingActive:true,capabilities:[]}:m.type==='SITE_DIALOGUE'?{state:'available',feedback:'Microphone muted.'}:original(id,m));
+ browser.tabs.sendMessage.mockClear();await send({type:'HEARD',text});
+ expect(browser.tabs.sendMessage).toHaveBeenCalledWith(1,{type:'SITE_DIALOGUE',text:'mute my mic'});expect(fetch).not.toHaveBeenCalled();
 });

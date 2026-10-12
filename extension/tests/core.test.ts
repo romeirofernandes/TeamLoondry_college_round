@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeSpeech, parseIntent, wakeRequest } from "../src/core/parser";
+import { normalizeSpeech, parseIntent, wakeRequest, meetRequest } from "../src/core/parser";
 import { ActivationGate } from "../src/core/safety";
 import { adjacentTabId, rankTabs, rankTargets } from "../src/core/ranking";
 import { appendMetric, summarizeMetrics } from "../src/core/metrics";
@@ -358,4 +358,13 @@ describe('anchored local commands', () => {
     ['switch to previous tab', { type: 'previous-tab' }],
     ['switch to the tab Project notes', { type: 'named-tab', name: 'project notes' }],
   ])('parses %s without a provider', (text, expected) => expect(parseIntent(text)).toEqual(expected));
+});
+
+
+describe('in-call Meet addressing',()=>{
+ it.each(['Hands-Free','Hands Free','Handsfree','Hands–Free','Hey, Hands-Free:'])('accepts %s without rewriting the payload',prefix=>{
+  expect(meetRequest(prefix+' Write Hands-Free in My Draft.')).toBe('Write Hands-Free in My Draft.');
+ });
+ it.each(['mute my mic','someone said handsfree mute my mic','handsfreedom mute my mic','handsfreezer mute my mic','okay handsfree mute my mic'])('rejects an absent or embedded address: %s',text=>expect(meetRequest(text)).toBeNull());
+ it('does not authorize arbitrary AI requests with the plain Meet prefix',()=>expect(wakeRequest('Hands-Free summarize this page')).toBeNull());
 });

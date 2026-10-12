@@ -1,3 +1,5 @@
+export interface MeetRuntimeContext {tabId:number;documentId:string;code:string;pageRevision:number;nonce:string}
+import type { MeetPreferences, CaptionLine } from "./meet/model";
 import type { SiteRequest, SiteSnapshot } from "./sites/types";
 export type ActivityMode = "browsing" | "reading" | "writing";
 export type PointerMode = "face" | "hand";
@@ -136,6 +138,7 @@ export type GestureAction =
   | { type: "media-toggle" | "media-play" | "media-pause" }
   | { type: "back" | "forward" | "next-tab" | "previous-tab" | "scroll-top" | "scroll-bottom" };
 export interface GesturePreset {
+  holdMs?:number;cooldownMs?:number;
   id: string;
   name: string;
   gesture: HandGesture;
@@ -152,7 +155,9 @@ export interface GestureRuntimeStatus {
   calibration?: GestureCalibration;
   error?: string;
 }
+export interface MeetPoseStatus {pose:import("../../shared/tracking/pose").HeadPose|null;stage?:string;calibration?:{gesture:import("./meet/model").HeadGesture;neutral:number;threshold:number;direction:1|-1};error?:string}
 export interface PointerSample {
+  meetGestureHeld?:boolean;
   x: number;
   y: number;
   confidence: number;
@@ -340,6 +345,22 @@ export type Message =
   | { type: "EDIT_APPLY"; command: string; text?: string; from?: string; to?: string; expected?: string }
   | { type: "READ_SELECT"; start: number; end: number; revision: string }
   | { type: "DOCS_INPUT"; text: string; command: "insert" | "scratch" | "restore"; expected: string; url: string; generation: number }
+  | {type:"MEET_PAGE_CHANGED";documentId:string;code:string;active:boolean}
+  | {type:"MEET_RUNTIME";context:MeetRuntimeContext|null;preferences:MeetPreferences}
+  | {type:"MEET_GESTURE_TRIGGER";context:MeetRuntimeContext;gesture:string;inputKind:"face"|"hand"}
+  | {type:"MEET_HEAD_CALIBRATE";gesture:import("./meet/model").HeadGesture}
+  | {type:"MEET_HEAD_CANCEL"}
+  | {type:"GET_MEET_POSE"}
+  | {type:"MEET_POSE_STATUS";status:MeetPoseStatus}
+  | { type: "GET_MEET_STATUS" }
+  | { type: "SAVE_MEET_PREFERENCES"; preferences: MeetPreferences }
+  | { type: "MEET_CONTROL"; command: "start-transcript"|"stop-transcript"|"start-signing"|"stop-signing" }
+  | { type: "MEET_PAGE_STATUS" }
+  | { type: "MEET_CAPTURE"; sessionId:string; documentId:string; command:"start"|"stop"|"cancel" }
+  | { type: "MEET_CAPTIONS"; sessionId:string; documentId:string; sequence:number; lines:CaptionLine[]; status?:string }
+  | { type: "MEET_TRANSCRIPT_EXPORT"; id:string }
+  | { type: "MEET_TRANSCRIPT_READ"; id:string }
+  | { type: "MEET_TRANSCRIPT_DELETE"; id:string; confirmed:boolean }
   | {type:"GET_PRIVATE_STATUS"}
   | { type: "PRIVATE_INPUT"; command: "enter" | "resume" }
   | { type: "PRIVATE_POPUP"; command: "start" | "return" }

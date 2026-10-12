@@ -1,5 +1,8 @@
 import {readingPreferences} from "./reading/model";
 import { docsInput } from "./editing/docs-input";
+import {MeetStore} from "./meet/store";
+import {MeetService} from "./meet/service";
+import {normalizeMeetPreferences,type MeetPreferences} from "./meet/model";
 import {claimDesktop,releaseDesktop,connectDesktop,disconnectDesktop,paired,onDesktopLost,startCredentialControl,stopCredentialControl} from "./desktop";
 import {uploadFile} from "./file-upload";
 import { parseSite, siteCandidates, unsafeSpeech, isCancellation, makeRequest, validateSiteRequest } from "./sites/language";
@@ -23,7 +26,7 @@ import {
   type VoiceRoutine,
   emptyRoutineSession,
 } from "./shared";
-import { parseFormCommand, parseIntent, sessionIntent, wakeRequest } from "./core/parser";
+import { parseFormCommand, parseIntent, sessionIntent, wakeRequest, meetRequest } from "./core/parser";
 import { mediaControl } from "./content/media";
 import { bundledProviders } from "./provider-config";
 import { rankTabs, rankTargets, adjacentTabId } from "./core/ranking";
@@ -34,6 +37,14 @@ import type { GesturePreset, GestureRuntimeStatus } from "./shared";
 
 let state: SessionState = { ...initialState };
 let settings: Settings = { ...defaults };
+let meetRuntimeContext:import("./shared").MeetRuntimeContext|null=null;
+let meetPoseStatus:import("./shared").MeetPoseStatus={pose:null};
+let meetGestureBusy=false;
+let meetAutoBusy=false;
+let meetPreferences:MeetPreferences=normalizeMeetPreferences(undefined);
+const meetStore=new MeetStore({get:async()=>(await chrome.storage.local.get("meetTranscripts")).meetTranscripts,set:async value=>{await chrome.storage.local.set({meetTranscripts:value});}});
+const meetService=new MeetService(meetStore,{allowed:()=>state.running&&!state.privateInput,tab:id=>chrome.tabs.get(id),page:(id,message)=>page(message,id)});
+
 let pageRevision = 0;
 let readingAudio = "";
 let zoomRecord: {tabId:number;url:string;before:number;after:number;settings:chrome.tabs.ZoomSettings}|null=null;
@@ -50,6 +61,7 @@ let uiVoiceUntil = 0;
 let narrationToken = 0;
 let lastBroadcast = 0;
 const dashboardMessages = new Set(["GET_STATE", "GET_SETTINGS", "SAVE_SETTINGS", "START", "PAUSE", "RESUME", "STOP", "RECALIBRATE", "HEARD", "ACTION", "GET_LOGS", "CLEAR_LOGS", "METRIC", "GET_PROVIDER_STATUS", "SAVE_PROVIDERS", "SET_DASHBOARD_URL", "GRANT_PERMISSIONS", "INSTALL_SPEECH_PACK", "GET_TABS", "ACTIVATE_TAB", "GET_ROUTINE_SESSION", "GET_ROUTINES", "SAVE_ROUTINE", "DISCARD_ROUTINE_DRAFT", "DELETE_ROUTINE"]);
+for(const type of ["GET_MEET_STATUS","SAVE_MEET_PREFERENCES","MEET_CONTROL","MEET_TRANSCRIPT_EXPORT","MEET_TRANSCRIPT_DELETE","GET_MEET_POSE","MEET_HEAD_CALIBRATE","MEET_HEAD_CANCEL"])dashboardMessages.add(type);
 dashboardMessages.add("GET_SITE_CONTEXT");
 dashboardMessages.add("GET_PERMISSIONS");
 dashboardMessages.add("REVOKE_PERMISSION");
@@ -99,7 +111,8 @@ const ready = (async () => {
   await chrome.storage.local.setAccessLevel({
     accessLevel: "TRUSTED_CONTEXTS",
   });
-  const local = await chrome.storage.local.get(["settings", "logs", "providers", "speechPreferenceVersion"]);
+  const local = await chrome.storage.local.get(["settings", "logs", "providers", "speechPreferenceVersion", "meetPreferences"]);
+  try{meetPreferences=normalizeMeetPreferences(local.meetPreferences);}catch{meetPreferences=normalizeMeetPreferences(undefined);}
   settings = normalizeControlSettings((local.settings as Partial<Settings>) ?? {});
   if (local.speechPreferenceVersion !== 2) settings.speechMode = "browser";
   settings.groqModel = "qwen/qwen3.8-27b";
@@ -128,6 +141,7 @@ const ready = (async () => {
     state.lastHeard="";state.interimTranscript="";state.voice="Off — private entry";routineSession.recordingPaused=routineSession.recording;
     void chrome.runtime.sendMessage({type:"OFFSCREEN_COMMAND",command:"private-enter",privateSession,privateRevision}).catch(()=>{});
   }
+  await meetService.restore();
   // A restarted worker must not restore a pending confirmation.
 })();
 function uiSender(sender: chrome.runtime.MessageSender) {
@@ -563,7 +577,7 @@ function pageSettings() {
   return { ...settings, llmKey: "" };
 }
 async function pageState(tabId = state.targetTabId) {
-  return page(
+  const result=await page(
     {
       type: "PAGE_STATE",
       activityMode: state.activityMode, modeAutomatic: state.modeAutomatic,
@@ -575,6 +589,20 @@ async function pageState(tabId = state.targetTabId) {
     },
     tabId,
   );
+  if(tabId===state.targetTabId)await syncMeetRuntime();
+  return result;
+}
+async function syncMeetRuntime(){
+  const previous=meetRuntimeContext;meetRuntimeContext=null;
+  if(state.running&&!state.paused&&!state.privateInput&&state.targetTabId!==null&&(meetPreferences.hands.some(m=>m.enabled)||meetPreferences.head.some(m=>m.enabled))){
+    const id=state.targetTabId,revision=pageRevision;
+    const tab=await chrome.tabs.get(id).catch(()=>null);
+    if(tab?.url?.startsWith("https://meet.google.com/")){
+      const status=await page({type:"MEET_PAGE_STATUS"},id);
+      if(status?.active&&typeof status.documentId==="string"&&typeof status.code==="string"&&state.targetTabId===id&&pageRevision===revision&&!state.privateInput&&!state.paused)meetRuntimeContext={tabId:id,documentId:status.documentId,code:status.code,pageRevision:revision,nonce:previous?.tabId===id&&previous.documentId===status.documentId&&previous.pageRevision===revision?previous.nonce:crypto.randomUUID()};
+    }
+  }
+  void chrome.runtime.sendMessage({type:"MEET_RUNTIME",context:meetRuntimeContext,preferences:meetPreferences}).catch(()=>{});
 }
 function supported(url?: string) {
   return (
@@ -657,6 +685,7 @@ async function controller(command: Extract<Message, {type: "OFFSCREEN_COMMAND"}>
   if(command==="ui-stop")await releaseIdleDesktop();
 }
 async function stop() {
+  await meetService.stopAll();
   captureRevision++;
   nativeCredentialSession=false;await stopCredentialControl();
   uiVoiceTab = null; uiVoiceUntil = 0; ++narrationToken; chrome.tts?.stop();
@@ -1393,7 +1422,7 @@ async function activityAction(intent:Extract<Intent,{type:"activity-mode"|"readi
 /** Persist command state without retaining literal form answers or dictation. */
 function storedTranscript(text: string): string {
   if (state.dictating) return "Dictation";
-  const command = wakeRequest(text) ?? text.trim().replace(/^handsfree[, ]+/i, "");
+  const command = wakeRequest(text) ?? meetRequest(text) ?? text.trim();
   // Interim transcripts may contain an answer before its trailing field framing
   // arrives ("enter [answer] in ..."). Redact these prefixes as well.
   const formPrefix = /^(?:(?:could|can|would)\s+you\s+)?(?:please\s+)?(?:fill|enter|change|dictate|select|choose|check|uncheck|clear|open\s+form)\b/i;
@@ -1419,10 +1448,20 @@ async function routeHeard(text: string, parsed: Intent, revision: number) {
   const conversation: SiteSnapshot | null = await page({type:"GET_SITE_CONTEXT"});
   if (revision !== pageRevision || !state.running || state.paused) return;
   if (conversation?.site === "meet" && conversation.meetingActive) {
-    if (!/^(?:hey )?handsfree[, ]+/i.test(text.trim())) {
+    const addressedCommand=meetRequest(text);
+    if (addressedCommand===null) {
       await publish({feedback:"During a Meet call, begin each command or dictation segment with Handsfree. Use headphones to keep participant audio out of the microphone."}); return;
     }
-    if (state.dictating || /^handsfree[, ]+/i.test(text.trim())) {text=text.trim().replace(/^(?:hey )?handsfree[, ]+/i, "");parsed=parseIntent(text);}
+    text=addressedCommand;parsed=parseIntent(text);
+  }
+  if(conversation?.site==="meet"&&!meetPreferences.voice)return void await publish({feedback:"Meet voice controls are disabled. Use your pointer or Meet settings."});
+  const meetCommand=/^(start|stop) (?:the )?(transcript|signing)[.!?]?$/i.exec(text.trim());
+  if(conversation?.site==="meet"&&!state.dictating&&meetCommand){
+    if(meetCommand[2].toLowerCase()==="signing"){await publish({feedback:"Signing unavailable: no verified local motion pack is installed."});return;}
+    try{if(meetCommand[1].toLowerCase()==="start")await meetService.start(state.targetTabId!,meetPreferences.retentionHours);else await meetService.stop();await publish({feedback:meetCommand[1].toLowerCase()==="start"?"Transcript capture started. Google Meet captions must be on.":"Transcript stopped. Download it from Meet settings."});}catch(error){await publish({feedback:error instanceof Error?error.message:"Transcript unavailable."});}return;
+  }
+  if(conversation?.site==="meet"&&!state.dictating&&/^download transcript[.!?]?$/i.test(text.trim())){
+    const latest=(await meetStore.list())[0];if(latest)await chrome.tabs.create({url:chrome.runtime.getURL("meet-transcript.html")+"?id="+encodeURIComponent(latest.id)});else await publish({feedback:"No local transcript is available."});return;
   }
   if (state.dictating && parsed.type !== "stop-typing") {
     const literal = text.toLowerCase().startsWith("literal ") ? text.slice(8) : text;
@@ -1559,6 +1598,24 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
     if (!dashboard) return { ok: false, error: "Reopen the configured Handsfree dashboard from the popup." };
   }
   const trusted = internal || dashboard;
+  if(message.type==="MEET_PAGE_CHANGED"){
+    if(trusted||sender.tab?.id===undefined||(sender.frameId??0)!==0||typeof message.active!=="boolean")return {ok:false};
+    const tab=await chrome.tabs.get(sender.tab.id).catch(()=>null);
+    if(!tab?.url?.startsWith("https://meet.google.com/"))return {ok:false};
+    const current=await page({type:"MEET_PAGE_STATUS"},sender.tab.id);
+    if(current?.documentId!==message.documentId||current.code!==message.code||current.active!==message.active)return {ok:false};
+    const status=await meetService.status();
+    if(!message.active&&status.active?.tabId===sender.tab.id)await meetService.stop();
+    if(message.active&&meetPreferences.transcript&&state.running&&!state.paused&&!state.privateInput&&state.targetTabId===sender.tab.id&&!status.active&&!meetAutoBusy){
+      meetAutoBusy=true;try{await meetService.start(sender.tab.id,meetPreferences.retentionHours);}finally{meetAutoBusy=false;}
+    }
+    if(state.targetTabId===sender.tab.id)await syncMeetRuntime();
+    return {ok:true};
+  }
+  if(message.type==="MEET_CAPTIONS"){
+    if(internal||dashboard||sender.tab?.id===undefined||(sender.frameId??0)!==0)return {ok:false,error:"Invalid Meet source."};
+    await meetService.caption(sender.tab.id,message.documentId,message.sessionId,message.sequence,message.lines,message.status);return {ok:true};
+  }
   if (dashboard && !dashboardMessages.has(message.type)) return { ok: false, error: "This action is not available to the dashboard." };
   if (!trusted && sender.tab?.id !== state.targetTabId)
     return { ok: false, error: "Inactive page." };
@@ -1590,6 +1647,56 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       const context=await page({type:"EDIT_CONTEXT"});if(!valid()||!context?.docs||context.binding!==message.generation||context.expected!==message.expected)return {ok:false,error:"Docs editor context changed."};
       return docsInput(tabId,message.command,message.text,message.expected,message.url,valid);
     }
+    case "GET_MEET_POSE":return meetPoseStatus;
+    case "MEET_HEAD_CALIBRATE":{
+      if(!trusted||!state.running||state.paused||state.privateInput||settings.pointerMode!=="face"||!inputMethods(settings).includes("face")||!["lean-left","lean-right","look-up","look-down"].includes(message.gesture))return {ok:false,error:"Start and calibrate the head pointer before calibrating a Meet head gesture."};
+      meetPoseStatus={pose:null,stage:"Hold your comfortable neutral pose for 2 seconds."};
+      return await chrome.runtime.sendMessage(message) || {ok:false,error:"Head calibration is unavailable."};
+    }
+    case "MEET_HEAD_CANCEL":if(trusted){meetPoseStatus={pose:null};return await chrome.runtime.sendMessage(message) || {ok:false};}return {ok:false};
+    case "MEET_POSE_STATUS":if(internal&&sender.url===chrome.runtime.getURL("offscreen.html"))meetPoseStatus=message.status;return {ok:true};
+    case "MEET_GESTURE_TRIGGER":{
+      const ctx=meetRuntimeContext;
+      if(sender.url!==chrome.runtime.getURL("offscreen.html")||!ctx||meetGestureBusy||state.privateInput||state.paused||!state.running||state.dictating||state.targetTabId!==ctx.tabId||pageRevision!==ctx.pageRevision||JSON.stringify(message.context)!==JSON.stringify(ctx)||!inputMethods(settings).includes(message.inputKind))return {ok:false};
+      const mappings=message.inputKind==="face"?meetPreferences.head:meetPreferences.hands;
+      const m=mappings.find(m=>m.enabled&&m.gesture===message.gesture);
+      if(!m||!(message.inputKind==="face"?meetPreferences.face:meetPreferences.hand))return {ok:false};
+      meetGestureBusy=true;
+      const work=commandQueue.catch(()=>{}).then(async()=>{
+        const current=await page({type:"MEET_PAGE_STATUS"},ctx.tabId);
+        if(!current?.active||current.documentId!==ctx.documentId||current.code!==ctx.code||meetRuntimeContext!==ctx||state.privateInput||state.paused||pageRevision!==ctx.pageRevision)return {ok:false};
+        const phrases:Record<string,string>={mute:"mute my mic",unmute:"unmute my mic","camera-on":"turn my camera on","camera-off":"turn my camera off","captions-on":"turn captions on","captions-off":"turn captions off","hand-up":"raise my hand","hand-down":"lower my hand","open-chat":"open meeting chat","open-people":"open participants",leave:"leave the meeting"};
+        const result=await page({type:"SITE_DIALOGUE",text:phrases[m.action]},ctx.tabId);if(result?.feedback)await publish({feedback:result.feedback});return {ok:true};
+      });
+      commandQueue=work.then(()=>{},()=>{});
+      try{return await work;}finally{meetGestureBusy=false;}
+    }
+    case "GET_MEET_STATUS":await syncMeetRuntime();return {preferences:meetPreferences,runtimeContext:meetRuntimeContext,...await meetService.status()};
+    case "SAVE_MEET_PREFERENCES":{
+      if(!trusted)return {ok:false};const next=normalizeMeetPreferences(message.preferences);
+      if(next.signing)return {ok:false,error:"No verified local signing pack is installed."};
+      meetPreferences=next;await chrome.storage.local.set({meetPreferences});await syncMeetRuntime();return meetPreferences;
+    }
+    case "MEET_CONTROL":{
+      if(!trusted)return {ok:false};
+      if(message.command==="start-signing")return {ok:false,error:"Signing unavailable: no verified local motion pack is installed."};
+      if(message.command==="stop-signing")return {ok:true};
+      if(message.command==="stop-transcript"){await meetService.stop();return {ok:true};}
+      if(message.command!=="start-transcript"||state.targetTabId===null||state.paused)return {ok:false,error:"Open your Meet call and resume Handsfree first."};
+      await meetService.start(state.targetTabId,meetPreferences.retentionHours);return {ok:true};
+    }
+    case "MEET_TRANSCRIPT_EXPORT":{
+      if(!trusted||!await meetStore.get(message.id))return {ok:false,error:"Transcript is unavailable or expired."};
+      await chrome.tabs.create({url:chrome.runtime.getURL("meet-transcript.html")+"?id="+encodeURIComponent(message.id)});return {ok:true};
+    }
+    case "MEET_TRANSCRIPT_READ":{
+      if(!internal||!sender.url?.startsWith(chrome.runtime.getURL("meet-transcript.html")))return {ok:false,error:"Open the extension transcript viewer."};
+      return meetStore.get(message.id);
+    }
+    case "MEET_TRANSCRIPT_DELETE":{
+      if(!trusted||message.confirmed!==true)return {ok:false,error:"Confirm deleting this local transcript."};
+      await meetService.delete(message.id);return {ok:true};
+    }
     case "PRIVATE_INPUT": {
       if (!internal && (sender.tab?.id !== state.targetTabId || (sender.frameId ?? 0) !== 0)) return {ok:false};
       if (message.command === "resume") {
@@ -1609,6 +1716,7 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender) {
       // Synchronous latch precedes the first await and invalidates every queued action.
       privateReady=false;const privateToken=++privateRevision;
       state.privateInput=true; state.lastHeard="";state.interimTranscript="";readingAudio="";writingProposal=null;
+      void meetService.stopAll();
       activeProvider?.abort(); for (const request of transcriptionRequests) request.abort();
       ++pageRevision;++playbackToken;++planToken;planDestination=null;++narrationToken;chrome.tts?.stop();
       uiVoiceTab=null;uiVoiceUntil=0;
@@ -2059,6 +2167,7 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
 });
 chrome.tabs.onUpdated.addListener((tabId, change) => {
   void ready.then(async () => {
+    if (change.status === "loading" || change.url) await meetService.tabClosed(tabId);
     if (change.status === "complete") await connectDashboard(tabId);
     if (tabId !== state.targetTabId) return;
     if (change.url && planDestination && change.url !== planDestination) { ++planToken; planDestination=null; }
@@ -2073,6 +2182,7 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
   void ready.then(async () => {
+    await meetService.tabClosed(tabId);
     dashboardTabs.delete(tabId);
     await chrome.storage.session.set({ dashboardTabs: [...dashboardTabs] });
     if (tabId === state.targetTabId) {
