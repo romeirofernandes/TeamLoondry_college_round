@@ -1576,6 +1576,12 @@ export const catalogue = [
     description:
       "Preview meeting identity and require confirmation; verify own departure only.",
   },
+  {id:"ME11",site:"meet",priority:"P1",examples:["close participants"],description:"Close only the People panel."},
+  {id:"ME12",site:"meet",priority:"P1",examples:["close chat"],description:"Close only the in-call chat panel."},
+  {id:"ME13",site:"meet",priority:"P1",examples:["read the last chat message"],description:"Read the latest visible meeting chat message."},
+  {id:"ME14",site:"meet",priority:"P1",examples:["clear my chat draft"],description:"Clear only the bound meeting chat draft."},
+  {id:"ME15",site:"meet",priority:"P1",examples:["am I muted"],description:"Report observed microphone, camera or caption state."},
+  {id:"ME16",site:"meet",priority:"P1",examples:["who is in the meeting"],description:"Read visible People panel entries."},
   {
     id: "LI01",
     site: "linkedin",

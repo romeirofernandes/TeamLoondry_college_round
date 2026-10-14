@@ -560,6 +560,32 @@ export async function executeGroupB(
     );
     return result;
   }
+  if(id==="ME11"||id==="ME12"){
+    const selector=id==="ME11"?'[aria-label="People"],[data-panel-id="people"]':'[aria-label="In-call messages"],[data-panel-id="chat"]';
+    const panels=elements(selector);if(!panels.length)return outcome("already-satisfied","That panel is already closed.");
+    if(panels.length!==1)return outcome("unavailable","The requested panel is ambiguous.");
+    const buttons=controls(["Close","Close panel"],panels[0]);if(buttons.length!==1)return outcome("unavailable","A unique panel close control is unavailable.");buttons[0].click();return verified(()=>!elements(selector).length,"Closed the requested meeting panel.");
+  }
+  if(id==="ME13"){
+    const panels=elements('[aria-label="In-call messages"],[data-panel-id="chat"]');if(panels.length!==1)return outcome("unavailable","Open meeting chat first.");
+    const rows=elements('[data-message-id],[data-message-text]',panels[0]);return rows.length?outcome("available",rows.at(-1)!.textContent?.trim().slice(0,2000)||"Message text unavailable."):outcome("unavailable","No readable meeting chat messages are visible.");
+  }
+  if(id==="ME14"){
+    const editor=meetChatEditor(scope);if(!editor)return outcome("unavailable","Open the unique meeting chat editor first.");
+    if(editor instanceof HTMLTextAreaElement||editor instanceof HTMLInputElement)Object.getOwnPropertyDescriptor(editor instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value')!.set!.call(editor,'');else editor.textContent='';
+    editor.dispatchEvent(new InputEvent('input',{bubbles:true,data:null,inputType:'deleteContentBackward'}));return value(editor)===''?outcome("available","Meeting chat draft cleared."):outcome("failed","Draft clearing could not be verified.");
+  }
+  if(id==="ME15"){
+    const kind=args.mode?.includes('camera')?'camera':args.mode?.includes('captions')?'captions':'microphone';
+    const buttons=controls([`Turn on ${kind}`,`Turn off ${kind}`,`Turn on ${kind} (ctrl + ${kind==='camera'?'e':'d'})`,`Turn off ${kind} (ctrl + ${kind==='camera'?'e':'d'})`]);
+    if(buttons.length!==1)return outcome("unavailable",`Meet ${kind} state is unknown.`);
+    const state=stateOf(buttons[0],[`Turn off ${kind}`,`Turn off ${kind} (ctrl + ${kind==='camera'?'e':'d'})`],[`Turn on ${kind}`,`Turn on ${kind} (ctrl + ${kind==='camera'?'e':'d'})`]);
+    return state===null?outcome("unavailable",`Meet ${kind} state is unknown.`):outcome("available",`Meet ${kind} is ${state?'on':'off'}.`);
+  }
+  if(id==="ME16"){
+    const panels=elements('[aria-label="People"],[data-panel-id="people"]');if(panels.length!==1)return outcome("unavailable","Open participants first.");
+    const rows=elements('[data-participant-id],[role="listitem"]',panels[0]);return rows.length?outcome("available",rows.map(e=>label(e)||e.textContent?.trim()).filter(Boolean).slice(0,40).join('; ')):outcome("unavailable","Participant names are unavailable in this layout.");
+  }
   if (["ME02", "ME03", "ME04", "ME05"].includes(id)) {
     const change = meetingState(id, args)!;
     if (!meetingCode(s))

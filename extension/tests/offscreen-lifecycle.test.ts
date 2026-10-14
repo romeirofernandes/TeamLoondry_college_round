@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { defaults } from "../src/shared";
 const mocks = vi.hoisted(() => ({ speech: [] as any[], fallback: [] as any[], trackers: [] as any[], fail: true }));
-vi.mock("../src/tracking", () => ({ Tracker: class { constructor() { mocks.trackers.push(this); } calibrate = vi.fn(async (_progress: any) => {}); start = vi.fn(async () => {}); stop = vi.fn(); pause = vi.fn(); resume = vi.fn(); updateSettings = vi.fn(); } }));
+vi.mock("../src/tracking", () => ({ Tracker: class { constructor() { mocks.trackers.push(this); } calibrate = vi.fn(async (_progress: any) => {}); start = vi.fn(async () => {}); stop = vi.fn(); pause = vi.fn(); resume = vi.fn(); updateSettings = vi.fn(); setPoseListener = vi.fn(); } }));
 vi.mock("../src/speech", () => ({ SpeechAdapter: class {
   constructor(public heard: any, public status: any) { mocks.speech.push(this); }
   start = vi.fn(async () => { if (mocks.fail) { this.status("Speech service could not connect"); throw new Error("network"); } });

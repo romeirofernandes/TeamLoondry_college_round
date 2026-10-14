@@ -79,6 +79,7 @@ import { InputChoices, PrimaryPointer, inputLabels } from "./input-choices";
 import { Onboarding } from "./onboarding";
 import { useScreenGuidance } from "./use-screen-guidance";
 import { GestureConfig } from "./gesture-config";
+import { MeetConfig } from "./meet-config";
 import { Routines } from "./routines";
 
 type BrowserTab = { id: number; title: string; url: string; active: boolean };
@@ -87,6 +88,7 @@ const views = [
   { id: "overview", label: "Session", icon: Monitor },
   { id: "preferences", label: "Controls", icon: SlidersHorizontal },
   { id: "access", label: "Permissions", icon: Plugs },
+  { id: "meet", label: "Meet", icon: Monitor },
   { id: "setup", label: "Setup", icon: UserFocus },
 ];
 const viewAliases: Record<string, string> = {
@@ -323,10 +325,10 @@ export function HandsfreeDashboard() {
   }
   const showSetup = !settings.onboardingCompleted || view === "setup";
   const activeView = viewAliases[view] || view;
-  const profileView = ["preferences", "access"].includes(activeView);
+  const profileView = ["preferences", "access", "meet"].includes(activeView);
   const navigationViews = views.filter((item) =>
     profileView
-      ? ["preferences", "access"].includes(item.id)
+      ? ["preferences", "access", "meet"].includes(item.id)
       : item.id === "overview",
   );
   useEffect(() => {
@@ -351,6 +353,7 @@ export function HandsfreeDashboard() {
       "open preferences": "preferences",
       "open controls": "preferences",
       "open permissions": "access",
+      "open meet settings": "meet",
       "open pointer": "pointer",
       "open voice": "voice",
       "open gestures": "gestures",
@@ -1462,6 +1465,7 @@ export function HandsfreeDashboard() {
             </div>
           </TabsContent>
 
+          <TabsContent value="meet"><MeetConfig state={state} settings={settings}/></TabsContent>
           <TabsContent value="access">
             <section className="dashboard-settings-stack">
               <SectionTitle

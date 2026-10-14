@@ -1,6 +1,8 @@
 import { ReadingRuntime, collectReading } from "../reading/runtime";
 import { EditLedger, editorText } from "../editing/editor";
 import { GoogleDocsEditor, docsSnapshot } from "../editing/google-docs";
+import { MeetCaptions } from "../meet/captions";
+import { meetingCode } from "../meet/model";
 import { SiteExecutor } from "../sites/executor";
 import { ActivationGate } from "../core/safety";
 import {
@@ -48,6 +50,10 @@ export class ContentRuntime {
   private binding = 0;
   private autoSuppressed = false;
   private evidenceMode = "";
+  private meetAnnounced="";
+  private meetDocumentId=crypto.randomUUID();
+  private meetCaptions:MeetCaptions|null=null;
+  private meetSessionId:string|null=null;
   private privateInput=false;
   private privateEpoch=0;
   private privateAwaitLeave:DOMRect|null=null;
@@ -96,6 +102,7 @@ export class ContentRuntime {
     this.reading = new ReadingRuntime(this.send);
     this.docs = new GoogleDocsEditor((text, command, expected, generation) => this.send({type:"DOCS_INPUT",text,command,expected,url:location.href,generation}));
     this.observer = new MutationObserver(() => {
+      this.announceMeet();
       this.forms.onMutation();
       if(this.privateKeys.active && !this.privateKeys.valid())this.privateKeys.close();
       if (
@@ -149,6 +156,12 @@ export class ContentRuntime {
     document.addEventListener("input", this.onFormEdit, true);
     document.addEventListener("change", this.onFormEdit, true);
     if (this.autoTick) this.frame = requestAnimationFrame(this.loop);
+  }
+  private announceMeet(){
+    const code=meetingCode(location.href);if(!code)return;
+    const active=Array.from(document.querySelectorAll('button,[role="button"]')).some(e=>/^(?:leave call|leave the call)$/i.test(e.getAttribute('aria-label')||e.textContent?.trim()||''));
+    const identity=`${code}:${active}:${this.running}`;if(identity===this.meetAnnounced)return;this.meetAnnounced=identity;
+    void this.send({type:"MEET_PAGE_CHANGED",documentId:this.meetDocumentId,code,active}).catch(()=>{});
   }
   private feedback(text: string) {
     this.overlay.announce(text);
@@ -245,6 +258,7 @@ export class ContentRuntime {
       this.stopTyping("Focus changed. Dictation stopped.");
   };
   private async enterPrivate(field?:HTMLInputElement) {
+    void this.meetCaptions?.stop(false);this.meetCaptions=null;this.meetSessionId=null;
     const epoch=++this.privateEpoch;
     this.privateInput=true;this.privateKeys.lock();this.reading.enable(false);
     this.scrollMotion.cancel();this.edge=null;this.sites.invalidate();this.forms.cancel();this.cancelPending();this.stopTyping();
@@ -329,6 +343,7 @@ export class ContentRuntime {
   }
   tick() {
     const now = this.clock();
+    if(!this.privateInput&&this.sample?.meetGestureHeld&&now-this.receivedAt<650){this.gate.reset();this.scrollMotion.cancel();this.edge=null;return;}
     if (
       this.pending &&
       (now > this.pending.expires || location.href !== this.pending.url)
@@ -439,6 +454,19 @@ export class ContentRuntime {
         else return {ok:false,error:"Unsupported editor correction."};
         this.feedback(message.command==="scratch"?"Removed the last segment. Say put that back to restore it.":"Correction applied and verified.");return {ok:true};
       }
+      case "MEET_PAGE_STATUS":return {code:meetingCode(location.href),documentId:this.meetDocumentId,sessionId:this.meetSessionId,active:!!meetingCode(location.href)&&Array.from(document.querySelectorAll('button,[role="button"]')).some(e=>/^(?:leave call|leave the call)$/i.test(e.getAttribute('aria-label')||e.textContent?.trim()||''))};
+      case "MEET_CAPTURE":{
+        if(message.documentId!==this.meetDocumentId||!meetingCode(location.href))return {ok:false};
+        if(message.command!=="start"){
+          if(message.sessionId!==this.meetSessionId)return {ok:false};
+          await this.meetCaptions?.stop(message.command==="stop");this.meetCaptions=null;this.meetSessionId=null;return {ok:true};
+        }
+        if(!this.running||this.privateInput)return {ok:false};
+        await this.meetCaptions?.stop();this.meetSessionId=message.sessionId;
+        this.meetCaptions=new MeetCaptions(message.sessionId,batch=>this.send({type:"MEET_CAPTIONS",...batch,documentId:this.meetDocumentId}),status=>{
+          void this.send({type:"MEET_CAPTIONS",sessionId:message.sessionId,documentId:this.meetDocumentId,sequence:0,lines:[],status}).catch(()=>{});
+        });this.meetCaptions.start();return {ok:true};
+      }
       case "GET_SITE_CONTEXT": return this.sites.snapshot();
       case "GET_WHATSAPP_DRAFT":
         return this.running && !this.paused && !this.dictating ? this.sites.whatsappDraft() : null;
@@ -472,6 +500,7 @@ export class ContentRuntime {
           this.sites.invalidate();
         }
         this.running = message.running;
+        this.announceMeet();
         this.paused = message.paused;
         if (
           this.settings.dwellMs !== message.settings.dwellMs ||
@@ -1072,6 +1101,7 @@ export class ContentRuntime {
   destroy() {
     this.sites.invalidate();
     this.scrollMotion.cancel();
+    void this.meetCaptions?.stop(false);this.meetCaptions=null;
     this.targets.destroy();
     this.reading.destroy(); this.ledger.clear(); this.docs.clear();
     this.destroyed = true;

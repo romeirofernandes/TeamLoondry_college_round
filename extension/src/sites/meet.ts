@@ -6,6 +6,12 @@ export const meet: Adapter = {
   currentKind: "meeting",
   entities: { meeting: 'a[href^="https://meet.google.com/"]' },
   actions: [
+    {id:"ME11",pattern:/^close (?:the )?participants$/,operation:{kind:"group-b"}},
+    {id:"ME12",pattern:/^close (?:the |meeting )?chat$/,operation:{kind:"group-b"}},
+    {id:"ME13",pattern:/^read (?:the )?(?:last|latest) chat message$/,operation:{kind:"group-b"}},
+    {id:"ME14",pattern:/^clear my chat draft$/,operation:{kind:"group-b"}},
+    {id:"ME15",pattern:/^(?:am i muted|is my (?:microphone|mic|camera) on|are captions on)$/,extract:"mode",operation:{kind:"group-b"}},
+    {id:"ME16",pattern:/^who is in (?:the |this )?meeting$/,operation:{kind:"group-b"}},
     {
       id: "ME01",
       guardNames: ["Join now", "Ask to join"],
@@ -16,13 +22,13 @@ export const meet: Adapter = {
     {
       id: "ME02",
       pattern:
-        /^(?:mute (?:my )?(?:meeting|meet) (?:microphone|mic)|unmute(?: my)?(?: meeting)?(?: microphone| mic| meet)?)$/,
+        /^(?:mute (?:my )?(?:(?:meeting|meet) )?(?:microphone|mic)|unmute(?: my)?(?: meeting)?(?: microphone| mic| meet)?)$/,
       extract: "mode",
       operation: { kind: "group-b" },
     },
     {
       id: "ME03",
-      pattern: /^turn (?:my )?(?:meet|meeting) camera (off|on)$/,
+      pattern: /^turn (?:my )?(?:(?:meet|meeting) )?camera (off|on)$/,
       extract: "mode",
       operation: { kind: "group-b" },
     },

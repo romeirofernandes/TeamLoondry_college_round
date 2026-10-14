@@ -2,6 +2,7 @@ import { createInference, type Inference } from "./inference";
 import type { PointerMode } from "../shared";
 let model: Inference | null = null;
 let generation = 0;
+let poseConfiguration:Promise<void>=Promise.resolve();
 self.onmessage = async (event: MessageEvent) => {
   const data = event.data;
   if (data.type === "init") {
@@ -18,6 +19,7 @@ self.onmessage = async (event: MessageEvent) => {
         return;
       }
       model = created;
+      if(data.includePose)await model.setPoseEnabled?.(true);
       self.postMessage({ type: "ready" });
     } catch (error) {
       self.postMessage({
@@ -25,9 +27,13 @@ self.onmessage = async (event: MessageEvent) => {
         message: error instanceof Error ? error.message : String(error),
       });
     }
+  } else if (data.type === "pose-enable") {
+    const current=model;poseConfiguration=poseConfiguration.then(()=>current===model?current?.setPoseEnabled?.(data.enabled===true):undefined).catch(error=>{self.postMessage({type:"error",message:error instanceof Error?error.message:String(error)})});
+    await poseConfiguration;
   } else if (data.type === "frame") {
     const bitmap = data.bitmap as ImageBitmap;
     try {
+      await poseConfiguration;
       if (!model) throw new Error("Tracking model is not ready");
       const start = performance.now();
       const point = model.detect(bitmap, data.timestamp);
