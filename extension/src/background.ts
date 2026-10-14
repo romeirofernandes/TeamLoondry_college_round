@@ -101,6 +101,12 @@ const ready = (async () => {
   });
   const local = await chrome.storage.local.get(["settings", "logs", "providers", "speechPreferenceVersion"]);
   settings = normalizeControlSettings((local.settings as Partial<Settings>) ?? {});
+  // Existing installs still point at the old local default. Move them to the
+  // hosted dashboard once; custom URLs chosen by the user are left alone.
+  if ((local.settings as Partial<Settings>)?.dashboardUrl === "http://localhost:3000/dashboard" && settings.dashboardUrl !== defaults.dashboardUrl) {
+    settings.dashboardUrl = defaults.dashboardUrl;
+    void chrome.storage.local.set({ settings });
+  }
   if (local.speechPreferenceVersion !== 2) settings.speechMode = "browser";
   settings.groqModel = "qwen/qwen3.8-27b";
   providers = local.providers ?? {};

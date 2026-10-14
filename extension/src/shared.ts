@@ -57,7 +57,7 @@ export const defaults: Settings = {
   language: "en-US",
   llmKey: "",
   llmModel: "gpt-4.1-mini",
-  dashboardUrl: "http://localhost:3000/dashboard",
+  dashboardUrl: "https://team-loondry-college-round.vercel.app/dashboard",
   groqModel: "qwen/qwen3.8-27b",
   jevProvider: "openrouter",
 };
